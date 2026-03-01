@@ -105,7 +105,7 @@ fn render_wallet_list(
                             Span::styled("ETH ", Style::default().fg(Color::Blue)),
                             Span::styled(label, Style::default().fg(Color::Yellow)),
                             Span::styled(
-                                shorten_address(&acc.address),
+                                acc.address.clone(),
                                 Style::default().fg(Color::Gray),
                             ),
                         ];
@@ -120,7 +120,7 @@ fn render_wallet_list(
                             Span::styled("SOL ", Style::default().fg(Color::Magenta)),
                             Span::styled(label, Style::default().fg(Color::Yellow)),
                             Span::styled(
-                                shorten_address(&acc.address),
+                                acc.address.clone(),
                                 Style::default().fg(Color::Gray),
                             ),
                         ];
@@ -134,7 +134,7 @@ fn render_wallet_list(
                         Span::raw("    "),
                         Span::styled(label_str, Style::default().fg(Color::Yellow)),
                         Span::styled(
-                            shorten_address(address),
+                            address.clone(),
                             Style::default().fg(Color::Gray),
                         ),
                     ];
@@ -148,7 +148,7 @@ fn render_wallet_list(
                         Span::styled("👁 ", Style::default().fg(Color::DarkGray)),
                         Span::styled(label_str, Style::default().fg(Color::Yellow)),
                         Span::styled(
-                            shorten_address(address),
+                            address.clone(),
                             Style::default().fg(Color::Gray),
                         ),
                     ];
@@ -274,13 +274,4 @@ fn format_label(label: &Option<String>) -> String {
         .as_deref()
         .map(|l| format!("[{l}] "))
         .unwrap_or_default()
-}
-
-/// 缩短地址显示：0x1234...abcd
-fn shorten_address(addr: &str) -> String {
-    if addr.len() > 16 {
-        format!("{}...{}", &addr[..8], &addr[addr.len() - 6..])
-    } else {
-        addr.to_string()
-    }
 }

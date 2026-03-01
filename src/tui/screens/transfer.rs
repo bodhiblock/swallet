@@ -21,7 +21,7 @@ pub fn render(frame: &mut Frame, state: &UiState) {
 
     let [_, center, _] = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(60),
+        Constraint::Length(70),
         Constraint::Fill(1),
     ])
     .areas(center_v);
@@ -53,15 +53,8 @@ fn render_select_asset(frame: &mut Frame, area: ratatui::layout::Rect, state: &U
     ])
     .areas(inner);
 
-    // From address
-    let from_line = Line::from(vec![
-        Span::styled(" 从: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            shorten_address(&state.transfer_from_address),
-            Style::default().fg(Color::Yellow),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(from_line), info_area);
+    // From address + label
+    frame.render_widget(Paragraph::new(Line::from(from_spans(state))), info_area);
 
     // Asset list
     let items: Vec<ListItem> = state
@@ -101,13 +94,7 @@ fn render_input_address(frame: &mut Frame, area: ratatui::layout::Rect, state: &
 
     let mut lines = vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled(" 从: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                shorten_address(&state.transfer_from_address),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
+        Line::from(from_spans(state)),
         Line::from(vec![
             Span::styled(" 资产: ", Style::default().fg(Color::DarkGray)),
             Span::styled(asset_label, Style::default().fg(Color::Cyan)),
@@ -144,13 +131,7 @@ fn render_input_amount(frame: &mut Frame, area: ratatui::layout::Rect, state: &U
 
     let mut lines = vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled(" 从: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                shorten_address(&state.transfer_from_address),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
+        Line::from(from_spans(state)),
         Line::from(vec![
             Span::styled(" 资产: ", Style::default().fg(Color::DarkGray)),
             Span::styled(asset_label, Style::default().fg(Color::Cyan)),
@@ -158,7 +139,7 @@ fn render_input_amount(frame: &mut Frame, area: ratatui::layout::Rect, state: &U
         Line::from(vec![
             Span::styled(" 到: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                shorten_address(&state.transfer_to_address),
+                state.transfer_to_address.as_str(),
                 Style::default().fg(Color::Yellow),
             ),
         ]),
@@ -211,17 +192,11 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("   从: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                shorten_address(&state.transfer_from_address),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
+        Line::from(from_spans(state)),
         Line::from(vec![
             Span::styled("   到: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                shorten_address(&state.transfer_to_address),
+                state.transfer_to_address.as_str(),
                 Style::default().fg(Color::Yellow),
             ),
         ]),
@@ -355,10 +330,22 @@ fn append_hint<'a>(lines: &mut Vec<Line<'a>>, hint: &'a str) {
     )));
 }
 
-fn shorten_address(addr: &str) -> String {
-    if addr.len() > 16 {
-        format!("{}...{}", &addr[..8], &addr[addr.len() - 6..])
-    } else {
-        addr.to_string()
+/// 构建 "从: 地址 (备注)" 的 spans
+fn from_spans<'a>(state: &'a UiState) -> Vec<Span<'a>> {
+    let mut spans = vec![
+        Span::styled(" 从: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            state.transfer_from_address.as_str(),
+            Style::default().fg(Color::Yellow),
+        ),
+    ];
+    if let Some(ref label) = state.transfer_from_label
+        && !label.is_empty()
+    {
+        spans.push(Span::styled(
+            format!(" ({label})"),
+            Style::default().fg(Color::DarkGray),
+        ));
     }
+    spans
 }

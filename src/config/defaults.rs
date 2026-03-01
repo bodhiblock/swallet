@@ -14,7 +14,7 @@ fn default_evm_chains() -> Vec<EvmChainConfig> {
     vec![
         EvmChainConfig {
             id: "eth-mainnet".into(),
-            name: "Ethereum Mainnet".into(),
+            name: "Ethereum".into(),
             rpc_url: "https://eth.llamarpc.com".into(),
             chain_id: 1,
             native_symbol: "ETH".into(),
@@ -36,7 +36,7 @@ fn default_evm_chains() -> Vec<EvmChainConfig> {
         },
         EvmChainConfig {
             id: "bsc-mainnet".into(),
-            name: "BNB Smart Chain".into(),
+            name: "BSC".into(),
             rpc_url: "https://bsc-dataseed.binance.org".into(),
             chain_id: 56,
             native_symbol: "BNB".into(),
@@ -63,7 +63,7 @@ fn default_solana_chains() -> Vec<SolanaChainConfig> {
     vec![
         SolanaChainConfig {
             id: "solana-mainnet".into(),
-            name: "Solana Mainnet".into(),
+            name: "Solana".into(),
             rpc_url: "https://api.mainnet-beta.solana.com".into(),
             native_symbol: "SOL".into(),
             native_decimals: 9,
@@ -78,7 +78,7 @@ fn default_solana_chains() -> Vec<SolanaChainConfig> {
         },
         SolanaChainConfig {
             id: "nara-mainnet".into(),
-            name: "Nara Network".into(),
+            name: "Nara".into(),
             rpc_url: "https://mainnet-api.nara.build/".into(),
             native_symbol: "NSO".into(),
             native_decimals: 9,

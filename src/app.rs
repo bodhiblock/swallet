@@ -192,6 +192,12 @@ impl App {
             Some(s) => s.clone(),
             None => return,
         };
+
+        // 如果缓存为空，先填充占位数据（所有链显示 -）
+        if self.balance_cache.is_empty() {
+            self.balance_cache = registry::build_placeholder_cache(&self.config, &store);
+        }
+
         let config = self.config.clone();
         let tx = self.bg_tx.clone();
         self.loading_balances = true;
@@ -1242,7 +1248,7 @@ impl App {
             None => return,
         };
 
-        let (wallet_index, chain_type, address, account_index) = match &context {
+        let (wallet_index, chain_type, address, label, account_index) = match &context {
             ActionContext::MnemonicAddress {
                 wallet_index,
                 chain_type,
@@ -1256,14 +1262,14 @@ impl App {
                     Some(w) => w,
                     None => return,
                 };
-                let addr = match (&wallet.wallet_type, chain_type) {
+                let (addr, lbl) = match (&wallet.wallet_type, chain_type) {
                     (
                         WalletType::Mnemonic {
                             eth_accounts, ..
                         },
                         ChainType::Ethereum,
                     ) => match eth_accounts.get(*account_index) {
-                        Some(acc) => acc.address.clone(),
+                        Some(acc) => (acc.address.clone(), acc.label.clone()),
                         None => return,
                     },
                     (
@@ -1272,12 +1278,12 @@ impl App {
                         },
                         ChainType::Solana,
                     ) => match sol_accounts.get(*account_index) {
-                        Some(acc) => acc.address.clone(),
+                        Some(acc) => (acc.address.clone(), acc.label.clone()),
                         None => return,
                     },
                     _ => return,
                 };
-                (*wallet_index, chain_type.clone(), addr, Some(*account_index))
+                (*wallet_index, chain_type.clone(), addr, lbl, Some(*account_index))
             }
             ActionContext::PrivateKeyAddress { wallet_index } => {
                 let store = match &self.store {
@@ -1292,8 +1298,15 @@ impl App {
                     WalletType::PrivateKey {
                         chain_type,
                         address,
+                        label,
                         ..
-                    } => (*wallet_index, chain_type.clone(), address.clone(), None),
+                    } => (
+                        *wallet_index,
+                        chain_type.clone(),
+                        address.clone(),
+                        label.clone(),
+                        None,
+                    ),
                     _ => return,
                 }
             }
@@ -1301,8 +1314,12 @@ impl App {
         };
 
         let assets = match chain_type {
-            ChainType::Ethereum => transfer::build_eth_assets(&self.config),
-            ChainType::Solana => transfer::build_sol_assets(&self.config),
+            ChainType::Ethereum => {
+                transfer::build_eth_assets(&self.config, &address, &self.balance_cache)
+            }
+            ChainType::Solana => {
+                transfer::build_sol_assets(&self.config, &address, &self.balance_cache)
+            }
         };
 
         if assets.is_empty() {
@@ -1311,8 +1328,14 @@ impl App {
             return;
         }
 
-        self.ui
-            .enter_transfer(address, chain_type, wallet_index, account_index, assets);
+        self.ui.enter_transfer(
+            address,
+            label,
+            chain_type,
+            wallet_index,
+            account_index,
+            assets,
+        );
     }
 
     fn handle_transfer_key(&mut self, key: KeyEvent) {

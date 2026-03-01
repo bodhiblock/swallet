@@ -271,6 +271,7 @@ pub struct UiState {
     // 转账流程
     pub transfer_step: TransferStep,
     pub transfer_from_address: String,
+    pub transfer_from_label: Option<String>,
     pub transfer_chain_type: ChainType,
     pub transfer_wallet_index: usize,
     pub transfer_account_index: Option<usize>,
@@ -336,6 +337,7 @@ impl UiState {
 
             transfer_step: TransferStep::SelectAsset,
             transfer_from_address: String::new(),
+            transfer_from_label: None,
             transfer_chain_type: ChainType::Ethereum,
             transfer_wallet_index: 0,
             transfer_account_index: None,
@@ -388,6 +390,7 @@ impl UiState {
     pub fn enter_transfer(
         &mut self,
         from_address: String,
+        from_label: Option<String>,
         chain_type: ChainType,
         wallet_index: usize,
         account_index: Option<usize>,
@@ -396,6 +399,7 @@ impl UiState {
         self.screen = Screen::Transfer;
         self.transfer_step = TransferStep::SelectAsset;
         self.transfer_from_address = from_address;
+        self.transfer_from_label = from_label;
         self.transfer_chain_type = chain_type;
         self.transfer_wallet_index = wallet_index;
         self.transfer_account_index = account_index;

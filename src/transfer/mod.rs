@@ -1,6 +1,7 @@
 pub mod eth_transfer;
 pub mod sol_transfer;
 
+use crate::chain::{format_balance, BalanceCache};
 use crate::config::AppConfig;
 use crate::storage::data::ChainType;
 
@@ -16,6 +17,8 @@ pub struct TransferableAsset {
     pub asset_kind: AssetKind,
     pub symbol: String,
     pub decimals: u8,
+    /// 当前余额（最小单位），None 表示未查询
+    pub balance: Option<u128>,
 }
 
 /// 资产类型
@@ -28,12 +31,44 @@ pub enum AssetKind {
 
 impl TransferableAsset {
     pub fn display_label(&self) -> String {
-        format!("[{}] {}", self.chain_name, self.symbol)
+        let bal = match self.balance {
+            Some(b) => format_balance(b, self.decimals),
+            None => "-".to_string(),
+        };
+        format!("[{}] {} {}", self.chain_name, bal, self.symbol)
+    }
+}
+
+/// 从 BalanceCache 中查找某地址在某链上某资产的余额
+fn lookup_balance(
+    cache: &BalanceCache,
+    address: &str,
+    chain_id: &str,
+    symbol: &str,
+    is_native: bool,
+) -> Option<u128> {
+    let portfolio = cache.get(address)?;
+    let chain_bal = portfolio.chains.iter().find(|c| c.chain_id == chain_id)?;
+    if chain_bal.rpc_failed {
+        return None;
+    }
+    if is_native {
+        Some(chain_bal.native_balance)
+    } else {
+        chain_bal
+            .tokens
+            .iter()
+            .find(|t| t.symbol == symbol)
+            .map(|t| t.balance)
     }
 }
 
 /// 构建 EVM 链可转账资产列表
-pub fn build_eth_assets(config: &AppConfig) -> Vec<TransferableAsset> {
+pub fn build_eth_assets(
+    config: &AppConfig,
+    address: &str,
+    cache: &BalanceCache,
+) -> Vec<TransferableAsset> {
     let mut assets = Vec::new();
     for chain in &config.chains.ethereum {
         assets.push(TransferableAsset {
@@ -45,6 +80,7 @@ pub fn build_eth_assets(config: &AppConfig) -> Vec<TransferableAsset> {
             asset_kind: AssetKind::Native,
             symbol: chain.native_symbol.clone(),
             decimals: chain.native_decimals,
+            balance: lookup_balance(cache, address, &chain.id, "", true),
         });
         for token in &chain.tokens {
             assets.push(TransferableAsset {
@@ -58,6 +94,7 @@ pub fn build_eth_assets(config: &AppConfig) -> Vec<TransferableAsset> {
                 },
                 symbol: token.symbol.clone(),
                 decimals: token.decimals,
+                balance: lookup_balance(cache, address, &chain.id, &token.symbol, false),
             });
         }
     }
@@ -65,7 +102,11 @@ pub fn build_eth_assets(config: &AppConfig) -> Vec<TransferableAsset> {
 }
 
 /// 构建 Solana 链可转账资产列表
-pub fn build_sol_assets(config: &AppConfig) -> Vec<TransferableAsset> {
+pub fn build_sol_assets(
+    config: &AppConfig,
+    address: &str,
+    cache: &BalanceCache,
+) -> Vec<TransferableAsset> {
     let mut assets = Vec::new();
     for chain in &config.chains.solana {
         assets.push(TransferableAsset {
@@ -77,6 +118,7 @@ pub fn build_sol_assets(config: &AppConfig) -> Vec<TransferableAsset> {
             asset_kind: AssetKind::Native,
             symbol: chain.native_symbol.clone(),
             decimals: chain.native_decimals,
+            balance: lookup_balance(cache, address, &chain.id, "", true),
         });
         for token in &chain.tokens {
             assets.push(TransferableAsset {
@@ -91,6 +133,7 @@ pub fn build_sol_assets(config: &AppConfig) -> Vec<TransferableAsset> {
                 },
                 symbol: token.symbol.clone(),
                 decimals: token.decimals,
+                balance: lookup_balance(cache, address, &chain.id, &token.symbol, false),
             });
         }
     }
