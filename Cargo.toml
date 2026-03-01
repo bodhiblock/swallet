@@ -20,7 +20,6 @@ toml = "0.8"
 argon2 = "0.5"
 aes-gcm = "0.10"
 rand = "0.8"
-zeroize = { version = "1", features = ["derive"] }
 
 # 密钥管理
 bip39 = { version = "2", features = ["rand"] }
@@ -29,7 +28,6 @@ hmac = "0.12"
 sha2 = "0.10"
 sha3 = "0.10"
 k256 = { version = "0.13", features = ["ecdsa"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
 bs58 = "0.5"
 hex = "0.4"
 
@@ -46,3 +44,5 @@ dirs = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3.32"
+solana-sdk = "2"
+anchor-lang = { version = "0.31.0", features = ["idl-build"] }

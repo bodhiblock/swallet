@@ -127,26 +127,25 @@ fn collect_addresses(store: &WalletStore) -> (Vec<String>, Vec<String>) {
     (eth_addresses, sol_addresses)
 }
 
-/// 查询所有钱包地址的余额（全并发）
+/// 查询所有钱包地址的余额（全并发，每个查询独立 task）
 pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> BalanceCache {
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(5))
+        .connect_timeout(std::time::Duration::from_secs(3))
         .build()
         .unwrap_or_default();
 
     let (eth_addresses, sol_addresses) = collect_addresses(store);
 
-    type BalanceFut = std::pin::Pin<Box<dyn std::future::Future<Output = (String, ChainBalance)> + Send>>;
-
-    // 收集所有查询 future，一次性并发执行
-    let mut futs: Vec<BalanceFut> = Vec::new();
+    // 每个 (地址, 链) 独立 spawn，真正多线程并发
+    let mut handles = Vec::new();
 
     for address in &eth_addresses {
         for evm_config in &config.chains.ethereum {
             let client = client.clone();
             let cfg = evm_config.clone();
             let addr = address.clone();
-            futs.push(Box::pin(async move {
+            handles.push(tokio::spawn(async move {
                 let balance = query_evm_balance(&client, &cfg, &addr)
                     .await
                     .unwrap_or(ChainBalance {
@@ -169,7 +168,7 @@ pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> Bala
             let client = client.clone();
             let cfg = sol_config.clone();
             let addr = address.clone();
-            futs.push(Box::pin(async move {
+            handles.push(tokio::spawn(async move {
                 let balance = query_sol_balance(&client, &cfg, &addr)
                     .await
                     .unwrap_or(ChainBalance {
@@ -187,11 +186,11 @@ pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> Bala
         }
     }
 
-    // 全部并发执行，汇总结果
-    let results = join_all(futs).await;
+    // 等待所有 task 完成
+    let results = join_all(handles).await;
 
     let mut cache: BalanceCache = HashMap::new();
-    for (addr, balance) in results {
+    for (addr, balance) in results.into_iter().flatten() {
         cache
             .entry(addr.clone())
             .or_insert_with(|| AddressPortfolio {

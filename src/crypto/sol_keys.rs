@@ -1,6 +1,7 @@
-use ed25519_dalek::SigningKey;
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
+use solana_sdk::signer::keypair::Keypair;
+use solana_sdk::signer::Signer;
 
 use crate::error::CryptoError;
 
@@ -70,9 +71,8 @@ pub fn private_key_to_sol_address(private_key: &[u8]) -> Result<String, CryptoEr
         .try_into()
         .map_err(|_| CryptoError::KeyDerivationFailed("私钥长度必须为 32 字节".into()))?;
 
-    let signing_key = SigningKey::from_bytes(&key_bytes);
-    let verifying_key = signing_key.verifying_key();
-    Ok(bs58::encode(verifying_key.as_bytes()).into_string())
+    let keypair = Keypair::new_from_array(key_bytes);
+    Ok(keypair.pubkey().to_string())
 }
 
 /// 从 Base58 编码的私钥解析并返回地址
@@ -90,14 +90,14 @@ pub fn bs58_private_key_to_address(bs58_key: &str) -> Result<String, CryptoError
             let key_bytes: [u8; 32] = bytes[..32]
                 .try_into()
                 .map_err(|_| CryptoError::KeyDerivationFailed("私钥解析失败".into()))?;
-            let signing_key = SigningKey::from_bytes(&key_bytes);
-            let derived_pubkey = signing_key.verifying_key();
-            if derived_pubkey.as_bytes() != &bytes[32..] {
+            let keypair = Keypair::new_from_array(key_bytes);
+            let derived_pubkey = keypair.pubkey();
+            if derived_pubkey.to_bytes() != bytes[32..] {
                 return Err(CryptoError::KeyDerivationFailed(
                     "Keypair 公钥不匹配：后 32 字节与私钥派生的公钥不一致".into(),
                 ));
             }
-            Ok(bs58::encode(derived_pubkey.as_bytes()).into_string())
+            Ok(derived_pubkey.to_string())
         }
         32 => private_key_to_sol_address(&bytes),
         _ => Err(CryptoError::KeyDerivationFailed(

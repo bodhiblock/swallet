@@ -1,7 +1,8 @@
-use ed25519_dalek::{Signer, SigningKey};
 use reqwest::Client;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
+use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signer::keypair::Keypair;
+use solana_sdk::signer::Signer;
 
 /// 发送 SOL 原生转账
 pub async fn send_sol_native(
@@ -14,8 +15,8 @@ pub async fn send_sol_native(
     let key_bytes: [u8; 32] = private_key
         .try_into()
         .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
-    let signing_key = SigningKey::from_bytes(&key_bytes);
-    let from_pubkey = signing_key.verifying_key().to_bytes();
+    let keypair = Keypair::new_from_array(key_bytes);
+    let from_pubkey = keypair.pubkey().to_bytes();
 
     let to_pubkey: [u8; 32] = bs58::decode(to)
         .into_vec()
@@ -54,8 +55,10 @@ pub async fn send_sol_native(
     );
 
     let message_bytes = serialize_message(&message);
-    let signature = signing_key.sign(&message_bytes);
-    let tx_bytes = build_transaction(&[signature.to_bytes()], &message_bytes);
+    let sig = keypair.sign_message(&message_bytes);
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(sig.as_ref());
+    let tx_bytes = build_transaction(&[sig_bytes], &message_bytes);
 
     send_transaction(client, rpc_url, &tx_bytes).await
 }
@@ -73,8 +76,8 @@ pub async fn send_spl_token(
     let key_bytes: [u8; 32] = private_key
         .try_into()
         .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
-    let signing_key = SigningKey::from_bytes(&key_bytes);
-    let from_pubkey = signing_key.verifying_key().to_bytes();
+    let keypair = Keypair::new_from_array(key_bytes);
+    let from_pubkey = keypair.pubkey().to_bytes();
 
     let mint_pubkey: [u8; 32] = bs58::decode(mint)
         .into_vec()
@@ -188,8 +191,10 @@ pub async fn send_spl_token(
 
     let message = build_message(&from_pubkey, &recent_blockhash, &instructions);
     let message_bytes = serialize_message(&message);
-    let signature = signing_key.sign(&message_bytes);
-    let tx_bytes = build_transaction(&[signature.to_bytes()], &message_bytes);
+    let sig = keypair.sign_message(&message_bytes);
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(sig.as_ref());
+    let tx_bytes = build_transaction(&[sig_bytes], &message_bytes);
 
     send_transaction(client, rpc_url, &tx_bytes).await
 }
@@ -401,24 +406,12 @@ pub(crate) fn find_associated_token_address(
     token_program: &[u8; 32],
     ata_program: &[u8; 32],
 ) -> Result<[u8; 32], String> {
-    for nonce in (0..=255u8).rev() {
-        let mut hasher = Sha256::new();
-        hasher.update(wallet);
-        hasher.update(token_program);
-        hasher.update(mint);
-        hasher.update([nonce]);
-        hasher.update(ata_program);
-        hasher.update(b"ProgramDerivedAddress");
-        let hash = hasher.finalize();
-
-        let bytes: [u8; 32] = hash.into();
-
-        // PDA must NOT be on ed25519 curve
-        if ed25519_dalek::VerifyingKey::from_bytes(&bytes).is_err() {
-            return Ok(bytes);
-        }
-    }
-    Err("无法生成 ATA 地址".into())
+    let ata_program_id = Pubkey::new_from_array(*ata_program);
+    let (pda, _bump) = Pubkey::find_program_address(
+        &[wallet, token_program, mint],
+        &ata_program_id,
+    );
+    Ok(pda.to_bytes())
 }
 
 // ========== RPC 辅助 ==========

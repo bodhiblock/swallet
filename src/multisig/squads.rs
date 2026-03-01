@@ -1,13 +1,35 @@
-use ed25519_dalek::{Signer, SigningKey};
 use reqwest::Client;
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signer::keypair::Keypair;
+use solana_sdk::signer::Signer;
+use std::str::FromStr;
 
 use super::{
-    anchor_account_discriminator, anchor_instruction_discriminator, derive_proposal_pda,
-    derive_transaction_pda, derive_vault_pda, squads_program_id, MultisigInfo, MultisigMember,
-    ProposalInfo, ProposalStatus,
+    derive_multisig_pda, derive_program_config_pda,
+    derive_proposal_pda, derive_transaction_pda, derive_vault_pda,
+    MultisigInfo, MultisigMember, ProposalInfo, ProposalStatus,
 };
 use crate::transfer::sol_transfer::{self, AccountMeta, Instruction};
+
+// ========== Anchor 判别码（私有辅助） ==========
+
+fn anchor_instruction_discriminator(name: &str) -> [u8; 8] {
+    let input = format!("global:{name}");
+    let hash = Sha256::digest(input.as_bytes());
+    let mut disc = [0u8; 8];
+    disc.copy_from_slice(&hash[..8]);
+    disc
+}
+
+fn anchor_account_discriminator(name: &str) -> [u8; 8] {
+    let input = format!("account:{name}");
+    let hash = Sha256::digest(input.as_bytes());
+    let mut disc = [0u8; 8];
+    disc.copy_from_slice(&hash[..8]);
+    disc
+}
 
 // ========== 账户数据解析 ==========
 
@@ -18,7 +40,9 @@ pub async fn fetch_multisig(
     multisig_address: &str,
 ) -> Result<MultisigInfo, String> {
     let data = fetch_account_data(client, rpc_url, multisig_address).await?;
-    parse_multisig_account(&data, multisig_address)
+    let address = Pubkey::from_str(multisig_address)
+        .map_err(|e| format!("无效的多签地址: {e}"))?;
+    parse_multisig_account(&data, address)
 }
 
 /// 从 RPC 获取并解析 Proposal 账户
@@ -28,7 +52,9 @@ pub async fn fetch_proposal(
     proposal_address: &str,
 ) -> Result<ProposalInfo, String> {
     let data = fetch_account_data(client, rpc_url, proposal_address).await?;
-    parse_proposal_account(&data, proposal_address)
+    let address = Pubkey::from_str(proposal_address)
+        .map_err(|e| format!("无效的提案地址: {e}"))?;
+    parse_proposal_account(&data, address)
 }
 
 /// 获取多签的活跃提案列表
@@ -37,12 +63,6 @@ pub async fn fetch_active_proposals(
     rpc_url: &str,
     multisig: &MultisigInfo,
 ) -> Result<Vec<ProposalInfo>, String> {
-    let multisig_pubkey: [u8; 32] = bs58::decode(&multisig.address)
-        .into_vec()
-        .map_err(|e| format!("无效的多签地址: {e}"))?
-        .try_into()
-        .map_err(|_| "多签地址长度无效".to_string())?;
-
     let mut proposals = Vec::new();
 
     // 从最新的交易开始向前查找，最多查找 20 个
@@ -50,11 +70,8 @@ pub async fn fetch_active_proposals(
     let end = if start > 20 { start - 20 } else { 1 };
 
     for idx in (end..=start).rev() {
-        let (proposal_pda, _) = match derive_proposal_pda(&multisig_pubkey, idx) {
-            Ok(pda) => pda,
-            Err(_) => continue,
-        };
-        let proposal_addr = bs58::encode(&proposal_pda).into_string();
+        let (proposal_pda, _) = derive_proposal_pda(&multisig.address, idx);
+        let proposal_addr = proposal_pda.to_string();
 
         match fetch_proposal(client, rpc_url, &proposal_addr).await {
             Ok(proposal) => {
@@ -71,7 +88,7 @@ pub async fn fetch_active_proposals(
 }
 
 /// 解析 Multisig 账户数据
-fn parse_multisig_account(data: &[u8], address: &str) -> Result<MultisigInfo, String> {
+fn parse_multisig_account(data: &[u8], address: Pubkey) -> Result<MultisigInfo, String> {
     let expected_disc = anchor_account_discriminator("Multisig");
     if data.len() < 8 {
         return Err("数据太短".into());
@@ -100,13 +117,11 @@ fn parse_multisig_account(data: &[u8], address: &str) -> Result<MultisigInfo, St
     for _ in 0..members_len {
         let key = read_pubkey(data, &mut offset)?;
         let permissions = read_u8(data, &mut offset)?;
-        // Permissions 结构在 Anchor 中可能有 padding
-        // Squads v4 的 Permissions 是 { mask: u8 }，但在 Anchor borsh 序列化中只占 1 字节
         members.push(MultisigMember { key, permissions });
     }
 
     Ok(MultisigInfo {
-        address: address.to_string(),
+        address,
         create_key,
         config_authority,
         threshold,
@@ -120,7 +135,7 @@ fn parse_multisig_account(data: &[u8], address: &str) -> Result<MultisigInfo, St
 }
 
 /// 解析 Proposal 账户数据
-fn parse_proposal_account(data: &[u8], address: &str) -> Result<ProposalInfo, String> {
+fn parse_proposal_account(data: &[u8], address: Pubkey) -> Result<ProposalInfo, String> {
     let expected_disc = anchor_account_discriminator("Proposal");
     if data.len() < 8 {
         return Err("数据太短".into());
@@ -173,7 +188,7 @@ fn parse_proposal_account(data: &[u8], address: &str) -> Result<ProposalInfo, St
     let bump = read_u8(data, &mut offset)?;
 
     Ok(ProposalInfo {
-        address: address.to_string(),
+        address,
         multisig,
         transaction_index,
         status,
@@ -198,32 +213,24 @@ pub async fn create_proposal_and_approve(
     let key_bytes: [u8; 32] = private_key
         .try_into()
         .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
-    let signing_key = SigningKey::from_bytes(&key_bytes);
-    let creator_pubkey = signing_key.verifying_key().to_bytes();
+    let keypair = Keypair::new_from_array(key_bytes);
+    let creator_pubkey = keypair.pubkey();
 
-    let multisig_pubkey: [u8; 32] = bs58::decode(multisig_address)
-        .into_vec()
-        .map_err(|e| format!("无效的多签地址: {e}"))?
-        .try_into()
-        .map_err(|_| "多签地址长度无效".to_string())?;
+    let multisig_pubkey = Pubkey::from_str(multisig_address)
+        .map_err(|e| format!("无效的多签地址: {e}"))?;
 
     // 获取当前 multisig 的 transaction_index
     let multisig_info = fetch_multisig(client, rpc_url, multisig_address).await?;
     let new_tx_index = multisig_info.transaction_index + 1;
 
-    let program_id = squads_program_id();
+    let program_id = crate::squads_multisig_program::ID;
 
     // 推导 PDA
-    let (transaction_pda, _) = derive_transaction_pda(&multisig_pubkey, new_tx_index)?;
-    let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, new_tx_index)?;
-    let (_vault_pda, _) = derive_vault_pda(&multisig_pubkey, vault_index)?;
+    let (transaction_pda, _) = derive_transaction_pda(&multisig_pubkey, new_tx_index);
+    let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, new_tx_index);
 
-    let rent_sysvar: [u8; 32] = bs58::decode("SysvarRent111111111111111111111111111111111")
-        .into_vec()
-        .unwrap()
-        .try_into()
-        .unwrap();
-    let system_program = [0u8; 32];
+    let rent_sysvar = Pubkey::from_str("SysvarRent111111111111111111111111111111111").unwrap();
+    let system_program = Pubkey::default(); // 11111111111111111111111111111111
 
     // ===== 指令 1: vault_transaction_create =====
     let vault_tx_create_disc = anchor_instruction_discriminator("vault_transaction_create");
@@ -246,13 +253,13 @@ pub async fn create_proposal_and_approve(
     vault_tx_data.push(0);
 
     let vault_tx_create_ix = Instruction {
-        program_id,
+        program_id: program_id.to_bytes(),
         accounts: vec![
-            AccountMeta { pubkey: multisig_pubkey, is_signer: false, is_writable: true },
-            AccountMeta { pubkey: transaction_pda, is_signer: false, is_writable: true },
-            AccountMeta { pubkey: creator_pubkey, is_signer: true, is_writable: true },
-            AccountMeta { pubkey: rent_sysvar, is_signer: false, is_writable: false },
-            AccountMeta { pubkey: system_program, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: multisig_pubkey.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: transaction_pda.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: creator_pubkey.to_bytes(), is_signer: true, is_writable: true },
+            AccountMeta { pubkey: rent_sysvar.to_bytes(), is_signer: false, is_writable: false },
+            AccountMeta { pubkey: system_program.to_bytes(), is_signer: false, is_writable: false },
         ],
         data: vault_tx_data,
     };
@@ -268,13 +275,13 @@ pub async fn create_proposal_and_approve(
     proposal_data.push(0);
 
     let proposal_create_ix = Instruction {
-        program_id,
+        program_id: program_id.to_bytes(),
         accounts: vec![
-            AccountMeta { pubkey: multisig_pubkey, is_signer: false, is_writable: true },
-            AccountMeta { pubkey: proposal_pda, is_signer: false, is_writable: true },
-            AccountMeta { pubkey: creator_pubkey, is_signer: true, is_writable: true },
-            AccountMeta { pubkey: rent_sysvar, is_signer: false, is_writable: false },
-            AccountMeta { pubkey: system_program, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: multisig_pubkey.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: proposal_pda.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: creator_pubkey.to_bytes(), is_signer: true, is_writable: true },
+            AccountMeta { pubkey: rent_sysvar.to_bytes(), is_signer: false, is_writable: false },
+            AccountMeta { pubkey: system_program.to_bytes(), is_signer: false, is_writable: false },
         ],
         data: proposal_data,
     };
@@ -288,11 +295,11 @@ pub async fn create_proposal_and_approve(
     approve_data.push(0);
 
     let proposal_approve_ix = Instruction {
-        program_id,
+        program_id: program_id.to_bytes(),
         accounts: vec![
-            AccountMeta { pubkey: multisig_pubkey, is_signer: false, is_writable: false },
-            AccountMeta { pubkey: creator_pubkey, is_signer: true, is_writable: false },
-            AccountMeta { pubkey: proposal_pda, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: multisig_pubkey.to_bytes(), is_signer: false, is_writable: false },
+            AccountMeta { pubkey: creator_pubkey.to_bytes(), is_signer: true, is_writable: false },
+            AccountMeta { pubkey: proposal_pda.to_bytes(), is_signer: false, is_writable: true },
         ],
         data: approve_data,
     };
@@ -301,13 +308,15 @@ pub async fn create_proposal_and_approve(
     let recent_blockhash = sol_transfer::get_latest_blockhash(client, rpc_url).await?;
 
     let message_bytes = sol_transfer::build_and_serialize_message(
-        &creator_pubkey,
+        &creator_pubkey.to_bytes(),
         &recent_blockhash,
         &[vault_tx_create_ix, proposal_create_ix, proposal_approve_ix],
     );
 
-    let signature = signing_key.sign(&message_bytes);
-    let tx_bytes = sol_transfer::build_transaction(&[signature.to_bytes()], &message_bytes);
+    let sig = keypair.sign_message(&message_bytes);
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(sig.as_ref());
+    let tx_bytes = sol_transfer::build_transaction(&[sig_bytes], &message_bytes);
 
     sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await
 }
@@ -346,17 +355,14 @@ async fn send_vote_instruction(
     let key_bytes: [u8; 32] = private_key
         .try_into()
         .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
-    let signing_key = SigningKey::from_bytes(&key_bytes);
-    let member_pubkey = signing_key.verifying_key().to_bytes();
+    let keypair = Keypair::new_from_array(key_bytes);
+    let member_pubkey = keypair.pubkey();
 
-    let multisig_pubkey: [u8; 32] = bs58::decode(multisig_address)
-        .into_vec()
-        .map_err(|e| format!("无效的多签地址: {e}"))?
-        .try_into()
-        .map_err(|_| "多签地址长度无效".to_string())?;
+    let multisig_pubkey = Pubkey::from_str(multisig_address)
+        .map_err(|e| format!("无效的多签地址: {e}"))?;
 
-    let program_id = squads_program_id();
-    let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index)?;
+    let program_id = crate::squads_multisig_program::ID;
+    let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index);
 
     let disc = anchor_instruction_discriminator(instruction_name);
     let mut data = Vec::new();
@@ -365,19 +371,21 @@ async fn send_vote_instruction(
     data.push(0);
 
     let ix = Instruction {
-        program_id,
+        program_id: program_id.to_bytes(),
         accounts: vec![
-            AccountMeta { pubkey: multisig_pubkey, is_signer: false, is_writable: false },
-            AccountMeta { pubkey: member_pubkey, is_signer: true, is_writable: false },
-            AccountMeta { pubkey: proposal_pda, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: multisig_pubkey.to_bytes(), is_signer: false, is_writable: false },
+            AccountMeta { pubkey: member_pubkey.to_bytes(), is_signer: true, is_writable: false },
+            AccountMeta { pubkey: proposal_pda.to_bytes(), is_signer: false, is_writable: true },
         ],
         data,
     };
 
     let recent_blockhash = sol_transfer::get_latest_blockhash(client, rpc_url).await?;
-    let message_bytes = sol_transfer::build_and_serialize_message(&member_pubkey, &recent_blockhash, &[ix]);
-    let signature = signing_key.sign(&message_bytes);
-    let tx_bytes = sol_transfer::build_transaction(&[signature.to_bytes()], &message_bytes);
+    let message_bytes = sol_transfer::build_and_serialize_message(&member_pubkey.to_bytes(), &recent_blockhash, &[ix]);
+    let sig = keypair.sign_message(&message_bytes);
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(sig.as_ref());
+    let tx_bytes = sol_transfer::build_transaction(&[sig_bytes], &message_bytes);
 
     sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await
 }
@@ -394,41 +402,159 @@ pub async fn execute_vault_transaction(
     let key_bytes: [u8; 32] = private_key
         .try_into()
         .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
-    let signing_key = SigningKey::from_bytes(&key_bytes);
-    let executor_pubkey = signing_key.verifying_key().to_bytes();
+    let keypair = Keypair::new_from_array(key_bytes);
+    let executor_pubkey = keypair.pubkey();
 
-    let multisig_pubkey: [u8; 32] = bs58::decode(multisig_address)
-        .into_vec()
-        .map_err(|e| format!("无效的多签地址: {e}"))?
-        .try_into()
-        .map_err(|_| "多签地址长度无效".to_string())?;
+    let multisig_pubkey = Pubkey::from_str(multisig_address)
+        .map_err(|e| format!("无效的多签地址: {e}"))?;
 
-    let program_id = squads_program_id();
-    let (transaction_pda, _) = derive_transaction_pda(&multisig_pubkey, transaction_index)?;
-    let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index)?;
-    let (vault_pda, _) = derive_vault_pda(&multisig_pubkey, vault_index)?;
+    let program_id = crate::squads_multisig_program::ID;
+    let (transaction_pda, _) = derive_transaction_pda(&multisig_pubkey, transaction_index);
+    let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index);
+    let (vault_pda, _) = derive_vault_pda(&multisig_pubkey, vault_index);
 
     let disc = anchor_instruction_discriminator("vault_transaction_execute");
     let data = disc.to_vec();
 
     let ix = Instruction {
-        program_id,
+        program_id: program_id.to_bytes(),
         accounts: vec![
-            AccountMeta { pubkey: multisig_pubkey, is_signer: false, is_writable: true },
-            AccountMeta { pubkey: executor_pubkey, is_signer: true, is_writable: true },
-            AccountMeta { pubkey: proposal_pda, is_signer: false, is_writable: true },
-            AccountMeta { pubkey: transaction_pda, is_signer: false, is_writable: false },
-            AccountMeta { pubkey: vault_pda, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: multisig_pubkey.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: executor_pubkey.to_bytes(), is_signer: true, is_writable: true },
+            AccountMeta { pubkey: proposal_pda.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: transaction_pda.to_bytes(), is_signer: false, is_writable: false },
+            AccountMeta { pubkey: vault_pda.to_bytes(), is_signer: false, is_writable: true },
         ],
         data,
     };
 
     let recent_blockhash = sol_transfer::get_latest_blockhash(client, rpc_url).await?;
-    let message_bytes = sol_transfer::build_and_serialize_message(&executor_pubkey, &recent_blockhash, &[ix]);
-    let signature = signing_key.sign(&message_bytes);
-    let tx_bytes = sol_transfer::build_transaction(&[signature.to_bytes()], &message_bytes);
+    let message_bytes = sol_transfer::build_and_serialize_message(&executor_pubkey.to_bytes(), &recent_blockhash, &[ix]);
+    let sig = keypair.sign_message(&message_bytes);
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(sig.as_ref());
+    let tx_bytes = sol_transfer::build_transaction(&[sig_bytes], &message_bytes);
 
     sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await
+}
+
+/// 创建 Squads v4 多签 (MultisigCreateV2)
+///
+/// 返回多签 PDA 地址字符串
+pub async fn create_multisig_v2(
+    client: &Client,
+    rpc_url: &str,
+    creator_private_key: &[u8],
+    member_pubkeys: &[Pubkey],
+    threshold: u16,
+) -> Result<String, String> {
+    let key_bytes: [u8; 32] = creator_private_key
+        .try_into()
+        .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
+    let creator_keypair = Keypair::new_from_array(key_bytes);
+    let creator_pubkey = creator_keypair.pubkey();
+
+    // 生成随机 create_key（防前抢交易）
+    let create_key_keypair = Keypair::new();
+    let create_key_pubkey = create_key_keypair.pubkey();
+
+    // 推导 PDA
+    let (multisig_pda, _) = derive_multisig_pda(&create_key_pubkey);
+    let (program_config_pda, _) = derive_program_config_pda();
+
+    // 获取 ProgramConfig 以得到 treasury 地址
+    let config_data = fetch_account_data(client, rpc_url, &program_config_pda.to_string()).await?;
+    let treasury = parse_program_config_treasury(&config_data)?;
+
+    let program_id = crate::squads_multisig_program::ID;
+    let system_program = Pubkey::default();
+
+    // 构建成员列表（所有成员都有 Initiate+Vote+Execute 权限 = 7）
+    let all_permissions: u8 = 7; // 1(Initiate) | 2(Vote) | 4(Execute)
+
+    // 序列化 MultisigCreateArgsV2 指令数据
+    let disc = anchor_instruction_discriminator("multisig_create_v2");
+    let mut data = Vec::new();
+    data.extend_from_slice(&disc);
+    // configAuthority: Option<Pubkey> = None（自治多签）
+    data.push(0);
+    // threshold: u16
+    data.extend_from_slice(&threshold.to_le_bytes());
+    // members: Vec<Member> (Borsh: 4-byte len + N * (32 + 1))
+    data.extend_from_slice(&(member_pubkeys.len() as u32).to_le_bytes());
+    for member_key in member_pubkeys {
+        data.extend_from_slice(member_key.as_ref());
+        data.push(all_permissions); // permissions.mask
+    }
+    // timeLock: u32 = 0
+    data.extend_from_slice(&0u32.to_le_bytes());
+    // rentCollector: Option<Pubkey> = None
+    data.push(0);
+    // memo: Option<String> = None
+    data.push(0);
+
+    let ix = Instruction {
+        program_id: program_id.to_bytes(),
+        accounts: vec![
+            AccountMeta { pubkey: program_config_pda.to_bytes(), is_signer: false, is_writable: false },
+            AccountMeta { pubkey: treasury.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: multisig_pda.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: create_key_pubkey.to_bytes(), is_signer: true, is_writable: false },
+            AccountMeta { pubkey: creator_pubkey.to_bytes(), is_signer: true, is_writable: true },
+            AccountMeta { pubkey: system_program.to_bytes(), is_signer: false, is_writable: false },
+        ],
+        data,
+    };
+
+    // 构建交易（双签名：creator + create_key）
+    let recent_blockhash = sol_transfer::get_latest_blockhash(client, rpc_url).await?;
+
+    let message_bytes = sol_transfer::build_and_serialize_message(
+        &creator_pubkey.to_bytes(),
+        &recent_blockhash,
+        &[ix],
+    );
+
+    // creator 签名（payer，排在第一位）
+    let creator_sig = creator_keypair.sign_message(&message_bytes);
+    let mut creator_sig_bytes = [0u8; 64];
+    creator_sig_bytes.copy_from_slice(creator_sig.as_ref());
+
+    // create_key 签名
+    let create_key_sig = create_key_keypair.sign_message(&message_bytes);
+    let mut create_key_sig_bytes = [0u8; 64];
+    create_key_sig_bytes.copy_from_slice(create_key_sig.as_ref());
+
+    let tx_bytes = sol_transfer::build_transaction(
+        &[creator_sig_bytes, create_key_sig_bytes],
+        &message_bytes,
+    );
+
+    let tx_sig = sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await?;
+
+    // 返回多签 PDA 地址
+    Ok(format!("{}|{}", multisig_pda, tx_sig))
+}
+
+/// 从 ProgramConfig 账户数据中解析 treasury 地址
+fn parse_program_config_treasury(data: &[u8]) -> Result<Pubkey, String> {
+    let expected_disc = anchor_account_discriminator("ProgramConfig");
+    if data.len() < 8 {
+        return Err("ProgramConfig 数据太短".into());
+    }
+    if data[..8] != expected_disc {
+        return Err("不是 ProgramConfig 账户".into());
+    }
+
+    let mut offset = 8;
+    // authority: Pubkey (32 bytes)
+    let _authority = read_pubkey(data, &mut offset)?;
+    // multisig_creation_fee: u64 (8 bytes)
+    let _fee = read_u64(data, &mut offset)?;
+    // treasury: Pubkey (32 bytes)
+    let treasury = read_pubkey(data, &mut offset)?;
+
+    Ok(treasury)
 }
 
 // ========== RPC 辅助 ==========
@@ -520,17 +646,16 @@ fn read_i64(data: &[u8], offset: &mut usize) -> Result<i64, String> {
     Ok(val)
 }
 
-fn read_pubkey(data: &[u8], offset: &mut usize) -> Result<[u8; 32], String> {
+fn read_pubkey(data: &[u8], offset: &mut usize) -> Result<Pubkey, String> {
     if *offset + 32 > data.len() {
         return Err("数据不足".into());
     }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&data[*offset..*offset + 32]);
+    let bytes: [u8; 32] = data[*offset..*offset + 32].try_into().unwrap();
     *offset += 32;
-    Ok(key)
+    Ok(Pubkey::new_from_array(bytes))
 }
 
-fn read_option_pubkey(data: &[u8], offset: &mut usize) -> Result<Option<[u8; 32]>, String> {
+fn read_option_pubkey(data: &[u8], offset: &mut usize) -> Result<Option<Pubkey>, String> {
     let tag = read_u8(data, offset)?;
     if tag == 0 {
         Ok(None)
@@ -540,7 +665,7 @@ fn read_option_pubkey(data: &[u8], offset: &mut usize) -> Result<Option<[u8; 32]
     }
 }
 
-fn read_pubkey_vec(data: &[u8], offset: &mut usize) -> Result<Vec<[u8; 32]>, String> {
+fn read_pubkey_vec(data: &[u8], offset: &mut usize) -> Result<Vec<Pubkey>, String> {
     let len = read_u32(data, offset)? as usize;
     let mut keys = Vec::with_capacity(len);
     for _ in 0..len {

@@ -39,6 +39,10 @@ pub fn render(frame: &mut Frame, state: &UiState, multisigs: &[MultisigAccount])
         MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => render_confirm(frame, center, state),
         MultisigStep::Submitting => render_submitting(frame, center),
         MultisigStep::Result => render_result(frame, center, state),
+        MultisigStep::CreateSelectCreator => render_create_select_creator(frame, center, state),
+        MultisigStep::CreateInputMembers => render_create_input_members(frame, center, state),
+        MultisigStep::CreateInputThreshold => render_create_input_threshold(frame, center, state),
+        MultisigStep::CreateConfirm => render_create_confirm(frame, center, state),
     }
 }
 
@@ -78,6 +82,12 @@ fn render_list(
             ]))
         })
         .collect();
+
+    // 添加 "创建多签" 选项
+    items.push(ListItem::new(Line::from(Span::styled(
+        "  + 创建 Squads 多签 (Solana)",
+        Style::default().fg(Color::Green),
+    ))));
 
     // 添加 "导入多签" 选项
     items.push(ListItem::new(Line::from(Span::styled(
@@ -140,7 +150,7 @@ fn render_view_detail(frame: &mut Frame, area: ratatui::layout::Rect, state: &Ui
         lines.push(Line::from(vec![
             Span::styled(" 地址: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                shorten_address(&info.address),
+                shorten_address(&info.address.to_string()),
                 Style::default().fg(Color::Yellow),
             ),
         ]));
@@ -299,7 +309,7 @@ fn render_view_proposal(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         )));
         for addr in &proposal.approved {
             lines.push(Line::from(Span::styled(
-                format!("   {}", shorten_address(&bs58::encode(addr).into_string())),
+                format!("   {}", shorten_address(&addr.to_string())),
                 Style::default().fg(Color::DarkGray),
             )));
         }
@@ -311,7 +321,7 @@ fn render_view_proposal(frame: &mut Frame, area: ratatui::layout::Rect, state: &
             )));
             for addr in &proposal.rejected {
                 lines.push(Line::from(Span::styled(
-                    format!("   {}", shorten_address(&bs58::encode(addr).into_string())),
+                    format!("   {}", shorten_address(&addr.to_string())),
                     Style::default().fg(Color::DarkGray),
                 )));
             }
@@ -408,14 +418,8 @@ fn render_input_transfer_field(
         .ms_current_info
         .as_ref()
         .map(|i| {
-            let ms_pubkey: [u8; 32] = bs58::decode(&i.address)
-                .into_vec()
-                .unwrap_or_default()
-                .try_into()
-                .unwrap_or([0u8; 32]);
-            crate::multisig::derive_vault_pda(&ms_pubkey, 0)
-                .map(|(pda, _)| bs58::encode(&pda).into_string())
-                .unwrap_or_default()
+            let (vault_pda, _) = crate::multisig::derive_vault_pda(&i.address, 0);
+            vault_pda.to_string()
         })
         .unwrap_or_default();
 
@@ -615,6 +619,227 @@ fn render_result(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(color));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_create_select_creator(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+) {
+    let block = Block::default()
+        .title(" 创建多签 - 选择创建者 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [list_area, footer_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+
+    if state.ms_create_sol_addresses.is_empty() {
+        let msg = Paragraph::new(Line::from(Span::styled(
+            "  没有可用的 SOL 地址",
+            Style::default().fg(Color::Red),
+        )));
+        frame.render_widget(msg, list_area);
+    } else {
+        let items: Vec<ListItem> = state
+            .ms_create_sol_addresses
+            .iter()
+            .map(|(addr, label)| {
+                ListItem::new(Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(
+                        shorten_address(addr),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(
+                        format!("  {label}"),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]))
+            })
+            .collect();
+
+        let list = List::new(items).highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
+        let mut list_state = ListState::default();
+        list_state.select(Some(state.ms_create_creator_selected));
+        frame.render_stateful_widget(list, list_area, &mut list_state);
+    }
+
+    let footer = Paragraph::new(Line::from(Span::styled(
+        " ↑↓选择  Enter确认  Esc返回",
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(footer, footer_area);
+}
+
+fn render_create_input_members(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+) {
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            " 已添加的成员:",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+
+    if state.ms_create_members.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "   (尚未添加)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for (i, addr) in state.ms_create_members.iter().enumerate() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   {}. ", i + 1),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    shorten_address(addr),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " 输入成员地址:",
+        Style::default().fg(Color::White),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!(" > {}", state.ms_create_member_input),
+        Style::default().fg(Color::Yellow),
+    )));
+
+    append_status(&mut lines, state);
+    append_hint(&mut lines, " Enter添加  D完成  Esc返回");
+
+    let block = Block::default()
+        .title(" 创建多签 - 添加成员 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_create_input_threshold(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+) {
+    let member_count = state.ms_create_members.len();
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" 成员数: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{member_count}"),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(" 输入阈值 (1-{member_count}):"),
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            format!(" > {}", state.ms_create_threshold_input),
+            Style::default().fg(Color::Yellow),
+        )),
+    ];
+
+    append_status(&mut lines, state);
+    append_hint(&mut lines, " Enter确认  Esc返回");
+
+    let block = Block::default()
+        .title(" 创建多签 - 设置阈值 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_create_confirm(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+) {
+    let masked: String = "*".repeat(state.ms_confirm_password.len());
+
+    let creator_addr = state
+        .ms_create_sol_addresses
+        .get(state.ms_create_creator_selected)
+        .map(|(addr, _)| shorten_address(addr))
+        .unwrap_or_else(|| "未知".to_string());
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            " 创建 Squads 多签:",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("   创建者: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(creator_addr, Style::default().fg(Color::Yellow)),
+        ]),
+        Line::from(vec![
+            Span::styled("   成员数: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}", state.ms_create_members.len()),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("   阈值:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}/{}", state.ms_create_threshold_input, state.ms_create_members.len()),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            " 请输入密码确认:",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            format!(" > {masked}"),
+            Style::default().fg(Color::Yellow),
+        )),
+    ];
+
+    append_status(&mut lines, state);
+    append_hint(&mut lines, " Enter确认创建  Esc取消");
+
+    let block = Block::default()
+        .title(" 确认创建多签 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

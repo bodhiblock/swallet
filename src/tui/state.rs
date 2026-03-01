@@ -151,6 +151,15 @@ pub enum MultisigStep {
     Submitting,
     /// 操作结果
     Result,
+    // ---- 创建多签流程 ----
+    /// 选择创建者（本地 SOL 地址）
+    CreateSelectCreator,
+    /// 添加成员地址
+    CreateInputMembers,
+    /// 设置阈值
+    CreateInputThreshold,
+    /// 确认创建（输入密码）
+    CreateConfirm,
 }
 
 /// 多签投票类型
@@ -267,6 +276,12 @@ pub struct UiState {
     pub ms_confirm_password: String,
     pub ms_vote_action: Option<VoteAction>,
     pub ms_result: Option<(bool, String)>,
+    // 创建多签流程
+    pub ms_create_sol_addresses: Vec<(String, String)>, // (address, label)
+    pub ms_create_creator_selected: usize,
+    pub ms_create_members: Vec<String>,     // 已添加的成员地址
+    pub ms_create_member_input: String,     // 当前输入
+    pub ms_create_threshold_input: String,
 
     // 转账流程
     pub transfer_step: TransferStep,
@@ -334,6 +349,11 @@ impl UiState {
             ms_confirm_password: String::new(),
             ms_vote_action: None,
             ms_result: None,
+            ms_create_sol_addresses: Vec::new(),
+            ms_create_creator_selected: 0,
+            ms_create_members: Vec::new(),
+            ms_create_member_input: String::new(),
+            ms_create_threshold_input: String::new(),
 
             transfer_step: TransferStep::SelectAsset,
             transfer_from_address: String::new(),
@@ -428,6 +448,11 @@ impl UiState {
         self.ms_confirm_password.clear();
         self.ms_vote_action = None;
         self.ms_result = None;
+        self.ms_create_sol_addresses.clear();
+        self.ms_create_creator_selected = 0;
+        self.ms_create_members.clear();
+        self.ms_create_member_input.clear();
+        self.ms_create_threshold_input.clear();
         self.clear_status();
     }
 

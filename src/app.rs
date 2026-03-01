@@ -1,9 +1,10 @@
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
-use zeroize::Zeroize;
+use crate::crypto::SecureClear;
 
 use crate::chain::{registry, BalanceCache};
 use crate::config::AppConfig;
@@ -35,6 +36,7 @@ enum BgMessage {
     ProposalsFetched(Vec<multisig::ProposalInfo>),
     ProposalsFetchError(String),
     MultisigOpComplete { success: bool, message: String },
+    MultisigCreated(String), // 多签 PDA 地址
 }
 
 pub struct App {
@@ -143,6 +145,7 @@ impl App {
                     self.balance_cache = cache;
                     self.loading_balances = false;
                     self.last_refresh = Some(Instant::now());
+                    self.ui.clear_status();
                 }
                 BgMessage::BalanceFetchError(err) => {
                     self.loading_balances = false;
@@ -178,6 +181,11 @@ impl App {
                 BgMessage::MultisigOpComplete { success, message } => {
                     self.ui.ms_result = Some((success, message));
                     self.ui.ms_step = MultisigStep::Result;
+                }
+                BgMessage::MultisigCreated(multisig_address) => {
+                    // 创建成功后，自动导入该多签（触发 fetch）
+                    self.ui.ms_input_address = multisig_address;
+                    self.import_multisig();
                 }
             }
         }
@@ -345,7 +353,6 @@ impl App {
             }
             KeyCode::Char('r') => {
                 self.trigger_balance_refresh();
-                self.ui.set_status("正在刷新余额...");
             }
             KeyCode::Char('m') => {
                 self.ui.enter_multisig();
@@ -777,8 +784,8 @@ impl App {
         };
 
         // 清零敏感数据
-        seed.zeroize();
-        self.ui.mnemonic_buffer.zeroize();
+        seed.clear_sensitive();
+        self.ui.mnemonic_buffer.clear_sensitive();
         self.add_wallet(wallet);
     }
 
@@ -1031,12 +1038,12 @@ impl App {
             }
         };
 
-        phrase.zeroize();
+        phrase.clear_sensitive();
 
         // 派生新地址
         let eth_addr = eth_keys::derive_eth_address(&seed, eth_idx).ok();
         let sol_addr = sol_keys::derive_sol_address(&seed, sol_idx).ok();
-        seed.zeroize();
+        seed.clear_sensitive();
 
         // 修改 store（可变借用）
         if let Some(ref mut store) = self.store
@@ -1561,7 +1568,7 @@ impl App {
             } => {
                 let mut phrase = self.decrypt_inner_secret(encrypted_mnemonic)?;
                 let mut seed = mnemonic::mnemonic_to_seed(&phrase, "").ok()?;
-                phrase.zeroize();
+                phrase.clear_sensitive();
 
                 let account_index = self.ui.transfer_account_index?;
                 let result = match self.ui.transfer_chain_type {
@@ -1576,7 +1583,7 @@ impl App {
                         sol_keys::derive_sol_private_key(&seed, derivation_index).ok()
                     }
                 };
-                seed.zeroize();
+                seed.clear_sensitive();
                 result
             }
             WalletType::PrivateKey {
@@ -1599,7 +1606,7 @@ impl App {
                         }
                     }
                 };
-                pk_str.zeroize();
+                pk_str.clear_sensitive();
                 result
             }
             _ => None,
@@ -1631,6 +1638,10 @@ impl App {
                 }
                 self.ui.clear_status();
             }
+            MultisigStep::CreateSelectCreator => self.handle_ms_create_select_creator_key(key),
+            MultisigStep::CreateInputMembers => self.handle_ms_create_input_members_key(key),
+            MultisigStep::CreateInputThreshold => self.handle_ms_create_input_threshold_key(key),
+            MultisigStep::CreateConfirm => self.handle_ms_create_confirm_key(key),
         }
     }
 
@@ -1640,7 +1651,7 @@ impl App {
             .as_ref()
             .map(|s| s.multisigs.iter().filter(|m| !m.hidden).count())
             .unwrap_or(0);
-        let total_items = visible_count + 2; // +1 导入Squads, +1 导入Safe(占位)
+        let total_items = visible_count + 3; // +1 创建Squads, +1 导入Squads, +1 导入Safe(占位)
 
         match key.code {
             KeyCode::Up => {
@@ -1658,6 +1669,9 @@ impl App {
                     // 选中一个已有多签，查看详情
                     self.view_multisig(self.ui.ms_list_selected);
                 } else if self.ui.ms_list_selected == visible_count {
+                    // "创建 Squads 多签"
+                    self.enter_create_multisig();
+                } else if self.ui.ms_list_selected == visible_count + 1 {
                     // "导入 Squads 多签"
                     self.ui.ms_step = MultisigStep::InputAddress;
                     self.ui.ms_input_address.clear();
@@ -2055,7 +2069,7 @@ impl App {
             let result = execute_create_proposal_async(
                 &rpc_url,
                 &private_key,
-                &ms_info.address,
+                &ms_info.address.to_string(),
                 proposal_type_idx,
                 &to_address,
                 &amount_str,
@@ -2121,7 +2135,7 @@ impl App {
         };
 
         let rpc_url = self.get_current_ms_rpc_url();
-        let multisig_address = ms_info.address.clone();
+        let multisig_address = ms_info.address.to_string();
         let tx_index = proposal.transaction_index;
 
         self.ui.ms_step = MultisigStep::Submitting;
@@ -2184,6 +2198,363 @@ impl App {
         });
     }
 
+    // ========== 创建多签 ==========
+
+    /// 进入创建多签流程：收集本地 SOL 地址
+    fn enter_create_multisig(&mut self) {
+        let sol_addresses = self.collect_local_sol_addresses();
+        if sol_addresses.is_empty() {
+            self.ui.set_status("没有可用的 SOL 地址，请先添加钱包");
+            return;
+        }
+        self.ui.ms_create_sol_addresses = sol_addresses;
+        self.ui.ms_create_creator_selected = 0;
+        self.ui.ms_create_members.clear();
+        self.ui.ms_create_member_input.clear();
+        self.ui.ms_create_threshold_input.clear();
+        self.ui.ms_confirm_password.clear();
+        self.ui.ms_step = MultisigStep::CreateSelectCreator;
+        self.ui.clear_status();
+    }
+
+    /// 收集本地钱包中的 SOL 地址
+    fn collect_local_sol_addresses(&self) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        let store = match &self.store {
+            Some(s) => s,
+            None => return result,
+        };
+
+        for wallet in &store.wallets {
+            if wallet.hidden {
+                continue;
+            }
+            match &wallet.wallet_type {
+                WalletType::Mnemonic { sol_accounts, .. } => {
+                    for acc in sol_accounts {
+                        if !acc.hidden {
+                            let label = acc
+                                .label
+                                .clone()
+                                .unwrap_or_else(|| wallet.name.clone());
+                            result.push((acc.address.clone(), label));
+                        }
+                    }
+                }
+                WalletType::PrivateKey {
+                    chain_type: ChainType::Solana,
+                    address,
+                    ..
+                } => {
+                    result.push((address.clone(), wallet.name.clone()));
+                }
+                _ => {}
+            }
+        }
+        result
+    }
+
+    fn handle_ms_create_select_creator_key(&mut self, key: KeyEvent) {
+        let count = self.ui.ms_create_sol_addresses.len();
+        match key.code {
+            KeyCode::Up => {
+                if self.ui.ms_create_creator_selected > 0 {
+                    self.ui.ms_create_creator_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.ui.ms_create_creator_selected + 1 < count {
+                    self.ui.ms_create_creator_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if count == 0 {
+                    return;
+                }
+                // 创建者自动作为第一个成员
+                let (creator_addr, _) = self.ui.ms_create_sol_addresses
+                    [self.ui.ms_create_creator_selected]
+                    .clone();
+                self.ui.ms_create_members = vec![creator_addr];
+                self.ui.ms_create_member_input.clear();
+                self.ui.ms_step = MultisigStep::CreateInputMembers;
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::List;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_create_input_members_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('d') | KeyCode::Char('D')
+                if self.ui.ms_create_member_input.is_empty() =>
+            {
+                // 完成添加成员，进入阈值设置
+                if self.ui.ms_create_members.len() < 2 {
+                    self.ui.set_status("至少需要 2 个成员");
+                    return;
+                }
+                self.ui.ms_create_threshold_input.clear();
+                self.ui.ms_step = MultisigStep::CreateInputThreshold;
+                self.ui.clear_status();
+            }
+            KeyCode::Char(c) => {
+                self.ui.clear_status();
+                self.ui.ms_create_member_input.push(c);
+            }
+            KeyCode::Backspace => {
+                self.ui.clear_status();
+                self.ui.ms_create_member_input.pop();
+            }
+            KeyCode::Enter => {
+                let addr = self.ui.ms_create_member_input.trim().to_string();
+                if addr.is_empty() {
+                    return;
+                }
+                // 验证 base58
+                if bs58::decode(&addr).into_vec().map(|v| v.len()).unwrap_or(0) != 32 {
+                    self.ui.set_status("无效的 Solana 地址");
+                    return;
+                }
+                // 检查重复
+                if self.ui.ms_create_members.contains(&addr) {
+                    self.ui.set_status("该地址已添加");
+                    return;
+                }
+                self.ui.ms_create_members.push(addr);
+                self.ui.ms_create_member_input.clear();
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::CreateSelectCreator;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_create_input_threshold_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                self.ui.clear_status();
+                self.ui.ms_create_threshold_input.push(c);
+            }
+            KeyCode::Backspace => {
+                self.ui.clear_status();
+                self.ui.ms_create_threshold_input.pop();
+            }
+            KeyCode::Enter => {
+                let member_count = self.ui.ms_create_members.len();
+                let threshold: u16 = match self.ui.ms_create_threshold_input.parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        self.ui.set_status("请输入有效数字");
+                        return;
+                    }
+                };
+                if threshold == 0 || threshold as usize > member_count {
+                    self.ui
+                        .set_status(format!("阈值必须在 1-{member_count} 之间"));
+                    return;
+                }
+                self.ui.ms_confirm_password.clear();
+                self.ui.ms_step = MultisigStep::CreateConfirm;
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::CreateInputMembers;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_create_confirm_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) => {
+                self.ui.clear_status();
+                self.ui.ms_confirm_password.push(c);
+            }
+            KeyCode::Backspace => {
+                self.ui.clear_status();
+                self.ui.ms_confirm_password.pop();
+            }
+            KeyCode::Enter => {
+                self.execute_create_multisig();
+            }
+            KeyCode::Esc => {
+                self.ui.ms_confirm_password.clear();
+                self.ui.ms_step = MultisigStep::CreateInputThreshold;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    /// 执行创建多签
+    fn execute_create_multisig(&mut self) {
+        // 验证密码
+        let pw = match &self.password {
+            Some(pw) => pw.clone(),
+            None => {
+                self.ui.set_status("密码未设置");
+                return;
+            }
+        };
+        if self.ui.ms_confirm_password.as_bytes() != pw.as_slice() {
+            self.ui.set_status("密码错误");
+            self.ui.ms_confirm_password.clear();
+            return;
+        }
+
+        // 获取创建者私钥
+        let (creator_address, _) = match self
+            .ui
+            .ms_create_sol_addresses
+            .get(self.ui.ms_create_creator_selected)
+        {
+            Some(a) => a.clone(),
+            None => {
+                self.ui.set_status("未选择创建者");
+                return;
+            }
+        };
+
+        let private_key = match self.get_sol_private_key(&creator_address) {
+            Some(pk) => pk,
+            None => {
+                self.ui.set_status("无法获取创建者私钥");
+                return;
+            }
+        };
+
+        let threshold: u16 = match self.ui.ms_create_threshold_input.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                self.ui.set_status("无效的阈值");
+                return;
+            }
+        };
+
+        let members: Vec<solana_sdk::pubkey::Pubkey> = match self
+            .ui
+            .ms_create_members
+            .iter()
+            .map(|addr| {
+                solana_sdk::pubkey::Pubkey::from_str(addr)
+                    .map_err(|e| format!("无效的成员地址 {addr}: {e}"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(m) => m,
+            Err(e) => {
+                self.ui.set_status(e);
+                return;
+            }
+        };
+
+        let rpc_url = self.get_solana_rpc_url();
+
+        self.ui.ms_step = MultisigStep::Submitting;
+        self.ui.clear_status();
+
+        let tx = self.bg_tx.clone();
+        self.runtime.spawn(async move {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .map_err(|e| format!("创建 HTTP 客户端失败: {e}"));
+
+            let result = match client {
+                Ok(client) => {
+                    multisig::squads::create_multisig_v2(
+                        &client,
+                        &rpc_url,
+                        &private_key,
+                        &members,
+                        threshold,
+                    )
+                    .await
+                }
+                Err(e) => Err(e),
+            };
+
+            let _ = tx.send(match result {
+                Ok(result_str) => {
+                    // result_str 格式: "multisig_pda|tx_sig"
+                    let multisig_address = result_str
+                        .split('|')
+                        .next()
+                        .unwrap_or(&result_str)
+                        .to_string();
+                    BgMessage::MultisigCreated(multisig_address)
+                }
+                Err(err) => BgMessage::MultisigOpComplete {
+                    success: false,
+                    message: err,
+                },
+            });
+        });
+    }
+
+    /// 获取指定 SOL 地址的私钥
+    fn get_sol_private_key(&self, address: &str) -> Option<Vec<u8>> {
+        let store = self.store.as_ref()?;
+
+        for wallet in &store.wallets {
+            match &wallet.wallet_type {
+                WalletType::Mnemonic {
+                    encrypted_mnemonic,
+                    sol_accounts,
+                    ..
+                } => {
+                    for acc in sol_accounts {
+                        if acc.address == address {
+                            let mut phrase =
+                                self.decrypt_inner_secret(encrypted_mnemonic)?;
+                            let mut seed =
+                                mnemonic::mnemonic_to_seed(&phrase, "").ok()?;
+                            phrase.clear_sensitive();
+                            let result = sol_keys::derive_sol_private_key(
+                                &seed,
+                                acc.derivation_index,
+                            )
+                            .ok();
+                            seed.clear_sensitive();
+                            return result;
+                        }
+                    }
+                }
+                WalletType::PrivateKey {
+                    chain_type: ChainType::Solana,
+                    encrypted_private_key,
+                    address: pk_address,
+                    ..
+                } => {
+                    if pk_address == address {
+                        let mut pk_str =
+                            self.decrypt_inner_secret(encrypted_private_key)?;
+                        let mut bytes = bs58::decode(&pk_str).into_vec().ok()?;
+                        pk_str.clear_sensitive();
+                        let result = match bytes.len() {
+                            64 => Some(bytes[..32].to_vec()),
+                            32 => Some(bytes.clone()),
+                            _ => None,
+                        };
+                        bytes.clear_sensitive();
+                        return result;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     /// 获取多签签名用的私钥
     /// 遍历钱包，找到是多签成员的 SOL 地址对应的私钥
     fn get_multisig_signer_key(&self, ms_info: &multisig::MultisigInfo) -> Option<Vec<u8>> {
@@ -2205,9 +2576,9 @@ impl App {
                         if member_addrs.contains(&acc.address) {
                             let mut phrase = self.decrypt_inner_secret(encrypted_mnemonic)?;
                             let mut seed = mnemonic::mnemonic_to_seed(&phrase, "").ok()?;
-                            phrase.zeroize();
+                            phrase.clear_sensitive();
                             let result = sol_keys::derive_sol_private_key(&seed, acc.derivation_index).ok();
-                            seed.zeroize();
+                            seed.clear_sensitive();
                             return result;
                         }
                     }
@@ -2221,13 +2592,13 @@ impl App {
                     if member_addrs.contains(address) {
                         let mut pk_str = self.decrypt_inner_secret(encrypted_private_key)?;
                         let mut bytes = bs58::decode(&pk_str).into_vec().ok()?;
-                        pk_str.zeroize();
+                        pk_str.clear_sensitive();
                         let result = match bytes.len() {
                             64 => Some(bytes[..32].to_vec()),
                             32 => Some(bytes.clone()),
                             _ => None,
                         };
-                        bytes.zeroize();
+                        bytes.clear_sensitive();
                         return result;
                     }
                 }
@@ -2240,31 +2611,23 @@ impl App {
 
     /// 保存多签到 store
     fn save_multisig_to_store(&mut self, info: &multisig::MultisigInfo) {
+        let info_address_str = info.address.to_string();
+
         // 检查是否已存在
         if let Some(ref store) = self.store
-            && store.multisigs.iter().any(|m| m.address == info.address) {
+            && store.multisigs.iter().any(|m| m.address == info_address_str) {
                 return; // 已存在，不重复添加
             }
 
-        let ms_pubkey: [u8; 32] = match bs58::decode(&info.address)
-            .into_vec()
-            .ok()
-            .and_then(|v| v.try_into().ok())
-        {
-            Some(pk) => pk,
-            None => return,
-        };
-
-        let vault_address = multisig::derive_vault_pda(&ms_pubkey, 0)
-            .map(|(pda, _)| bs58::encode(&pda).into_string())
-            .unwrap_or_default();
+        let (vault_pda, _) = multisig::derive_vault_pda(&info.address, 0);
+        let vault_address = vault_pda.to_string();
 
         let rpc_url = self.get_solana_rpc_url();
 
         let ms_account = MultisigAccount {
             id: uuid::Uuid::new_v4().to_string(),
-            name: format!("Multisig {}", &info.address[..8]),
-            address: info.address.clone(),
+            name: format!("Multisig {}", &info_address_str[..8]),
+            address: info_address_str.clone(),
             vault_address: vault_address.clone(),
             rpc_url,
             threshold: info.threshold,
@@ -2287,13 +2650,13 @@ impl App {
                 if !vault_exists {
                     store.wallets.push(Wallet {
                         id: uuid::Uuid::new_v4().to_string(),
-                        name: format!("Vault ({})", &info.address[..8]),
+                        name: format!("Vault ({})", &info_address_str[..8]),
                         wallet_type: WalletType::WatchOnly {
                             chain_type: ChainType::Solana,
                             address: vault_address,
                             label: None,
                             source: WatchOnlySource::SquadsVault {
-                                multisig_id: info.address.clone(),
+                                multisig_id: info_address_str.clone(),
                             },
                         },
                         sort_order: store.wallets.len() as u32,
@@ -2469,13 +2832,10 @@ async fn execute_create_proposal_async(
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
 
-    let multisig_pubkey: [u8; 32] = bs58::decode(multisig_address)
-        .into_vec()
-        .map_err(|e| format!("无效的多签地址: {e}"))?
-        .try_into()
-        .map_err(|_| "多签地址长度无效".to_string())?;
+    let multisig_pubkey = solana_sdk::pubkey::Pubkey::from_str(multisig_address)
+        .map_err(|e| format!("无效的多签地址: {e}"))?;
 
-    let (vault_pda, _) = multisig::derive_vault_pda(&multisig_pubkey, 0)?;
+    let (vault_pda, _) = multisig::derive_vault_pda(&multisig_pubkey, 0);
 
     let to_pubkey: [u8; 32] = bs58::decode(to_address)
         .into_vec()
@@ -2496,7 +2856,7 @@ async fn execute_create_proposal_async(
                 .map_err(|_| "SOL 数量超出范围".to_string())?;
 
             vec![multisig::proposals::build_sol_transfer_instruction(
-                &vault_pda,
+                &vault_pda.to_bytes(),
                 &to_pubkey,
                 lamports,
             )]

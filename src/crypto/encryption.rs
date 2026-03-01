@@ -4,8 +4,7 @@ use aes_gcm::{
 };
 use argon2::Argon2;
 use rand::RngCore;
-use zeroize::Zeroize;
-
+use crate::crypto::SecureClear;
 use crate::error::CryptoError;
 
 /// Argon2id 参数
@@ -42,7 +41,7 @@ pub fn encrypt(plaintext: &[u8], password: &[u8]) -> Result<(Vec<u8>, Vec<u8>, V
     let mut key = derive_key(password, &salt)?;
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
-    key.zeroize();
+    key.clear_sensitive();
 
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
@@ -62,7 +61,7 @@ pub fn decrypt(
     let mut key = derive_key(password, salt)?;
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
-    key.zeroize();
+    key.clear_sensitive();
 
     let nonce = Nonce::from_slice(nonce_bytes);
     cipher

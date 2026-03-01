@@ -11,6 +11,8 @@ mod tui;
 use app::App;
 use config::AppConfig;
 
+anchor_lang::declare_program!(squads_multisig_program);
+
 fn main() -> anyhow::Result<()> {
     // 加载配置
     let config = AppConfig::load_or_create()
