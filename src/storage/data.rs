@@ -20,6 +20,12 @@ pub struct MultisigAccount {
     pub vault_address: String,
     /// 关联的 Solana RPC URL
     pub rpc_url: String,
+    /// 链 ID（如 "solana-mainnet", "nara-mainnet"）
+    #[serde(default)]
+    pub chain_id: String,
+    /// 链显示名称（如 "Solana", "Nara"）
+    #[serde(default)]
+    pub chain_name: String,
     /// 当前阈值
     pub threshold: u16,
     /// 成员地址列表

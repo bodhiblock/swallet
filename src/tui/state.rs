@@ -124,11 +124,20 @@ pub enum TransferStep {
     Result,
 }
 
+/// 链选择后的下一步
+#[derive(Debug, Clone, PartialEq)]
+pub enum MsChainSelectPurpose {
+    Import,
+    Create,
+}
+
 /// 多签操作步骤
 #[derive(Debug, Clone, PartialEq)]
 pub enum MultisigStep {
     /// 多签列表（显示已导入的多签）
     List,
+    /// 选择 Solana 系列链（导入/创建前）
+    SelectChain,
     /// 输入多签地址（导入新多签）
     InputAddress,
     /// 查看多签详情（成员、阈值等）
@@ -270,6 +279,13 @@ pub struct UiState {
     pub ms_current_proposal: Option<ProposalInfo>,
     pub ms_proposal_type_selected: usize,
     pub ms_input_address: String,
+    // 链选择
+    pub ms_chain_select_purpose: MsChainSelectPurpose,
+    pub ms_solana_chains: Vec<(String, String, String)>, // (chain_id, chain_name, rpc_url)
+    pub ms_chain_selected: usize,
+    pub ms_selected_chain_id: String,
+    pub ms_selected_chain_name: String,
+    pub ms_selected_rpc_url: String,
     pub ms_transfer_to: String,
     pub ms_transfer_amount: String,
     pub ms_transfer_mint: String, // SPL token mint (空=SOL)
@@ -343,6 +359,12 @@ impl UiState {
             ms_current_proposal: None,
             ms_proposal_type_selected: 0,
             ms_input_address: String::new(),
+            ms_chain_select_purpose: MsChainSelectPurpose::Import,
+            ms_solana_chains: Vec::new(),
+            ms_chain_selected: 0,
+            ms_selected_chain_id: String::new(),
+            ms_selected_chain_name: String::new(),
+            ms_selected_rpc_url: String::new(),
             ms_transfer_to: String::new(),
             ms_transfer_amount: String::new(),
             ms_transfer_mint: String::new(),
@@ -442,6 +464,12 @@ impl UiState {
         self.ms_proposal_selected = 0;
         self.ms_current_proposal = None;
         self.ms_input_address.clear();
+        self.ms_chain_select_purpose = MsChainSelectPurpose::Import;
+        self.ms_solana_chains.clear();
+        self.ms_chain_selected = 0;
+        self.ms_selected_chain_id.clear();
+        self.ms_selected_chain_name.clear();
+        self.ms_selected_rpc_url.clear();
         self.ms_transfer_to.clear();
         self.ms_transfer_amount.clear();
         self.ms_transfer_mint.clear();

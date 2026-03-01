@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::crypto::encryption;
 use crate::error::StorageError;
@@ -16,26 +16,24 @@ const NONCE_LEN: usize = 12;
 /// 文件头长度: magic(4) + version(4) + salt(32) + nonce(12) = 52
 const HEADER_LEN: usize = 4 + 4 + SALT_LEN + NONCE_LEN;
 
-/// 获取数据文件路径
-pub fn data_file_path() -> PathBuf {
-    let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.config"))
-        .join("swallet");
+/// 获取默认数据文件路径
+pub fn default_data_file_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let config_dir = PathBuf::from(home).join(".config").join("swallet");
     config_dir.join("data.dat")
 }
 
 /// 检查数据文件是否存在
-pub fn data_file_exists() -> bool {
-    data_file_path().exists()
+pub fn data_file_exists(path: &Path) -> bool {
+    path.exists()
 }
 
 /// 将 WalletStore 加密后保存到文件
-pub fn save(store: &WalletStore, password: &[u8]) -> Result<(), StorageError> {
+pub fn save(store: &WalletStore, password: &[u8], path: &Path) -> Result<(), StorageError> {
     let json = serde_json::to_vec(store)?;
     let (salt, nonce, ciphertext) =
         encryption::encrypt(&json, password).map_err(StorageError::Crypto)?;
 
-    let path = data_file_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -51,19 +49,18 @@ pub fn save(store: &WalletStore, password: &[u8]) -> Result<(), StorageError> {
         file.write_all(&ciphertext)?;
         file.sync_all()?;
     }
-    fs::rename(&tmp_path, &path)?;
+    fs::rename(&tmp_path, path)?;
 
     Ok(())
 }
 
 /// 从加密文件加载 WalletStore
-pub fn load(password: &[u8]) -> Result<WalletStore, StorageError> {
-    let path = data_file_path();
+pub fn load(password: &[u8], path: &Path) -> Result<WalletStore, StorageError> {
     if !path.exists() {
         return Err(StorageError::DataFileNotFound);
     }
 
-    let data = fs::read(&path)?;
+    let data = fs::read(path)?;
     if data.len() < HEADER_LEN {
         return Err(StorageError::InvalidFormat("文件太短".into()));
     }

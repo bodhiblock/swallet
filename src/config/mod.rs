@@ -1,7 +1,7 @@
 pub mod defaults;
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::ConfigError;
 
@@ -63,15 +63,17 @@ pub struct SplTokenConfig {
 impl AppConfig {
     /// 获取配置文件路径
     pub fn config_path() -> PathBuf {
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("~/.config"))
-            .join("swallet");
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let config_dir = PathBuf::from(home).join(".config").join("swallet");
         config_dir.join("config.toml")
     }
 
     /// 加载配置，如果不存在则创建默认配置
-    pub fn load_or_create() -> Result<Self, ConfigError> {
-        let path = Self::config_path();
+    /// 可通过 `override_path` 指定自定义配置文件路径
+    pub fn load_or_create(override_path: Option<&Path>) -> Result<Self, ConfigError> {
+        let path = override_path
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(Self::config_path);
 
         if path.exists() {
             let content = std::fs::read_to_string(&path).map_err(ConfigError::Io)?;

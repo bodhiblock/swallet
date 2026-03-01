@@ -21,8 +21,8 @@ use crate::tui::screens::{
     multisig as multisig_screen, transfer as transfer_screen, unlock,
 };
 use crate::tui::state::{
-    ActionContext, ActionItem, AddWalletOption, AddWalletStep, InputPurpose, MultisigStep, Screen,
-    TransferStep, UiState, UnlockMode, VoteAction,
+    ActionContext, ActionItem, AddWalletOption, AddWalletStep, InputPurpose, MsChainSelectPurpose,
+    MultisigStep, Screen, TransferStep, UiState, UnlockMode, VoteAction,
 };
 
 /// 后台任务消息
@@ -46,6 +46,8 @@ pub struct App {
     pub balance_cache: BalanceCache,
     /// 解锁后保存密码用于后续数据保存
     password: Option<Vec<u8>>,
+    /// 数据文件路径
+    data_path: std::path::PathBuf,
     /// tokio 运行时（后台 RPC 查询）
     runtime: tokio::runtime::Runtime,
     /// 后台消息接收端
@@ -62,8 +64,9 @@ pub struct App {
 const AUTO_REFRESH_SECS: u64 = 60;
 
 impl App {
-    pub fn new(config: AppConfig) -> Self {
-        let has_data = encrypted::data_file_exists();
+    pub fn new(config: AppConfig, data_path: Option<std::path::PathBuf>) -> Self {
+        let data_path = data_path.unwrap_or_else(encrypted::default_data_file_path);
+        let has_data = encrypted::data_file_exists(&data_path);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -76,6 +79,7 @@ impl App {
             ui: UiState::new(has_data),
             balance_cache: BalanceCache::default(),
             password: None,
+            data_path,
             runtime,
             bg_rx,
             bg_tx,
@@ -300,7 +304,7 @@ impl App {
                 }
                 let store = WalletStore::new();
                 let pw = self.ui.password_input.as_bytes().to_vec();
-                match encrypted::save(&store, &pw) {
+                match encrypted::save(&store, &pw, &self.data_path) {
                     Ok(()) => {
                         self.store = Some(store);
                         self.password = Some(pw);
@@ -316,7 +320,7 @@ impl App {
             }
             UnlockMode::Enter => {
                 let pw = self.ui.password_input.as_bytes().to_vec();
-                match encrypted::load(&pw) {
+                match encrypted::load(&pw, &self.data_path) {
                     Ok(store) => {
                         self.store = Some(store);
                         self.password = Some(pw);
@@ -1618,6 +1622,7 @@ impl App {
     fn handle_multisig_key(&mut self, key: KeyEvent) {
         match self.ui.ms_step {
             MultisigStep::List => self.handle_ms_list_key(key),
+            MultisigStep::SelectChain => self.handle_ms_select_chain_key(key),
             MultisigStep::InputAddress => self.handle_ms_input_address_key(key),
             MultisigStep::ViewDetail => self.handle_ms_detail_key(key),
             MultisigStep::ViewProposals => self.handle_ms_proposals_key(key),
@@ -1669,13 +1674,11 @@ impl App {
                     // 选中一个已有多签，查看详情
                     self.view_multisig(self.ui.ms_list_selected);
                 } else if self.ui.ms_list_selected == visible_count {
-                    // "创建 Squads 多签"
-                    self.enter_create_multisig();
+                    // "创建 Squads 多签" → 先选链
+                    self.enter_chain_select(MsChainSelectPurpose::Create);
                 } else if self.ui.ms_list_selected == visible_count + 1 {
-                    // "导入 Squads 多签"
-                    self.ui.ms_step = MultisigStep::InputAddress;
-                    self.ui.ms_input_address.clear();
-                    self.ui.clear_status();
+                    // "导入 Squads 多签" → 先选链
+                    self.enter_chain_select(MsChainSelectPurpose::Import);
                 } else {
                     // ETH Safe placeholder
                     self.ui.set_status("Safe 多签功能正在开发中");
@@ -1928,10 +1931,92 @@ impl App {
         }
     }
 
+    /// 进入链选择步骤
+    fn enter_chain_select(&mut self, purpose: MsChainSelectPurpose) {
+        let chains: Vec<(String, String, String)> = self
+            .config
+            .chains
+            .solana
+            .iter()
+            .map(|c| (c.id.clone(), c.name.clone(), c.rpc_url.clone()))
+            .collect();
+
+        if chains.is_empty() {
+            self.ui.set_status("没有配置 Solana 系列链");
+            return;
+        }
+
+        // 只有一条链时跳过选择
+        if chains.len() == 1 {
+            let (id, name, rpc) = chains[0].clone();
+            self.ui.ms_selected_chain_id = id;
+            self.ui.ms_selected_chain_name = name;
+            self.ui.ms_selected_rpc_url = rpc;
+            match purpose {
+                MsChainSelectPurpose::Import => {
+                    self.ui.ms_step = MultisigStep::InputAddress;
+                    self.ui.ms_input_address.clear();
+                    self.ui.clear_status();
+                }
+                MsChainSelectPurpose::Create => {
+                    self.enter_create_multisig();
+                }
+            }
+            return;
+        }
+
+        self.ui.ms_solana_chains = chains;
+        self.ui.ms_chain_selected = 0;
+        self.ui.ms_chain_select_purpose = purpose;
+        self.ui.ms_step = MultisigStep::SelectChain;
+        self.ui.clear_status();
+    }
+
+    fn handle_ms_select_chain_key(&mut self, key: KeyEvent) {
+        let count = self.ui.ms_solana_chains.len();
+        match key.code {
+            KeyCode::Up => {
+                if self.ui.ms_chain_selected > 0 {
+                    self.ui.ms_chain_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.ui.ms_chain_selected + 1 < count {
+                    self.ui.ms_chain_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if count == 0 {
+                    return;
+                }
+                let (id, name, rpc) = self.ui.ms_solana_chains[self.ui.ms_chain_selected].clone();
+                self.ui.ms_selected_chain_id = id;
+                self.ui.ms_selected_chain_name = name;
+                self.ui.ms_selected_rpc_url = rpc;
+
+                match self.ui.ms_chain_select_purpose {
+                    MsChainSelectPurpose::Import => {
+                        self.ui.ms_step = MultisigStep::InputAddress;
+                        self.ui.ms_input_address.clear();
+                        self.ui.clear_status();
+                    }
+                    MsChainSelectPurpose::Create => {
+                        self.enter_create_multisig();
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::List;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
     /// 导入多签
     fn import_multisig(&mut self) {
         let address = self.ui.ms_input_address.clone();
-        let rpc_url = self.get_solana_rpc_url();
+        let rpc_url = self.ui.ms_selected_rpc_url.clone();
 
         self.ui.set_status("正在获取多签信息...");
 
@@ -2456,7 +2541,7 @@ impl App {
             }
         };
 
-        let rpc_url = self.get_solana_rpc_url();
+        let rpc_url = self.ui.ms_selected_rpc_url.clone();
 
         self.ui.ms_step = MultisigStep::Submitting;
         self.ui.clear_status();
@@ -2622,7 +2707,14 @@ impl App {
         let (vault_pda, _) = multisig::derive_vault_pda(&info.address, 0);
         let vault_address = vault_pda.to_string();
 
-        let rpc_url = self.get_solana_rpc_url();
+        // 使用选中的链信息（已在链选择步骤设置）
+        let rpc_url = if self.ui.ms_selected_rpc_url.is_empty() {
+            self.get_solana_rpc_url()
+        } else {
+            self.ui.ms_selected_rpc_url.clone()
+        };
+        let chain_id = self.ui.ms_selected_chain_id.clone();
+        let chain_name = self.ui.ms_selected_chain_name.clone();
 
         let ms_account = MultisigAccount {
             id: uuid::Uuid::new_v4().to_string(),
@@ -2630,6 +2722,8 @@ impl App {
             address: info_address_str.clone(),
             vault_address: vault_address.clone(),
             rpc_url,
+            chain_id,
+            chain_name,
             threshold: info.threshold,
             member_addresses: info.members.iter().map(|m| m.address()).collect(),
             hidden: false,
@@ -2693,7 +2787,7 @@ impl App {
 
     fn save_store(&self) -> Result<(), crate::error::StorageError> {
         if let (Some(store), Some(pw)) = (&self.store, &self.password) {
-            encrypted::save(store, pw)?;
+            encrypted::save(store, pw, &self.data_path)?;
         }
         Ok(())
     }

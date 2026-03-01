@@ -29,6 +29,7 @@ pub fn render(frame: &mut Frame, state: &UiState, multisigs: &[MultisigAccount])
 
     match state.ms_step {
         MultisigStep::List => render_list(frame, center, state, multisigs),
+        MultisigStep::SelectChain => render_select_chain(frame, center, state),
         MultisigStep::InputAddress => render_input_address(frame, center, state),
         MultisigStep::ViewDetail => render_view_detail(frame, center, state),
         MultisigStep::ViewProposals => render_view_proposals(frame, center, state),
@@ -72,6 +73,11 @@ fn render_list(
     let mut items: Vec<ListItem> = visible
         .iter()
         .map(|m| {
+            let chain_label = if m.chain_name.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", m.chain_name)
+            };
             ListItem::new(Line::from(vec![
                 Span::styled("  ", Style::default()),
                 Span::styled(&m.name, Style::default().fg(Color::White)),
@@ -79,6 +85,7 @@ fn render_list(
                     format!("  ({})", shorten_address(&m.address)),
                     Style::default().fg(Color::DarkGray),
                 ),
+                Span::styled(chain_label, Style::default().fg(Color::Cyan)),
             ]))
         })
         .collect();
@@ -117,8 +124,71 @@ fn render_list(
     frame.render_widget(footer, footer_area);
 }
 
+fn render_select_chain(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let title = match state.ms_chain_select_purpose {
+        crate::tui::state::MsChainSelectPurpose::Import => " 导入多签 - 选择链 ",
+        crate::tui::state::MsChainSelectPurpose::Create => " 创建多签 - 选择链 ",
+    };
+
+    let block = Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [list_area, footer_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+
+    let items: Vec<ListItem> = state
+        .ms_solana_chains
+        .iter()
+        .map(|(_, name, rpc)| {
+            ListItem::new(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(name, Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("  ({})", shorten_rpc(rpc)),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.ms_chain_selected));
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    let footer = Paragraph::new(Line::from(Span::styled(
+        " ↑↓选择  Enter确认  Esc返回",
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(footer, footer_area);
+}
+
 fn render_input_address(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let chain_hint = if state.ms_selected_chain_name.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", state.ms_selected_chain_name)
+    };
+
     let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" 链: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(&chain_hint, Style::default().fg(Color::Cyan)),
+        ]),
         Line::from(""),
         Line::from(Span::styled(
             " 请输入 Squads 多签地址:",
@@ -794,6 +864,12 @@ fn render_create_confirm(
         .map(|(addr, _)| shorten_address(addr))
         .unwrap_or_else(|| "未知".to_string());
 
+    let chain_label = if state.ms_selected_chain_name.is_empty() {
+        "Solana".to_string()
+    } else {
+        state.ms_selected_chain_name.clone()
+    };
+
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(
@@ -803,6 +879,10 @@ fn render_create_confirm(
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
+        Line::from(vec![
+            Span::styled("   链:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(chain_label, Style::default().fg(Color::Cyan)),
+        ]),
         Line::from(vec![
             Span::styled("   创建者: ", Style::default().fg(Color::DarkGray)),
             Span::styled(creator_addr, Style::default().fg(Color::Yellow)),
@@ -866,5 +946,14 @@ fn shorten_address(addr: &str) -> String {
         format!("{}...{}", &addr[..8], &addr[addr.len() - 6..])
     } else {
         addr.to_string()
+    }
+}
+
+fn shorten_rpc(url: &str) -> String {
+    let s = url.trim_start_matches("https://").trim_start_matches("http://");
+    if s.len() > 30 {
+        format!("{}...", &s[..27])
+    } else {
+        s.to_string()
     }
 }
