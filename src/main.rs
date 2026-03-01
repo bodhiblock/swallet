@@ -1,8 +1,11 @@
 mod app;
+mod chain;
 mod config;
 mod crypto;
 mod error;
+mod multisig;
 mod storage;
+mod transfer;
 mod tui;
 
 use app::App;

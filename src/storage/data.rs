@@ -5,6 +5,28 @@ use serde::{Deserialize, Serialize};
 pub struct WalletStore {
     pub version: u32,
     pub wallets: Vec<Wallet>,
+    #[serde(default)]
+    pub multisigs: Vec<MultisigAccount>,
+}
+
+/// 多签账户（本地存储）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MultisigAccount {
+    pub id: String,
+    pub name: String,
+    /// 多签 PDA 地址
+    pub address: String,
+    /// 默认 vault 地址（vault_index=0）
+    pub vault_address: String,
+    /// 关联的 Solana RPC URL
+    pub rpc_url: String,
+    /// 当前阈值
+    pub threshold: u16,
+    /// 成员地址列表
+    pub member_addresses: Vec<String>,
+    /// 是否隐藏
+    pub hidden: bool,
+    pub created_at: i64,
 }
 
 /// 钱包
@@ -73,6 +95,7 @@ impl WalletStore {
         Self {
             version: 1,
             wallets: Vec::new(),
+            multisigs: Vec::new(),
         }
     }
 }

@@ -31,6 +31,7 @@ pub fn derive_key(password: &[u8], salt: &[u8]) -> Result<[u8; KEY_LEN], CryptoE
 }
 
 /// 加密数据，返回 (salt, nonce, ciphertext)
+#[allow(clippy::type_complexity)]
 pub fn encrypt(plaintext: &[u8], password: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), CryptoError> {
     let mut salt = vec![0u8; SALT_LEN];
     rand::thread_rng().fill_bytes(&mut salt);
@@ -70,6 +71,7 @@ pub fn decrypt(
 }
 
 /// 验证密码是否正确（尝试解密）
+#[allow(dead_code)]
 pub fn verify_password(
     ciphertext: &[u8],
     password: &[u8],

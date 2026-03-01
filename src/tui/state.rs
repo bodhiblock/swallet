@@ -1,3 +1,7 @@
+use crate::multisig::{MultisigInfo, ProposalInfo};
+use crate::storage::data::ChainType;
+use crate::transfer::TransferableAsset;
+
 /// 当前屏幕
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -5,23 +9,219 @@ pub enum Screen {
     Unlock,
     /// 主界面：钱包列表+资产
     Main,
+    /// 添加钱包
+    AddWallet,
+    /// 操作菜单（弹出）
+    ActionMenu,
+    /// 文本输入（通用输入表单）
+    TextInput,
+    /// 显示助记词
+    ShowMnemonic,
+    /// 转账流程
+    Transfer,
+    /// 多签管理
+    Multisig,
+    /// DEX/Swap（占位）
+    Dex,
 }
 
 /// 解锁界面状态
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnlockMode {
-    /// 首次使用，需要创建密码
-    CreatePassword,
-    /// 已有数据，输入密码解锁
-    EnterPassword,
-    /// 创建密码时确认密码
-    ConfirmPassword,
+    Create,
+    Enter,
+    Confirm,
+}
+
+/// 添加钱包菜单选项
+#[derive(Debug, Clone, PartialEq)]
+pub enum AddWalletOption {
+    CreateMnemonic,
+    ImportMnemonic,
+    ImportPrivateKey,
+    ImportWatchOnly,
+    RestoreHiddenWallet,
+    RestoreHiddenAddress,
+}
+
+impl AddWalletOption {
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::CreateMnemonic,
+            Self::ImportMnemonic,
+            Self::ImportPrivateKey,
+            Self::ImportWatchOnly,
+            Self::RestoreHiddenWallet,
+            Self::RestoreHiddenAddress,
+        ]
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            Self::CreateMnemonic => "创建助记词钱包",
+            Self::ImportMnemonic => "导入助记词钱包",
+            Self::ImportPrivateKey => "导入私钥钱包",
+            Self::ImportWatchOnly => "导入观察钱包",
+            Self::RestoreHiddenWallet => "恢复隐藏钱包",
+            Self::RestoreHiddenAddress => "恢复隐藏地址",
+        }
+    }
+}
+
+/// 添加钱包流程步骤
+#[derive(Debug, Clone, PartialEq)]
+pub enum AddWalletStep {
+    /// 选择操作类型
+    SelectType,
+    /// 输入钱包名称
+    InputName,
+    /// 输入助记词（导入时）
+    InputMnemonic,
+    /// 显示生成的助记词（创建时）
+    ShowMnemonic,
+    /// 选择链类型（私钥/观察钱包时）
+    SelectChainType,
+    /// 输入私钥
+    InputPrivateKey,
+    /// 输入地址（观察钱包）
+    InputAddress,
+    /// 选择要恢复的钱包/地址（预留）
+    #[allow(dead_code)]
+    SelectHiddenItem,
+}
+
+/// 操作菜单上下文
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActionContext {
+    /// 选中了一个钱包
+    Wallet { wallet_index: usize },
+    /// 选中了助记词钱包下的一个地址
+    MnemonicAddress {
+        wallet_index: usize,
+        chain_type: ChainType,
+        account_index: usize,
+    },
+    /// 选中了私钥钱包的地址
+    PrivateKeyAddress { wallet_index: usize },
+    /// 选中了观察钱包的地址
+    WatchAddress { wallet_index: usize },
+}
+
+/// 转账流程步骤
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransferStep {
+    /// 选择资产（链+币种）
+    SelectAsset,
+    /// 输入目标地址
+    InputAddress,
+    /// 输入数量
+    InputAmount,
+    /// 确认（显示摘要+输入密码）
+    Confirm,
+    /// 发送中
+    Sending,
+    /// 结果
+    Result,
+}
+
+/// 多签操作步骤
+#[derive(Debug, Clone, PartialEq)]
+pub enum MultisigStep {
+    /// 多签列表（显示已导入的多签）
+    List,
+    /// 输入多签地址（导入新多签）
+    InputAddress,
+    /// 查看多签详情（成员、阈值等）
+    ViewDetail,
+    /// 查看提案列表
+    ViewProposals,
+    /// 查看单个提案详情
+    ViewProposal,
+    /// 选择提案类型
+    SelectProposalType,
+    /// 输入转账地址
+    InputTransferTo,
+    /// 输入转账数量
+    InputTransferAmount,
+    /// 确认创建提案（输入密码）
+    ConfirmCreate,
+    /// 确认投票（输入密码）
+    ConfirmVote,
+    /// 提交中
+    Submitting,
+    /// 操作结果
+    Result,
+}
+
+/// 多签投票类型
+#[derive(Debug, Clone, PartialEq)]
+pub enum VoteAction {
+    Approve,
+    Reject,
+    Execute,
+}
+
+impl VoteAction {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Approve => "审批通过",
+            Self::Reject => "拒绝",
+            Self::Execute => "执行",
+        }
+    }
+}
+
+/// 操作菜单项
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActionItem {
+    Transfer,
+    AddAddress,
+    EditName,
+    MoveUp,
+    MoveDown,
+    HideWallet,
+    EditAddressLabel,
+    HideAddress,
+    DeleteWatchWallet,
+}
+
+impl ActionItem {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Transfer => "转账",
+            Self::AddAddress => "添加地址",
+            Self::EditName => "修改备注",
+            Self::MoveUp => "上移",
+            Self::MoveDown => "下移",
+            Self::HideWallet => "隐藏钱包",
+            Self::EditAddressLabel => "修改备注",
+            Self::HideAddress => "隐藏地址",
+            Self::DeleteWatchWallet => "删除钱包",
+        }
+    }
+
+    pub fn for_wallet() -> Vec<Self> {
+        vec![Self::AddAddress, Self::EditName, Self::MoveUp, Self::MoveDown, Self::HideWallet]
+    }
+
+    pub fn for_mnemonic_address() -> Vec<Self> {
+        vec![Self::Transfer, Self::EditAddressLabel, Self::HideAddress]
+    }
+
+    pub fn for_private_key_address() -> Vec<Self> {
+        vec![Self::Transfer, Self::EditName, Self::HideWallet]
+    }
+
+    pub fn for_watch_address() -> Vec<Self> {
+        vec![Self::EditAddressLabel, Self::DeleteWatchWallet]
+    }
 }
 
 /// UI 状态
 #[derive(Debug)]
 pub struct UiState {
     pub screen: Screen,
+    pub prev_screen: Option<Screen>,
     pub unlock_mode: UnlockMode,
     /// 密码输入缓冲
     pub password_input: String,
@@ -33,22 +233,118 @@ pub struct UiState {
     pub selected_index: usize,
     /// 是否应退出
     pub should_quit: bool,
+
+    // 添加钱包流程
+    pub add_wallet_step: AddWalletStep,
+    pub add_wallet_selected: usize,
+    pub add_wallet_option: Option<AddWalletOption>,
+    pub input_buffer: String,
+    pub wallet_name_buffer: String,
+    pub mnemonic_buffer: String,
+    pub chain_type_selected: usize,
+
+    // 操作菜单
+    pub action_context: Option<ActionContext>,
+    pub action_items: Vec<ActionItem>,
+    pub action_selected: usize,
+
+    // 文本输入回调标记
+    pub input_purpose: Option<InputPurpose>,
+
+    // 多签流程
+    pub ms_step: MultisigStep,
+    pub ms_list_selected: usize,
+    pub ms_current_info: Option<MultisigInfo>,
+    pub ms_current_index: usize, // 在 store.multisigs 中的索引
+    pub ms_proposals: Vec<ProposalInfo>,
+    pub ms_proposal_selected: usize,
+    pub ms_current_proposal: Option<ProposalInfo>,
+    pub ms_proposal_type_selected: usize,
+    pub ms_input_address: String,
+    pub ms_transfer_to: String,
+    pub ms_transfer_amount: String,
+    pub ms_transfer_mint: String, // SPL token mint (空=SOL)
+    pub ms_confirm_password: String,
+    pub ms_vote_action: Option<VoteAction>,
+    pub ms_result: Option<(bool, String)>,
+
+    // 转账流程
+    pub transfer_step: TransferStep,
+    pub transfer_from_address: String,
+    pub transfer_chain_type: ChainType,
+    pub transfer_wallet_index: usize,
+    pub transfer_account_index: Option<usize>,
+    pub transfer_assets: Vec<TransferableAsset>,
+    pub transfer_asset_selected: usize,
+    pub transfer_to_address: String,
+    pub transfer_amount: String,
+    pub transfer_confirm_password: String,
+    pub transfer_result: Option<(bool, String)>,
+}
+
+/// 文本输入的用途
+#[derive(Debug, Clone, PartialEq)]
+pub enum InputPurpose {
+    EditLabel,
 }
 
 impl UiState {
     pub fn new(has_existing_data: bool) -> Self {
         Self {
             screen: Screen::Unlock,
+            prev_screen: None,
             unlock_mode: if has_existing_data {
-                UnlockMode::EnterPassword
+                UnlockMode::Enter
             } else {
-                UnlockMode::CreatePassword
+                UnlockMode::Create
             },
             password_input: String::new(),
             password_first: None,
             status_message: None,
             selected_index: 0,
             should_quit: false,
+
+            add_wallet_step: AddWalletStep::SelectType,
+            add_wallet_selected: 0,
+            add_wallet_option: None,
+            input_buffer: String::new(),
+            wallet_name_buffer: String::new(),
+            mnemonic_buffer: String::new(),
+            chain_type_selected: 0,
+
+            action_context: None,
+            action_items: Vec::new(),
+            action_selected: 0,
+
+            input_purpose: None,
+
+            ms_step: MultisigStep::List,
+            ms_list_selected: 0,
+            ms_current_info: None,
+            ms_current_index: 0,
+            ms_proposals: Vec::new(),
+            ms_proposal_selected: 0,
+            ms_current_proposal: None,
+            ms_proposal_type_selected: 0,
+            ms_input_address: String::new(),
+            ms_transfer_to: String::new(),
+            ms_transfer_amount: String::new(),
+            ms_transfer_mint: String::new(),
+            ms_confirm_password: String::new(),
+            ms_vote_action: None,
+            ms_result: None,
+
+            transfer_step: TransferStep::SelectAsset,
+            transfer_from_address: String::new(),
+            transfer_chain_type: ChainType::Ethereum,
+            transfer_wallet_index: 0,
+            transfer_account_index: None,
+            transfer_assets: Vec::new(),
+            transfer_asset_selected: 0,
+            transfer_to_address: String::new(),
+            transfer_amount: String::new(),
+            transfer_confirm_password: String::new(),
+            transfer_result: None,
         }
     }
 
@@ -58,5 +354,82 @@ impl UiState {
 
     pub fn clear_status(&mut self) {
         self.status_message = None;
+    }
+
+    /// 进入添加钱包流程
+    pub fn enter_add_wallet(&mut self) {
+        self.screen = Screen::AddWallet;
+        self.add_wallet_step = AddWalletStep::SelectType;
+        self.add_wallet_selected = 0;
+        self.add_wallet_option = None;
+        self.input_buffer.clear();
+        self.wallet_name_buffer.clear();
+        self.mnemonic_buffer.clear();
+        self.chain_type_selected = 0;
+        self.clear_status();
+    }
+
+    /// 进入操作菜单
+    pub fn enter_action_menu(&mut self, context: ActionContext) {
+        let items = match &context {
+            ActionContext::Wallet { .. } => ActionItem::for_wallet(),
+            ActionContext::MnemonicAddress { .. } => ActionItem::for_mnemonic_address(),
+            ActionContext::PrivateKeyAddress { .. } => ActionItem::for_private_key_address(),
+            ActionContext::WatchAddress { .. } => ActionItem::for_watch_address(),
+        };
+        self.action_context = Some(context);
+        self.action_items = items;
+        self.action_selected = 0;
+        self.prev_screen = Some(self.screen.clone());
+        self.screen = Screen::ActionMenu;
+    }
+
+    /// 进入转账流程
+    pub fn enter_transfer(
+        &mut self,
+        from_address: String,
+        chain_type: ChainType,
+        wallet_index: usize,
+        account_index: Option<usize>,
+        assets: Vec<TransferableAsset>,
+    ) {
+        self.screen = Screen::Transfer;
+        self.transfer_step = TransferStep::SelectAsset;
+        self.transfer_from_address = from_address;
+        self.transfer_chain_type = chain_type;
+        self.transfer_wallet_index = wallet_index;
+        self.transfer_account_index = account_index;
+        self.transfer_assets = assets;
+        self.transfer_asset_selected = 0;
+        self.transfer_to_address.clear();
+        self.transfer_amount.clear();
+        self.transfer_confirm_password.clear();
+        self.transfer_result = None;
+        self.clear_status();
+    }
+
+    /// 进入多签管理界面
+    pub fn enter_multisig(&mut self) {
+        self.screen = Screen::Multisig;
+        self.ms_step = MultisigStep::List;
+        self.ms_list_selected = 0;
+        self.ms_current_info = None;
+        self.ms_proposals.clear();
+        self.ms_proposal_selected = 0;
+        self.ms_current_proposal = None;
+        self.ms_input_address.clear();
+        self.ms_transfer_to.clear();
+        self.ms_transfer_amount.clear();
+        self.ms_transfer_mint.clear();
+        self.ms_confirm_password.clear();
+        self.ms_vote_action = None;
+        self.ms_result = None;
+        self.clear_status();
+    }
+
+    /// 返回主界面
+    pub fn back_to_main(&mut self) {
+        self.screen = Screen::Main;
+        self.clear_status();
     }
 }

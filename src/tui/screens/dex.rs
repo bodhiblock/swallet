@@ -6,15 +6,12 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::state::{UiState, UnlockMode};
-
-pub fn render(frame: &mut Frame, state: &UiState) {
+pub fn render(frame: &mut Frame) {
     let area = frame.area();
 
-    // 居中布局
     let [_, center_v, _] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(10),
+        Constraint::Length(14),
         Constraint::Fill(1),
     ])
     .areas(area);
@@ -26,52 +23,43 @@ pub fn render(frame: &mut Frame, state: &UiState) {
     ])
     .areas(center_v);
 
-    let title = match state.unlock_mode {
-        UnlockMode::Create => " 创建密码 ",
-        UnlockMode::Enter => " 输入密码 ",
-        UnlockMode::Confirm => " 确认密码 ",
-    };
-
-    let hint = match state.unlock_mode {
-        UnlockMode::Create => "首次使用，请设置加密密码：",
-        UnlockMode::Enter => "请输入密码解锁钱包：",
-        UnlockMode::Confirm => "请再次输入密码确认：",
-    };
-
-    let masked: String = "*".repeat(state.password_input.len());
-
-    let mut lines = vec![
+    let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            " swallet - Web3 命令行钱包",
+            "  DEX / Swap",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(hint),
+        Line::from("  支持的协议（开发中）："),
         Line::from(""),
         Line::from(Span::styled(
-            format!("  > {masked}"),
+            "  EVM:  Uniswap V3 / 1inch",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            "  SOL:  Jupiter / Orca",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  此功能正在开发中，敬请期待",
             Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  按 Esc 返回",
+            Style::default().fg(Color::DarkGray),
         )),
     ];
 
-    if let Some(ref msg) = state.status_message {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            format!("  {msg}"),
-            Style::default().fg(Color::Red),
-        )));
-    }
-
     let block = Block::default()
-        .title(title)
+        .title(" Swap ")
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
     let paragraph = Paragraph::new(lines).block(block);
-
     frame.render_widget(paragraph, center);
 }

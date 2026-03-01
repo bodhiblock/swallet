@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum SwalletError {
     #[error("加密错误: {0}")]
@@ -60,4 +61,6 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
 }
 
+/// 统一结果类型（预留供后续使用）
+#[allow(dead_code)]
 pub type Result<T> = std::result::Result<T, SwalletError>;
