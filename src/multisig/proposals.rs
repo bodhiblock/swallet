@@ -165,8 +165,8 @@ pub fn serialize_vault_transaction_message(
     });
 
     let num_signers = account_keys.iter().filter(|k| k.is_signer).count();
-    let num_readonly_signers = account_keys.iter().filter(|k| k.is_signer && !k.is_writable).count();
-    let num_readonly_non_signers = account_keys.iter().filter(|k| !k.is_signer && !k.is_writable).count();
+    let num_writable_signers = account_keys.iter().filter(|k| k.is_signer && k.is_writable).count();
+    let num_writable_non_signers = account_keys.iter().filter(|k| !k.is_signer && k.is_writable).count();
 
     // 编译指令（将 pubkey 替换为索引）
     let compiled_instructions: Vec<CompiledVaultInstruction> = instructions
@@ -194,15 +194,15 @@ pub fn serialize_vault_transaction_message(
         })
         .collect();
 
-    // Borsh 序列化 TransactionMessage
+    // Borsh 序列化 TransactionMessage（与 SDK VaultTransactionMessage 格式一致）
     let mut buf = Vec::new();
 
     // num_signers: u8
     buf.push(num_signers as u8);
-    // num_readonly_signers: u8
-    buf.push(num_readonly_signers as u8);
-    // num_readonly_non_signers: u8
-    buf.push(num_readonly_non_signers as u8);
+    // num_writable_signers: u8
+    buf.push(num_writable_signers as u8);
+    // num_writable_non_signers: u8
+    buf.push(num_writable_non_signers as u8);
 
     // account_keys: Vec<Pubkey> (Borsh: 4-byte length + data)
     buf.extend_from_slice(&(account_keys.len() as u32).to_le_bytes());

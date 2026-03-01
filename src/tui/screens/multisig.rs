@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
@@ -10,7 +12,13 @@ use crate::multisig::ProposalType;
 use crate::storage::data::MultisigAccount;
 use crate::tui::state::{MultisigStep, UiState, VoteAction};
 
-pub fn render(frame: &mut Frame, state: &UiState, multisigs: &[MultisigAccount]) {
+/// address_labels: 地址→备注映射，用于标注自己的地址
+pub fn render(
+    frame: &mut Frame,
+    state: &UiState,
+    multisigs: &[MultisigAccount],
+    address_labels: &HashMap<String, String>,
+) {
     let area = frame.area();
 
     let [_, center_v, _] = Layout::vertical([
@@ -31,9 +39,9 @@ pub fn render(frame: &mut Frame, state: &UiState, multisigs: &[MultisigAccount])
         MultisigStep::List => render_list(frame, center, state, multisigs),
         MultisigStep::SelectChain => render_select_chain(frame, center, state),
         MultisigStep::InputAddress => render_input_address(frame, center, state),
-        MultisigStep::ViewDetail => render_view_detail(frame, center, state),
+        MultisigStep::ViewDetail => render_view_detail(frame, center, state, address_labels),
         MultisigStep::ViewProposals => render_view_proposals(frame, center, state),
-        MultisigStep::ViewProposal => render_view_proposal(frame, center, state),
+        MultisigStep::ViewProposal => render_view_proposal(frame, center, state, address_labels),
         MultisigStep::SelectProposalType => render_select_proposal_type(frame, center, state),
         MultisigStep::InputTransferTo => render_input_transfer_field(frame, center, state, "地址", &state.ms_transfer_to),
         MultisigStep::InputTransferAmount => render_input_transfer_field(frame, center, state, "数量", &state.ms_transfer_amount),
@@ -41,7 +49,7 @@ pub fn render(frame: &mut Frame, state: &UiState, multisigs: &[MultisigAccount])
         MultisigStep::Submitting => render_submitting(frame, center),
         MultisigStep::Result => render_result(frame, center, state),
         MultisigStep::CreateSelectCreator => render_create_select_creator(frame, center, state),
-        MultisigStep::CreateInputMembers => render_create_input_members(frame, center, state),
+        MultisigStep::CreateInputMembers => render_create_input_members(frame, center, state, address_labels),
         MultisigStep::CreateInputThreshold => render_create_input_threshold(frame, center, state),
         MultisigStep::CreateConfirm => render_create_confirm(frame, center, state),
     }
@@ -213,7 +221,12 @@ fn render_input_address(frame: &mut Frame, area: ratatui::layout::Rect, state: &
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_view_detail(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+fn render_view_detail(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+    address_labels: &HashMap<String, String>,
+) {
     let mut lines = vec![Line::from("")];
 
     if let Some(ref info) = state.ms_current_info {
@@ -246,17 +259,25 @@ fn render_view_detail(frame: &mut Frame, area: ratatui::layout::Rect, state: &Ui
                 .add_modifier(Modifier::BOLD),
         )));
         for member in &info.members {
-            lines.push(Line::from(vec![
+            let addr = member.address();
+            let mut spans = vec![
                 Span::styled("   ", Style::default()),
                 Span::styled(
-                    shorten_address(&member.address()),
+                    addr.clone(),
                     Style::default().fg(Color::Yellow),
                 ),
                 Span::styled(
                     format!(" [{}]", member.permission_label()),
                     Style::default().fg(Color::DarkGray),
                 ),
-            ]));
+            ];
+            if let Some(label) = address_labels.get(&addr) {
+                spans.push(Span::styled(
+                    format!(" ({})", label),
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            lines.push(Line::from(spans));
         }
     } else {
         lines.push(Line::from(Span::styled(
@@ -346,7 +367,12 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
     frame.render_widget(footer, footer_area);
 }
 
-fn render_view_proposal(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+fn render_view_proposal(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+    address_labels: &HashMap<String, String>,
+) {
     let mut lines = vec![Line::from("")];
 
     if let Some(ref proposal) = state.ms_current_proposal {
@@ -378,10 +404,18 @@ fn render_view_proposal(frame: &mut Frame, area: ratatui::layout::Rect, state: &
             Style::default().fg(Color::Green),
         )));
         for addr in &proposal.approved {
-            lines.push(Line::from(Span::styled(
-                format!("   {}", shorten_address(&addr.to_string())),
-                Style::default().fg(Color::DarkGray),
-            )));
+            let addr_str = addr.to_string();
+            let label_suffix = address_labels
+                .get(&addr_str)
+                .map(|l| format!(" ({})", l))
+                .unwrap_or_default();
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   {}", addr_str),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(label_suffix, Style::default().fg(Color::Green)),
+            ]));
         }
 
         if !proposal.rejected.is_empty() {
@@ -390,10 +424,18 @@ fn render_view_proposal(frame: &mut Frame, area: ratatui::layout::Rect, state: &
                 Style::default().fg(Color::Red),
             )));
             for addr in &proposal.rejected {
-                lines.push(Line::from(Span::styled(
-                    format!("   {}", shorten_address(&addr.to_string())),
-                    Style::default().fg(Color::DarkGray),
-                )));
+                let addr_str = addr.to_string();
+                let label_suffix = address_labels
+                    .get(&addr_str)
+                    .map(|l| format!(" ({})", l))
+                    .unwrap_or_default();
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("   {}", addr_str),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(label_suffix, Style::default().fg(Color::Green)),
+                ]));
             }
         }
 
@@ -661,26 +703,41 @@ fn render_result(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState
         Line::from(""),
     ];
 
-    // Wrap long messages
-    if message.len() > 50 {
-        lines.push(Line::from(Span::styled(
-            format!("   {}", &message[..50]),
-            Style::default().fg(Color::White),
-        )));
-        lines.push(Line::from(Span::styled(
-            format!("   {}", &message[50..]),
-            Style::default().fg(Color::White),
-        )));
-    } else {
-        lines.push(Line::from(Span::styled(
-            format!("   {message}"),
-            Style::default().fg(Color::White),
-        )));
+    // 按 \n 分行，再按可用宽度自动换行
+    let max_width = area.width.saturating_sub(8) as usize; // 左右边框 + 缩进
+    let max_width = max_width.max(20);
+    for text_line in message.split('\n') {
+        if text_line.len() <= max_width {
+            lines.push(Line::from(Span::styled(
+                format!("   {text_line}"),
+                Style::default().fg(Color::White),
+            )));
+        } else {
+            // 按宽度切割长行
+            let mut remaining = text_line;
+            while !remaining.is_empty() {
+                let end = remaining
+                    .char_indices()
+                    .nth(max_width)
+                    .map(|(i, _)| i)
+                    .unwrap_or(remaining.len());
+                lines.push(Line::from(Span::styled(
+                    format!("   {}", &remaining[..end]),
+                    Style::default().fg(Color::White),
+                )));
+                remaining = &remaining[end..];
+            }
+        }
     }
 
     lines.push(Line::from(""));
+    let hint = if state.ms_created_address.is_some() {
+        "   按任意键导入该多签"
+    } else {
+        "   按任意键返回"
+    };
     lines.push(Line::from(Span::styled(
-        "   按任意键返回",
+        hint,
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -759,6 +816,7 @@ fn render_create_input_members(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
     state: &UiState,
+    address_labels: &HashMap<String, String>,
 ) {
     let mut lines = vec![
         Line::from(""),
@@ -777,7 +835,7 @@ fn render_create_input_members(
         )));
     } else {
         for (i, addr) in state.ms_create_members.iter().enumerate() {
-            lines.push(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(
                     format!("   {}. ", i + 1),
                     Style::default().fg(Color::DarkGray),
@@ -786,7 +844,14 @@ fn render_create_input_members(
                     shorten_address(addr),
                     Style::default().fg(Color::Yellow),
                 ),
-            ]));
+            ];
+            if let Some(label) = address_labels.get(addr) {
+                spans.push(Span::styled(
+                    format!(" ({})", label),
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            lines.push(Line::from(spans));
         }
     }
 
@@ -942,11 +1007,7 @@ fn append_hint<'a>(lines: &mut Vec<Line<'a>>, hint: &'a str) {
 }
 
 fn shorten_address(addr: &str) -> String {
-    if addr.len() > 16 {
-        format!("{}...{}", &addr[..8], &addr[addr.len() - 6..])
-    } else {
-        addr.to_string()
-    }
+    addr.to_string()
 }
 
 fn shorten_rpc(url: &str) -> String {

@@ -452,7 +452,7 @@ pub(crate) async fn send_transaction(
     let body = json!({
         "jsonrpc": "2.0",
         "method": "sendTransaction",
-        "params": [tx_base64, {"encoding": "base64"}],
+        "params": [tx_base64, {"encoding": "base64", "skipPreflight": true}],
         "id": 1
     });
     let resp = rpc_call(client, rpc_url, &body).await?;

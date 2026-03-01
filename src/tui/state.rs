@@ -298,6 +298,8 @@ pub struct UiState {
     pub ms_create_members: Vec<String>,     // 已添加的成员地址
     pub ms_create_member_input: String,     // 当前输入
     pub ms_create_threshold_input: String,
+    /// 创建成功后待导入的多签地址
+    pub ms_created_address: Option<String>,
 
     // 转账流程
     pub transfer_step: TransferStep,
@@ -376,6 +378,7 @@ impl UiState {
             ms_create_members: Vec::new(),
             ms_create_member_input: String::new(),
             ms_create_threshold_input: String::new(),
+            ms_created_address: None,
 
             transfer_step: TransferStep::SelectAsset,
             transfer_from_address: String::new(),
@@ -481,6 +484,7 @@ impl UiState {
         self.ms_create_members.clear();
         self.ms_create_member_input.clear();
         self.ms_create_threshold_input.clear();
+        self.ms_created_address = None;
         self.clear_status();
     }
 

@@ -36,7 +36,7 @@ enum BgMessage {
     ProposalsFetched(Vec<multisig::ProposalInfo>),
     ProposalsFetchError(String),
     MultisigOpComplete { success: bool, message: String },
-    MultisigCreated(String), // 多签 PDA 地址
+    MultisigCreated { address: String, tx_sig: String },
 }
 
 pub struct App {
@@ -133,7 +133,12 @@ impl App {
                     .as_ref()
                     .map(|s| s.multisigs.as_slice())
                     .unwrap_or(&[]);
-                multisig_screen::render(frame, &self.ui, multisigs);
+                let address_labels = self
+                    .store
+                    .as_ref()
+                    .map(|s| s.address_labels())
+                    .unwrap_or_default();
+                multisig_screen::render(frame, &self.ui, multisigs, &address_labels);
             }
             Screen::Dex => {
                 dex_screen::render(frame);
@@ -160,10 +165,13 @@ impl App {
                     self.ui.transfer_step = TransferStep::Result;
                 }
                 BgMessage::MultisigFetched(info) => {
-                    // 如果是首次导入（从 InputAddress 步骤来的），保存到 store
-                    if self.ui.ms_step == MultisigStep::InputAddress
-                        || self.ui.ms_step == MultisigStep::List
-                    {
+                    // 首次导入（从导入流程或创建后导入），保存到 store
+                    if matches!(
+                        self.ui.ms_step,
+                        MultisigStep::InputAddress
+                            | MultisigStep::List
+                            | MultisigStep::Submitting
+                    ) {
                         self.save_multisig_to_store(&info);
                     }
                     self.ui.ms_current_info = Some(info);
@@ -186,10 +194,15 @@ impl App {
                     self.ui.ms_result = Some((success, message));
                     self.ui.ms_step = MultisigStep::Result;
                 }
-                BgMessage::MultisigCreated(multisig_address) => {
-                    // 创建成功后，自动导入该多签（触发 fetch）
-                    self.ui.ms_input_address = multisig_address;
-                    self.import_multisig();
+                BgMessage::MultisigCreated { address, tx_sig } => {
+                    // 显示创建成功结果
+                    self.ui.ms_result = Some((
+                        true,
+                        format!("多签创建成功!\n地址: {address}\n交易: {tx_sig}\n\n按任意键导入该多签..."),
+                    ));
+                    self.ui.ms_step = MultisigStep::Result;
+                    // 存储待导入的地址
+                    self.ui.ms_created_address = Some(address);
                 }
             }
         }
@@ -1635,8 +1648,13 @@ impl App {
             }
             MultisigStep::Submitting => {} // 忽略输入
             MultisigStep::Result => {
-                // 任意键返回多签详情
-                if self.ui.ms_current_info.is_some() {
+                // 如果有刚创建的多签待导入，触发导入
+                if let Some(address) = self.ui.ms_created_address.take() {
+                    self.ui.ms_input_address = address;
+                    self.ui.ms_step = MultisigStep::Submitting;
+                    self.ui.set_status("正在导入新建的多签...");
+                    self.import_multisig();
+                } else if self.ui.ms_current_info.is_some() {
                     self.ui.ms_step = MultisigStep::ViewDetail;
                 } else {
                     self.ui.ms_step = MultisigStep::List;
@@ -2085,6 +2103,7 @@ impl App {
         };
 
         let rpc_url = self.get_current_ms_rpc_url();
+        let address = info.address.to_string();
         let tx = self.bg_tx.clone();
 
         self.ui.set_status("正在获取提案...");
@@ -2095,7 +2114,13 @@ impl App {
                 .build()
                 .unwrap();
 
-            match multisig::squads::fetch_active_proposals(&client, &rpc_url, &info).await {
+            // 先刷新 multisig info 以获取最新的 transaction_index
+            let latest_info = match multisig::squads::fetch_multisig(&client, &rpc_url, &address).await {
+                Ok(i) => i,
+                Err(_) => info, // 刷新失败则用缓存
+            };
+
+            match multisig::squads::fetch_active_proposals(&client, &rpc_url, &latest_info).await {
                 Ok(proposals) => {
                     let _ = tx.send(BgMessage::ProposalsFetched(proposals));
                 }
@@ -2570,12 +2595,10 @@ impl App {
             let _ = tx.send(match result {
                 Ok(result_str) => {
                     // result_str 格式: "multisig_pda|tx_sig"
-                    let multisig_address = result_str
-                        .split('|')
-                        .next()
-                        .unwrap_or(&result_str)
-                        .to_string();
-                    BgMessage::MultisigCreated(multisig_address)
+                    let mut parts = result_str.splitn(2, '|');
+                    let address = parts.next().unwrap_or(&result_str).to_string();
+                    let tx_sig = parts.next().unwrap_or("").to_string();
+                    BgMessage::MultisigCreated { address, tx_sig }
                 }
                 Err(err) => BgMessage::MultisigOpComplete {
                     success: false,

@@ -104,6 +104,51 @@ impl WalletStore {
             multisigs: Vec::new(),
         }
     }
+
+    /// 构建地址→备注映射（用于 UI 显示时标注自己的地址）
+    pub fn address_labels(&self) -> std::collections::HashMap<String, String> {
+        let mut map = std::collections::HashMap::new();
+        for wallet in &self.wallets {
+            if wallet.hidden {
+                continue;
+            }
+            match &wallet.wallet_type {
+                WalletType::Mnemonic {
+                    eth_accounts,
+                    sol_accounts,
+                    ..
+                } => {
+                    for acc in eth_accounts.iter().chain(sol_accounts.iter()) {
+                        if !acc.hidden {
+                            let label = acc
+                                .label
+                                .as_deref()
+                                .unwrap_or(&wallet.name);
+                            map.insert(acc.address.clone(), label.to_string());
+                        }
+                    }
+                }
+                WalletType::PrivateKey {
+                    address,
+                    label,
+                    hidden,
+                    ..
+                } => {
+                    if !hidden {
+                        let l = label.as_deref().unwrap_or(&wallet.name);
+                        map.insert(address.clone(), l.to_string());
+                    }
+                }
+                WalletType::WatchOnly {
+                    address, label, ..
+                } => {
+                    let l = label.as_deref().unwrap_or(&wallet.name);
+                    map.insert(address.clone(), l.to_string());
+                }
+            }
+        }
+        map
+    }
 }
 
 impl Default for WalletStore {
