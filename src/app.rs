@@ -1643,6 +1643,8 @@ impl App {
             MultisigStep::SelectProposalType => self.handle_ms_select_proposal_type_key(key),
             MultisigStep::InputTransferTo => self.handle_ms_text_input_key(key, MsInputField::TransferTo),
             MultisigStep::InputTransferAmount => self.handle_ms_text_input_key(key, MsInputField::TransferAmount),
+            MultisigStep::InputUpgradeProgram => self.handle_ms_text_input_key(key, MsInputField::UpgradeProgram),
+            MultisigStep::InputUpgradeBuffer => self.handle_ms_text_input_key(key, MsInputField::UpgradeBuffer),
             MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => {
                 self.handle_ms_confirm_key(key);
             }
@@ -1837,10 +1839,20 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                self.ui.ms_transfer_to.clear();
-                self.ui.ms_transfer_amount.clear();
-                self.ui.ms_transfer_mint.clear();
-                self.ui.ms_step = MultisigStep::InputTransferTo;
+                let selected = types.get(self.ui.ms_proposal_type_selected);
+                match selected {
+                    Some(ProposalType::ProgramUpgrade) => {
+                        self.ui.ms_upgrade_program.clear();
+                        self.ui.ms_upgrade_buffer.clear();
+                        self.ui.ms_step = MultisigStep::InputUpgradeProgram;
+                    }
+                    _ => {
+                        self.ui.ms_transfer_to.clear();
+                        self.ui.ms_transfer_amount.clear();
+                        self.ui.ms_transfer_mint.clear();
+                        self.ui.ms_step = MultisigStep::InputTransferTo;
+                    }
+                }
                 self.ui.clear_status();
             }
             KeyCode::Esc => {
@@ -1858,6 +1870,8 @@ impl App {
                 match field {
                     MsInputField::TransferTo => self.ui.ms_transfer_to.push(c),
                     MsInputField::TransferAmount => self.ui.ms_transfer_amount.push(c),
+                    MsInputField::UpgradeProgram => self.ui.ms_upgrade_program.push(c),
+                    MsInputField::UpgradeBuffer => self.ui.ms_upgrade_buffer.push(c),
                 }
             }
             KeyCode::Backspace => {
@@ -1865,6 +1879,8 @@ impl App {
                 match field {
                     MsInputField::TransferTo => { self.ui.ms_transfer_to.pop(); }
                     MsInputField::TransferAmount => { self.ui.ms_transfer_amount.pop(); }
+                    MsInputField::UpgradeProgram => { self.ui.ms_upgrade_program.pop(); }
+                    MsInputField::UpgradeBuffer => { self.ui.ms_upgrade_buffer.pop(); }
                 }
             }
             KeyCode::Enter => {
@@ -1895,6 +1911,39 @@ impl App {
                         self.ui.ms_step = MultisigStep::ConfirmCreate;
                         self.ui.clear_status();
                     }
+                    MsInputField::UpgradeProgram => {
+                        if self.ui.ms_upgrade_program.is_empty() {
+                            self.ui.set_status("程序地址不能为空");
+                            return;
+                        }
+                        if bs58::decode(&self.ui.ms_upgrade_program)
+                            .into_vec()
+                            .map(|v| v.len() != 32)
+                            .unwrap_or(true)
+                        {
+                            self.ui.set_status("无效的 Solana 地址");
+                            return;
+                        }
+                        self.ui.ms_step = MultisigStep::InputUpgradeBuffer;
+                        self.ui.clear_status();
+                    }
+                    MsInputField::UpgradeBuffer => {
+                        if self.ui.ms_upgrade_buffer.is_empty() {
+                            self.ui.set_status("Buffer 地址不能为空");
+                            return;
+                        }
+                        if bs58::decode(&self.ui.ms_upgrade_buffer)
+                            .into_vec()
+                            .map(|v| v.len() != 32)
+                            .unwrap_or(true)
+                        {
+                            self.ui.set_status("无效的 Solana 地址");
+                            return;
+                        }
+                        self.ui.ms_confirm_password.clear();
+                        self.ui.ms_step = MultisigStep::ConfirmCreate;
+                        self.ui.clear_status();
+                    }
                 }
             }
             KeyCode::Esc => {
@@ -1905,6 +1954,12 @@ impl App {
                     }
                     MsInputField::TransferAmount => {
                         self.ui.ms_step = MultisigStep::InputTransferTo;
+                    }
+                    MsInputField::UpgradeProgram => {
+                        self.ui.ms_step = MultisigStep::SelectProposalType;
+                    }
+                    MsInputField::UpgradeBuffer => {
+                        self.ui.ms_step = MultisigStep::InputUpgradeProgram;
                     }
                 }
             }
@@ -1937,7 +1992,15 @@ impl App {
                 self.ui.clear_status();
                 match self.ui.ms_step {
                     MultisigStep::ConfirmCreate => {
-                        self.ui.ms_step = MultisigStep::InputTransferAmount;
+                        let types = ProposalType::all();
+                        match types.get(self.ui.ms_proposal_type_selected) {
+                            Some(ProposalType::ProgramUpgrade) => {
+                                self.ui.ms_step = MultisigStep::InputUpgradeBuffer;
+                            }
+                            _ => {
+                                self.ui.ms_step = MultisigStep::InputTransferAmount;
+                            }
+                        }
                     }
                     MultisigStep::ConfirmVote => {
                         self.ui.ms_step = MultisigStep::ViewProposal;
@@ -2167,6 +2230,8 @@ impl App {
 
         let to_address = self.ui.ms_transfer_to.clone();
         let amount_str = self.ui.ms_transfer_amount.clone();
+        let upgrade_program = self.ui.ms_upgrade_program.clone();
+        let upgrade_buffer = self.ui.ms_upgrade_buffer.clone();
         let proposal_type_idx = self.ui.ms_proposal_type_selected;
         let rpc_url = self.get_current_ms_rpc_url();
 
@@ -2183,6 +2248,8 @@ impl App {
                 proposal_type_idx,
                 &to_address,
                 &amount_str,
+                &upgrade_program,
+                &upgrade_buffer,
             )
             .await;
 
@@ -2858,6 +2925,8 @@ enum TransferInputField {
 enum MsInputField {
     TransferTo,
     TransferAmount,
+    UpgradeProgram,
+    UpgradeBuffer,
 }
 
 /// 后台执行转账
@@ -2936,6 +3005,7 @@ async fn execute_transfer_async(
 }
 
 /// 后台执行创建提案
+#[allow(clippy::too_many_arguments)]
 async fn execute_create_proposal_async(
     rpc_url: &str,
     private_key: &[u8],
@@ -2943,6 +3013,8 @@ async fn execute_create_proposal_async(
     proposal_type_idx: usize,
     to_address: &str,
     amount_str: &str,
+    upgrade_program: &str,
+    upgrade_buffer: &str,
 ) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -2954,12 +3026,6 @@ async fn execute_create_proposal_async(
 
     let (vault_pda, _) = multisig::derive_vault_pda(&multisig_pubkey, 0);
 
-    let to_pubkey: [u8; 32] = bs58::decode(to_address)
-        .into_vec()
-        .map_err(|e| format!("无效的目标地址: {e}"))?
-        .try_into()
-        .map_err(|_| "目标地址长度无效".to_string())?;
-
     let proposal_types = ProposalType::all();
     let proposal_type = proposal_types
         .get(proposal_type_idx)
@@ -2967,6 +3033,12 @@ async fn execute_create_proposal_async(
 
     let inner_instructions = match proposal_type {
         ProposalType::SolTransfer => {
+            let to_pubkey: [u8; 32] = bs58::decode(to_address)
+                .into_vec()
+                .map_err(|e| format!("无效的目标地址: {e}"))?
+                .try_into()
+                .map_err(|_| "目标地址长度无效".to_string())?;
+
             let amount_raw = crate::transfer::parse_amount(amount_str, 9)?;
             let lamports: u64 = amount_raw
                 .try_into()
@@ -2979,8 +3051,33 @@ async fn execute_create_proposal_async(
             )]
         }
         ProposalType::TokenTransfer => {
-            // 暂时只支持 SOL 转账，Token 转账需要额外的 mint 地址参数
             return Err("Token 转账提案暂未实现，请使用 SOL 转账".into());
+        }
+        ProposalType::ProgramUpgrade => {
+            let program_bytes: [u8; 32] = bs58::decode(upgrade_program)
+                .into_vec()
+                .map_err(|e| format!("无效的程序地址: {e}"))?
+                .try_into()
+                .map_err(|_| "程序地址长度无效".to_string())?;
+
+            let buffer_bytes: [u8; 32] = bs58::decode(upgrade_buffer)
+                .into_vec()
+                .map_err(|e| format!("无效的 Buffer 地址: {e}"))?
+                .try_into()
+                .map_err(|_| "Buffer 地址长度无效".to_string())?;
+
+            // 检查程序的 upgrade authority 是否为当前 vault
+            verify_upgrade_authority(&client, rpc_url, &program_bytes, &vault_pda).await?;
+
+            // 检查 buffer 账户是否存在
+            verify_buffer_exists(&client, rpc_url, upgrade_buffer).await?;
+
+            multisig::proposals::build_program_upgrade_instructions(
+                &program_bytes,
+                &buffer_bytes,
+                &vault_pda.to_bytes(), // spill = vault
+                &vault_pda.to_bytes(), // authority = vault
+            )
         }
     };
 
@@ -2993,6 +3090,109 @@ async fn execute_create_proposal_async(
         inner_instructions,
     )
     .await
+}
+
+/// 检查程序的 upgrade authority 是否为指定的 vault PDA
+async fn verify_upgrade_authority(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    program_bytes: &[u8; 32],
+    vault_pda: &solana_sdk::pubkey::Pubkey,
+) -> Result<(), String> {
+    use solana_sdk::pubkey::Pubkey;
+
+    // 推导 ProgramData PDA
+    let program_pk = Pubkey::new_from_array(*program_bytes);
+    let bpf_loader_id = Pubkey::from_str("BPFLoaderUpgradeab1e11111111111111111111111")
+        .map_err(|e| format!("BPF Loader 地址解析失败: {e}"))?;
+    let (programdata_pda, _) = Pubkey::find_program_address(&[program_pk.as_ref()], &bpf_loader_id);
+
+    // 获取 ProgramData 账户数据
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "getAccountInfo",
+        "params": [programdata_pda.to_string(), {"encoding": "base64"}],
+        "id": 1
+    });
+    let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+
+    let value = resp
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .ok_or("无法获取 ProgramData 账户")?;
+
+    if value.is_null() {
+        return Err("ProgramData 账户不存在，请确认程序地址正确".into());
+    }
+
+    let data_arr = value
+        .get("data")
+        .and_then(|d| d.as_array())
+        .ok_or("ProgramData 缺少 data 字段")?;
+
+    let base64_str = data_arr
+        .first()
+        .and_then(|v| v.as_str())
+        .ok_or("ProgramData 数据格式无效")?;
+
+    let data = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        base64_str,
+    )
+    .map_err(|e| format!("ProgramData base64 解码失败: {e}"))?;
+
+    // ProgramData 布局 (bincode): variant(4) + slot(8) + option(1) + authority(32)
+    if data.len() < 45 {
+        return Err("ProgramData 账户数据过短".into());
+    }
+
+    // variant 应为 3 (ProgramData)
+    let variant = u32::from_le_bytes(data[0..4].try_into().unwrap());
+    if variant != 3 {
+        return Err(format!("不是有效的 ProgramData 账户 (variant={})", variant));
+    }
+
+    // offset 12: Option<Pubkey> 的 discriminator
+    if data[12] == 0 {
+        return Err("程序不可升级（upgrade authority 已撤销）".into());
+    }
+
+    let authority = Pubkey::try_from(&data[13..45])
+        .map_err(|_| "解析 upgrade authority 失败")?;
+
+    if authority != *vault_pda {
+        return Err(format!(
+            "程序的 upgrade authority ({}) 不是当前多签 vault ({})",
+            authority, vault_pda
+        ));
+    }
+
+    Ok(())
+}
+
+/// 检查 buffer 账户是否存在
+async fn verify_buffer_exists(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    buffer_address: &str,
+) -> Result<(), String> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "getAccountInfo",
+        "params": [buffer_address, {"encoding": "base64"}],
+        "id": 1
+    });
+    let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+
+    let value = resp
+        .get("result")
+        .and_then(|r| r.get("value"));
+
+    if value.is_none() || value.unwrap().is_null() {
+        return Err(format!("Buffer 账户 {} 不存在，请先执行 solana program write-buffer", buffer_address));
+    }
+
+    Ok(())
 }
 
 /// 空存储，用于渲染时的默认值

@@ -113,6 +113,8 @@ pub enum ProposalType {
     SolTransfer,
     /// SPL Token 转账（从 vault 转出代币）
     TokenTransfer,
+    /// BPF Loader Upgradeable 程序升级
+    ProgramUpgrade,
 }
 
 impl ProposalType {
@@ -120,11 +122,12 @@ impl ProposalType {
         match self {
             Self::SolTransfer => "SOL 转账",
             Self::TokenTransfer => "代币转账",
+            Self::ProgramUpgrade => "升级程序",
         }
     }
 
     pub fn all() -> Vec<Self> {
-        vec![Self::SolTransfer, Self::TokenTransfer]
+        vec![Self::SolTransfer, Self::TokenTransfer, Self::ProgramUpgrade]
     }
 }
 

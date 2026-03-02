@@ -30,7 +30,7 @@ pub fn render(
 
     let [_, center, _] = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(64),
+        Constraint::Length(80),
         Constraint::Fill(1),
     ])
     .areas(center_v);
@@ -45,6 +45,8 @@ pub fn render(
         MultisigStep::SelectProposalType => render_select_proposal_type(frame, center, state),
         MultisigStep::InputTransferTo => render_input_transfer_field(frame, center, state, "地址", &state.ms_transfer_to),
         MultisigStep::InputTransferAmount => render_input_transfer_field(frame, center, state, "数量", &state.ms_transfer_amount),
+        MultisigStep::InputUpgradeProgram => render_input_upgrade_field(frame, center, state, "程序地址", &state.ms_upgrade_program),
+        MultisigStep::InputUpgradeBuffer => render_input_upgrade_field(frame, center, state, "Buffer 地址", &state.ms_upgrade_buffer),
         MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => render_confirm(frame, center, state),
         MultisigStep::Submitting => render_submitting(frame, center),
         MultisigStep::Result => render_result(frame, center, state),
@@ -344,7 +346,7 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                     ),
                     Span::styled(
                         format!("  通过:{} 拒绝:{}", p.approved.len(), p.rejected.len()),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::Gray),
                     ),
                 ]))
             })
@@ -567,6 +569,54 @@ fn render_input_transfer_field(
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+fn render_input_upgrade_field(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+    field_name: &str,
+    field_value: &str,
+) {
+    let vault_addr = state
+        .ms_current_info
+        .as_ref()
+        .map(|i| {
+            let (vault_pda, _) = crate::multisig::derive_vault_pda(&i.address, 0);
+            vault_pda.to_string()
+        })
+        .unwrap_or_default();
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" Vault (Authority): ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                shorten_address(&vault_addr),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(" 请输入{field_name}:"),
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            format!(" > {field_value}"),
+            Style::default().fg(Color::Yellow),
+        )),
+    ];
+
+    append_status(&mut lines, state);
+    append_hint(&mut lines, " Enter确认  Esc返回");
+
+    let block = Block::default()
+        .title(" 创建提案 - 升级程序 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
 fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
     let masked: String = "*".repeat(state.ms_confirm_password.len());
 
@@ -584,30 +634,63 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
     match state.ms_step {
         MultisigStep::ConfirmCreate => {
             let proposal_types = ProposalType::all();
-            let ptype_label = proposal_types
-                .get(state.ms_proposal_type_selected)
+            let ptype = proposal_types.get(state.ms_proposal_type_selected);
+            let ptype_label = ptype
                 .map(|t| t.label().to_string())
                 .unwrap_or_else(|| "未知".to_string());
             lines.push(Line::from(vec![
                 Span::styled("   类型: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(ptype_label, Style::default().fg(Color::Cyan)),
             ]));
-            lines.push(Line::from(vec![
-                Span::styled("   目标: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    shorten_address(&state.ms_transfer_to),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("   数量: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    state.ms_transfer_amount.clone(),
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
+
+            if ptype == Some(&ProposalType::ProgramUpgrade) {
+                lines.push(Line::from(vec![
+                    Span::styled("   程序: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        shorten_address(&state.ms_upgrade_program),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled(" Buffer: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        shorten_address(&state.ms_upgrade_buffer),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ]));
+                let vault_addr = state
+                    .ms_current_info
+                    .as_ref()
+                    .map(|i| {
+                        let (vault_pda, _) = crate::multisig::derive_vault_pda(&i.address, 0);
+                        vault_pda.to_string()
+                    })
+                    .unwrap_or_default();
+                lines.push(Line::from(vec![
+                    Span::styled("  Spill: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        shorten_address(&vault_addr),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled("   目标: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        shorten_address(&state.ms_transfer_to),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("   数量: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        state.ms_transfer_amount.clone(),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
         }
         MultisigStep::ConfirmVote => {
             if let Some(ref action) = state.ms_vote_action {

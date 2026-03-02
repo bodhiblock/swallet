@@ -261,6 +261,115 @@ struct CompiledVaultInstruction {
     data: Vec<u8>,
 }
 
+/// 构建 BPF Loader Upgradeable 的 Upgrade + Close 指令
+///
+/// 返回两条指令：
+/// 1. Upgrade: 将 buffer 中的程序代码写入 programdata
+/// 2. Close: 关闭 buffer 账户，回收剩余租金到 vault
+pub fn build_program_upgrade_instructions(
+    program_pubkey: &[u8; 32],
+    buffer_pubkey: &[u8; 32],
+    spill_pubkey: &[u8; 32],
+    authority_pubkey: &[u8; 32],
+) -> Vec<VaultInstruction> {
+    use solana_sdk::pubkey::Pubkey;
+
+    let bpf_loader_upgradeable: [u8; 32] =
+        bs58::decode("BPFLoaderUpgradeab1e11111111111111111111111")
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap();
+
+    // 推导 ProgramData PDA: seeds = [program_id], program = BPF Loader Upgradeable
+    let program_pk = Pubkey::new_from_array(*program_pubkey);
+    let bpf_pk = Pubkey::new_from_array(bpf_loader_upgradeable);
+    let (programdata_pda, _) = Pubkey::find_program_address(&[program_pk.as_ref()], &bpf_pk);
+
+    let rent_sysvar: [u8; 32] = bs58::decode("SysvarRent111111111111111111111111111111111")
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+
+    let clock_sysvar: [u8; 32] = bs58::decode("SysvarC1ock11111111111111111111111111111111")
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+
+    // 指令 1: Upgrade (discriminator = 3, u32 LE)
+    // 账户: ProgramData, Program, Buffer, Spill, Rent, Clock, Authority
+    let upgrade_ix = VaultInstruction {
+        program_id: bpf_loader_upgradeable,
+        accounts: vec![
+            VaultAccountMeta {
+                pubkey: programdata_pda.to_bytes(),
+                is_signer: false,
+                is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: *program_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: *buffer_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: *spill_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: rent_sysvar,
+                is_signer: false,
+                is_writable: false,
+            },
+            VaultAccountMeta {
+                pubkey: clock_sysvar,
+                is_signer: false,
+                is_writable: false,
+            },
+            VaultAccountMeta {
+                pubkey: *authority_pubkey,
+                is_signer: true,
+                is_writable: false,
+            },
+        ],
+        data: vec![3, 0, 0, 0],
+    };
+
+    // 指令 2: Close (discriminator = 5, u32 LE)
+    // 关闭 buffer 账户，回收剩余租金
+    // 账户: Buffer(close target), Recipient(lamports), Authority(signer)
+    let close_ix = VaultInstruction {
+        program_id: bpf_loader_upgradeable,
+        accounts: vec![
+            VaultAccountMeta {
+                pubkey: *buffer_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: *spill_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: *authority_pubkey,
+                is_signer: true,
+                is_writable: false,
+            },
+        ],
+        data: vec![5, 0, 0, 0],
+    };
+
+    vec![upgrade_ix, close_ix]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +435,58 @@ mod tests {
 
         // 应该恰好读完所有字节
         assert_eq!(off, msg.len());
+    }
+
+    #[test]
+    fn test_build_program_upgrade_instructions() {
+        let program = [3u8; 32];
+        let buffer = [4u8; 32];
+        let spill = [5u8; 32];
+        let authority = [1u8; 32];
+        let ixs = build_program_upgrade_instructions(&program, &buffer, &spill, &authority);
+
+        assert_eq!(ixs.len(), 2);
+
+        // === Upgrade 指令 ===
+        let upgrade = &ixs[0];
+        let expected_pid: [u8; 32] =
+            bs58::decode("BPFLoaderUpgradeab1e11111111111111111111111")
+                .into_vec()
+                .unwrap()
+                .try_into()
+                .unwrap();
+        assert_eq!(upgrade.program_id, expected_pid);
+        assert_eq!(upgrade.accounts.len(), 7);
+        assert!(upgrade.accounts[0].is_writable);  // ProgramData
+        assert_eq!(upgrade.accounts[1].pubkey, program);
+        assert_eq!(upgrade.accounts[2].pubkey, buffer);
+        assert_eq!(upgrade.accounts[3].pubkey, spill);
+        assert!(upgrade.accounts[6].is_signer);    // Authority
+        assert_eq!(upgrade.data, vec![3, 0, 0, 0]);
+
+        // === Close 指令 ===
+        let close = &ixs[1];
+        assert_eq!(close.program_id, expected_pid);
+        assert_eq!(close.accounts.len(), 3);
+        assert_eq!(close.accounts[0].pubkey, buffer);   // close target
+        assert!(close.accounts[0].is_writable);
+        assert_eq!(close.accounts[1].pubkey, spill);     // recipient
+        assert!(close.accounts[1].is_writable);
+        assert_eq!(close.accounts[2].pubkey, authority);  // authority
+        assert!(close.accounts[2].is_signer);
+        assert_eq!(close.data, vec![5, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_serialize_program_upgrade_message() {
+        let program = [3u8; 32];
+        let buffer = [4u8; 32];
+        let vault = [1u8; 32];
+        let ixs = build_program_upgrade_instructions(&program, &buffer, &vault, &vault);
+
+        let msg = serialize_vault_transaction_message(0, &ixs);
+        assert!(!msg.is_empty());
+        // num_signers >= 1 (vault as authority)
+        assert!(msg[0] >= 1);
     }
 }

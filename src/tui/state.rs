@@ -152,6 +152,11 @@ pub enum MultisigStep {
     InputTransferTo,
     /// 输入转账数量
     InputTransferAmount,
+    // ---- 程序升级提案流程 ----
+    /// 输入要升级的程序地址
+    InputUpgradeProgram,
+    /// 输入 buffer 地址
+    InputUpgradeBuffer,
     /// 确认创建提案（输入密码）
     ConfirmCreate,
     /// 确认投票（输入密码）
@@ -289,6 +294,8 @@ pub struct UiState {
     pub ms_transfer_to: String,
     pub ms_transfer_amount: String,
     pub ms_transfer_mint: String, // SPL token mint (空=SOL)
+    pub ms_upgrade_program: String, // 程序升级：程序地址
+    pub ms_upgrade_buffer: String,  // 程序升级：buffer 地址
     pub ms_confirm_password: String,
     pub ms_vote_action: Option<VoteAction>,
     pub ms_result: Option<(bool, String)>,
@@ -370,6 +377,8 @@ impl UiState {
             ms_transfer_to: String::new(),
             ms_transfer_amount: String::new(),
             ms_transfer_mint: String::new(),
+            ms_upgrade_program: String::new(),
+            ms_upgrade_buffer: String::new(),
             ms_confirm_password: String::new(),
             ms_vote_action: None,
             ms_result: None,
@@ -476,6 +485,8 @@ impl UiState {
         self.ms_transfer_to.clear();
         self.ms_transfer_amount.clear();
         self.ms_transfer_mint.clear();
+        self.ms_upgrade_program.clear();
+        self.ms_upgrade_buffer.clear();
         self.ms_confirm_password.clear();
         self.ms_vote_action = None;
         self.ms_result = None;
