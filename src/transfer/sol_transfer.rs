@@ -420,7 +420,7 @@ pub(crate) async fn get_latest_blockhash(client: &Client, rpc_url: &str) -> Resu
     let body = json!({
         "jsonrpc": "2.0",
         "method": "getLatestBlockhash",
-        "params": [{"commitment": "finalized"}],
+        "params": [{}],
         "id": 1
     });
     let resp = rpc_call(client, rpc_url, &body).await?;
@@ -489,9 +489,26 @@ pub(crate) async fn account_exists(client: &Client, rpc_url: &str, address: &str
 }
 
 pub(crate) async fn rpc_call(client: &Client, rpc_url: &str, body: &Value) -> Result<Value, String> {
+    // 自动注入 commitment: confirmed
+    let mut body = body.clone();
+    if let Some(params) = body.get_mut("params").and_then(|p| p.as_array_mut()) {
+        // 找到最后一个 object 参数并注入，或追加新 object
+        let mut injected = false;
+        for param in params.iter_mut().rev() {
+            if let Some(obj) = param.as_object_mut() {
+                obj.entry("commitment").or_insert(json!("confirmed"));
+                injected = true;
+                break;
+            }
+        }
+        if !injected {
+            params.push(json!({"commitment": "confirmed"}));
+        }
+    }
+
     client
         .post(rpc_url)
-        .json(body)
+        .json(&body)
         .send()
         .await
         .map_err(|e| format!("RPC 请求失败: {e}"))?

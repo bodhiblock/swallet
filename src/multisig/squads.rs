@@ -357,12 +357,9 @@ pub async fn execute_vault_transaction(
     let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index);
     let (vault_pda, _) = derive_vault_pda(&multisig_pubkey, vault_index);
 
-    // 从链上获取 VaultTransaction 账户，解析内部指令的 account_keys
+    // 从链上获取 VaultTransaction，SDK 用标准 Borsh 反序列化（与链上存储格式一致）
     let tx_data = fetch_account_data(client, rpc_url, &transaction_pda.to_string()).await?;
-    let vault_tx = sdk_accounts::VaultTransaction::try_deserialize(&mut &tx_data[..])
-        .map_err(|e| format!("VaultTransaction 反序列化失败: {e}"))?;
-
-    let msg = &vault_tx.message;
+    let msg = parse_vault_tx_message_borsh(&tx_data)?;
 
     let ix = sdk_instruction(
         client::accounts::VaultTransactionExecute {
@@ -374,32 +371,103 @@ pub async fn execute_vault_transaction(
         client::args::VaultTransactionExecute,
     );
 
-    // remaining accounts: vault PDA + 内部消息引用的所有账户
+    // remaining accounts: 按 account_keys 顺序传入
+    // signer keys 替换为实际的 vault PDA / ephemeral signer PDAs
     let mut ix_with_remaining = ix;
 
-    // 第一个 remaining account 是 vault 本身
-    ix_with_remaining.accounts.push(AccountMeta {
-        pubkey: vault_pda.to_bytes(),
-        is_signer: false,
-        is_writable: true,
-    });
-
-    // 内部消息的 account_keys（按顺序分为 signer/writable 区间）
-    // account_keys 中第一个是 vault（已作为 PDA signer，跳过）
-    for (i, key) in msg.account_keys.iter().enumerate().skip(1) {
+    for (i, key) in msg.account_keys.iter().enumerate() {
+        let is_signer_key = i < msg.num_signers as usize;
         let is_writable = if i < msg.num_signers as usize {
             i < msg.num_writable_signers as usize
         } else {
             (i - msg.num_signers as usize) < msg.num_writable_non_signers as usize
         };
+
+        // signer keys[0] = vault PDA，其余为 ephemeral signer PDAs
+        let actual_key = if is_signer_key {
+            if i == 0 {
+                vault_pda
+            } else {
+                // ephemeral signer PDA（当前不支持，用原 key）
+                *key
+            }
+        } else {
+            *key
+        };
+
         ix_with_remaining.accounts.push(AccountMeta {
-            pubkey: key.to_bytes(),
+            pubkey: actual_key.to_bytes(),
             is_signer: false,
             is_writable,
         });
     }
 
     sign_and_send(client, rpc_url, &keypair, &[ix_with_remaining]).await
+}
+
+/// 从 VaultTransaction 原始账户数据中解析消息（标准 Borsh 格式）
+///
+/// VaultTransaction 布局:
+///   discriminator(8) + multisig(32) + creator(32) + index(8) +
+///   bump(1) + vault_index(1) + vault_bump(1) +
+///   ephemeral_signer_bumps(Vec<u8>, Borsh u32前缀) +
+///   message(标准 Borsh: u32前缀)
+///
+/// 注意: 输入格式是 beet (u8/u16)，但程序在链上以标准 Borsh (u32) 存储
+fn parse_vault_tx_message_borsh(data: &[u8]) -> Result<ParsedMessage, String> {
+    if data.len() < 87 {
+        return Err("VaultTransaction 数据太短".into());
+    }
+
+    let mut off = 8 + 32 + 32 + 8 + 1 + 1 + 1; // = 83, skip to esb
+
+    // ephemeral_signer_bumps: Vec<u8> (标准 Borsh u32 前缀)
+    if off + 4 > data.len() {
+        return Err("数据不足: esb length".into());
+    }
+    let esb_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+    off += 4 + esb_len;
+
+    // message 开始（标准 Borsh 格式: u32 前缀）
+    if off + 3 > data.len() {
+        return Err("数据不足: message header".into());
+    }
+    let num_signers = data[off]; off += 1;
+    let num_writable_signers = data[off]; off += 1;
+    let num_writable_non_signers = data[off]; off += 1;
+
+    // account_keys: 标准 Borsh u32 长度前缀 + N * 32 bytes
+    if off + 4 > data.len() {
+        return Err("数据不足: account_keys length".into());
+    }
+    let ak_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+    off += 4;
+
+    let mut account_keys = Vec::with_capacity(ak_len);
+    for _ in 0..ak_len {
+        if off + 32 > data.len() {
+            return Err("数据不足: account_key".into());
+        }
+        let key = Pubkey::try_from(&data[off..off + 32])
+            .map_err(|_| "无效的 Pubkey")?;
+        off += 32;
+        account_keys.push(key);
+    }
+
+    Ok(ParsedMessage {
+        num_signers,
+        num_writable_signers,
+        num_writable_non_signers,
+        account_keys,
+    })
+}
+
+/// 解析后的 VaultTransaction 消息（仅包含 execute 所需字段）
+struct ParsedMessage {
+    num_signers: u8,
+    num_writable_signers: u8,
+    num_writable_non_signers: u8,
+    account_keys: Vec<Pubkey>,
 }
 
 /// 创建 Squads v4 多签 (MultisigCreateV2)

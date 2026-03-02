@@ -132,15 +132,15 @@ pub fn build_spl_transfer_instructions(
     instructions
 }
 
-/// 序列化 vault 交易消息（Squads 格式）
+/// 序列化 vault 交易消息（Squads v4 beet 格式）
 ///
-/// 格式类似于 Solana Message，但不包含签名和 blockhash:
-/// - num_account_keys (u8)
-/// - account_keys (N * 32 bytes) - 按角色排序
-/// - num_instructions (u8)
-/// - compiled_instructions
-///
-/// 注意：这是 Squads v4 TransactionMessage 的 Borsh 序列化格式
+/// Squads v4 使用自定义的 "beet" 序列化格式（非标准 Borsh），
+/// 长度前缀使用 u8/u16 而非 Borsh 的 u32：
+/// - num_signers (u8), num_writable_signers (u8), num_writable_non_signers (u8)
+/// - account_keys: u8 长度 + N * 32 bytes
+/// - instructions: u8 长度 + compiled instructions
+///   - 每条: program_id_index (u8) + account_indexes (u8 长度 + bytes) + data (u16 LE 长度 + bytes)
+/// - address_table_lookups: u8 长度 + lookups
 pub fn serialize_vault_transaction_message(
     _vault_index: u8,
     instructions: &[VaultInstruction],
@@ -194,7 +194,7 @@ pub fn serialize_vault_transaction_message(
         })
         .collect();
 
-    // Borsh 序列化 TransactionMessage（与 SDK VaultTransactionMessage 格式一致）
+    // Squads v4 beet 格式序列化（u8/u16 长度前缀）
     let mut buf = Vec::new();
 
     // num_signers: u8
@@ -204,27 +204,27 @@ pub fn serialize_vault_transaction_message(
     // num_writable_non_signers: u8
     buf.push(num_writable_non_signers as u8);
 
-    // account_keys: Vec<Pubkey> (Borsh: 4-byte length + data)
-    buf.extend_from_slice(&(account_keys.len() as u32).to_le_bytes());
+    // account_keys: u8 长度前缀 + N * 32 bytes
+    buf.push(account_keys.len() as u8);
     for key in &account_keys {
         buf.extend_from_slice(&key.pubkey);
     }
 
-    // instructions: Vec<CompiledInstruction> (Borsh: 4-byte length + data)
-    buf.extend_from_slice(&(compiled_instructions.len() as u32).to_le_bytes());
+    // instructions: u8 长度前缀 + compiled instructions
+    buf.push(compiled_instructions.len() as u8);
     for ix in &compiled_instructions {
         // program_id_index: u8
         buf.push(ix.program_id_index);
-        // account_indices: Vec<u8> (Borsh: 4-byte length + data)
-        buf.extend_from_slice(&(ix.account_indices.len() as u32).to_le_bytes());
+        // account_indices: u8 长度前缀 + bytes
+        buf.push(ix.account_indices.len() as u8);
         buf.extend_from_slice(&ix.account_indices);
-        // data: Vec<u8> (Borsh: 4-byte length + data)
-        buf.extend_from_slice(&(ix.data.len() as u32).to_le_bytes());
+        // data: u16 LE 长度前缀 + bytes
+        buf.extend_from_slice(&(ix.data.len() as u16).to_le_bytes());
         buf.extend_from_slice(&ix.data);
     }
 
-    // address_table_lookups: Vec<MessageAddressTableLookup> = empty
-    buf.extend_from_slice(&0u32.to_le_bytes());
+    // address_table_lookups: u8 长度前缀 (0 = empty)
+    buf.push(0u8);
 
     buf
 }
@@ -286,9 +286,45 @@ mod tests {
         let ix = build_sol_transfer_instruction(&vault, &to, 1_000_000);
 
         let msg = serialize_vault_transaction_message(0, &[ix]);
-        // Should produce non-empty bytes
         assert!(!msg.is_empty());
-        // First byte is num_signers (1 for vault)
-        assert_eq!(msg[0], 1);
+
+        // 验证 beet 格式序列化
+        let mut off = 0;
+
+        // num_signers: u8 = 1 (vault)
+        assert_eq!(msg[off], 1); off += 1;
+        // num_writable_signers: u8 = 1 (vault)
+        assert_eq!(msg[off], 1); off += 1;
+        // num_writable_non_signers: u8 = 1 (to)
+        assert_eq!(msg[off], 1); off += 1;
+
+        // account_keys: u8 长度前缀 = 3 (vault, to, system_program)
+        assert_eq!(msg[off], 3); off += 1;
+        // 验证第一个 key 是 vault (writable signer)
+        assert_eq!(&msg[off..off+32], &vault); off += 32;
+        // 第二个 key 是 to (writable non-signer)
+        assert_eq!(&msg[off..off+32], &to); off += 32;
+        // 第三个 key 是 system_program (readonly non-signer)
+        assert_eq!(&msg[off..off+32], &[0u8; 32]); off += 32;
+
+        // instructions: u8 长度前缀 = 1
+        assert_eq!(msg[off], 1); off += 1;
+        // program_id_index: u8 = 2 (system_program)
+        assert_eq!(msg[off], 2); off += 1;
+        // account_indices: u8 长度前缀 = 2
+        assert_eq!(msg[off], 2); off += 1;
+        assert_eq!(msg[off], 0); off += 1; // vault index
+        assert_eq!(msg[off], 1); off += 1; // to index
+
+        // data: u16 LE 长度前缀 = 12
+        let data_len = u16::from_le_bytes([msg[off], msg[off+1]]);
+        assert_eq!(data_len, 12); off += 2;
+        off += 12; // skip data bytes
+
+        // address_table_lookups: u8 长度前缀 = 0
+        assert_eq!(msg[off], 0); off += 1;
+
+        // 应该恰好读完所有字节
+        assert_eq!(off, msg.len());
     }
 }
