@@ -4486,6 +4486,7 @@ dependencies = [
  "bip32",
  "bip39",
  "bs58",
+ "bytemuck",
  "chrono",
  "crossterm",
  "futures",

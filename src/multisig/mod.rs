@@ -1,3 +1,4 @@
+pub mod presets;
 pub mod proposals;
 pub mod squads;
 
@@ -115,6 +116,8 @@ pub enum ProposalType {
     TokenTransfer,
     /// BPF Loader Upgradeable 程序升级
     ProgramUpgrade,
+    /// 调用预制程序指令
+    ProgramCall,
 }
 
 impl ProposalType {
@@ -123,11 +126,12 @@ impl ProposalType {
             Self::SolTransfer => "SOL 转账",
             Self::TokenTransfer => "代币转账",
             Self::ProgramUpgrade => "升级程序",
+            Self::ProgramCall => "调用程序",
         }
     }
 
     pub fn all() -> Vec<Self> {
-        vec![Self::SolTransfer, Self::TokenTransfer, Self::ProgramUpgrade]
+        vec![Self::SolTransfer, Self::TokenTransfer, Self::ProgramUpgrade, Self::ProgramCall]
     }
 }
 

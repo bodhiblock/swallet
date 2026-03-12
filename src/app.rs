@@ -1772,6 +1772,9 @@ impl App {
             MultisigStep::InputTransferAmount => self.handle_ms_text_input_key(key, MsInputField::TransferAmount),
             MultisigStep::InputUpgradeProgram => self.handle_ms_text_input_key(key, MsInputField::UpgradeProgram),
             MultisigStep::InputUpgradeBuffer => self.handle_ms_text_input_key(key, MsInputField::UpgradeBuffer),
+            MultisigStep::SelectProgram => self.handle_ms_select_program_key(key),
+            MultisigStep::SelectProgramInstruction => self.handle_ms_select_program_instruction_key(key),
+            MultisigStep::InputProgramArgs => self.handle_ms_input_program_args_key(key),
             MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => {
                 self.handle_ms_confirm_key(key);
             }
@@ -1988,6 +1991,10 @@ impl App {
                         self.ui.ms_upgrade_buffer.clear();
                         self.ui.ms_step = MultisigStep::InputUpgradeProgram;
                     }
+                    Some(ProposalType::ProgramCall) => {
+                        self.ui.ms_preset_program_selected = 0;
+                        self.ui.ms_step = MultisigStep::SelectProgram;
+                    }
                     _ => {
                         self.ui.ms_transfer_to.clear();
                         self.ui.ms_transfer_amount.clear();
@@ -1999,6 +2006,197 @@ impl App {
             }
             KeyCode::Esc => {
                 self.ui.ms_step = MultisigStep::ViewDetail;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_select_program_key(&mut self, key: KeyEvent) {
+        let programs = multisig::presets::all_programs();
+        match key.code {
+            KeyCode::Up => {
+                if self.ui.ms_preset_program_selected > 0 {
+                    self.ui.ms_preset_program_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.ui.ms_preset_program_selected + 1 < programs.len() {
+                    self.ui.ms_preset_program_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                self.ui.ms_preset_instruction_selected = 0;
+                self.ui.ms_step = MultisigStep::SelectProgramInstruction;
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::SelectProposalType;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_select_program_instruction_key(&mut self, key: KeyEvent) {
+        let programs = multisig::presets::all_programs();
+        let ix_count = programs
+            .get(self.ui.ms_preset_program_selected)
+            .map(|p| p.instructions.len())
+            .unwrap_or(0);
+        match key.code {
+            KeyCode::Up => {
+                if self.ui.ms_preset_instruction_selected > 0 {
+                    self.ui.ms_preset_instruction_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.ui.ms_preset_instruction_selected + 1 < ix_count {
+                    self.ui.ms_preset_instruction_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                // 先检查链上 authority 是否与当前 vault 一致
+                let program = match programs.get(self.ui.ms_preset_program_selected) {
+                    Some(p) => p,
+                    None => return,
+                };
+                let ms_info = match &self.ui.ms_current_info {
+                    Some(i) => i.clone(),
+                    None => {
+                        self.ui.set_status("多签信息缺失");
+                        return;
+                    }
+                };
+                let (vault_pda, _) = multisig::derive_vault_pda(&ms_info.address, 0);
+                let rpc_url = self.get_current_ms_rpc_url();
+                let pid = program.program_id;
+
+                self.ui.set_status("正在验证 authority...");
+
+                let check_result = self.runtime.block_on(async {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(10))
+                        .build()
+                        .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
+                    verify_program_authority(&client, &rpc_url, &pid, &vault_pda).await
+                });
+
+                match check_result {
+                    Ok(()) => {
+                        self.ui.clear_status();
+                        let has_args = program
+                            .instructions
+                            .get(self.ui.ms_preset_instruction_selected)
+                            .map(|ix| !ix.args.is_empty())
+                            .unwrap_or(false);
+                        if has_args {
+                            self.ui.ms_program_args.clear();
+                            self.ui.ms_program_arg_index = 0;
+                            self.ui.ms_program_arg_input.clear();
+                            self.ui.ms_step = MultisigStep::InputProgramArgs;
+                        } else {
+                            self.ui.ms_program_args.clear();
+                            self.ui.ms_confirm_password.clear();
+                            self.ui.ms_step = MultisigStep::ConfirmCreate;
+                        }
+                    }
+                    Err(e) => {
+                        self.ui.set_status(e);
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::SelectProgram;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_input_program_args_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) => {
+                self.ui.clear_status();
+                self.ui.ms_program_arg_input.push(c);
+            }
+            KeyCode::Backspace => {
+                self.ui.clear_status();
+                self.ui.ms_program_arg_input.pop();
+            }
+            KeyCode::Enter => {
+                let input = self.ui.ms_program_arg_input.trim().to_string();
+                if input.is_empty() {
+                    self.ui.set_status("参数不能为空");
+                    return;
+                }
+
+                // 验证参数格式
+                let programs = multisig::presets::all_programs();
+                let arg_def = programs
+                    .get(self.ui.ms_preset_program_selected)
+                    .and_then(|p| p.instructions.get(self.ui.ms_preset_instruction_selected))
+                    .and_then(|ix| ix.args.get(self.ui.ms_program_arg_index));
+
+                if let Some(arg) = arg_def {
+                    match arg.arg_type {
+                        multisig::presets::ArgType::Pubkey => {
+                            if bs58::decode(&input)
+                                .into_vec()
+                                .map(|v| v.len() != 32)
+                                .unwrap_or(true)
+                            {
+                                self.ui.set_status("无效的地址格式");
+                                return;
+                            }
+                        }
+                        multisig::presets::ArgType::U64 => {
+                            if input.parse::<u64>().is_err() {
+                                self.ui.set_status("无效的数值");
+                                return;
+                            }
+                        }
+                        multisig::presets::ArgType::U32 => {
+                            if input.parse::<u32>().is_err() {
+                                self.ui.set_status("无效的数值");
+                                return;
+                            }
+                        }
+                        multisig::presets::ArgType::I64 => {
+                            if input.parse::<i64>().is_err() {
+                                self.ui.set_status("无效的数值");
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                self.ui.ms_program_args.push(input);
+                self.ui.ms_program_arg_index += 1;
+                self.ui.ms_program_arg_input.clear();
+                self.ui.clear_status();
+
+                // 检查是否所有参数已收集完
+                let total_args = programs
+                    .get(self.ui.ms_preset_program_selected)
+                    .and_then(|p| p.instructions.get(self.ui.ms_preset_instruction_selected))
+                    .map(|ix| ix.args.len())
+                    .unwrap_or(0);
+
+                if self.ui.ms_program_arg_index >= total_args {
+                    self.ui.ms_confirm_password.clear();
+                    self.ui.ms_step = MultisigStep::ConfirmCreate;
+                }
+            }
+            KeyCode::Esc => {
+                // 返回上一步
+                if self.ui.ms_program_arg_index > 0 {
+                    // 回退到上一个参数
+                    self.ui.ms_program_arg_index -= 1;
+                    self.ui.ms_program_arg_input = self.ui.ms_program_args.pop().unwrap_or_default();
+                } else {
+                    self.ui.ms_step = MultisigStep::SelectProgramInstruction;
+                }
                 self.ui.clear_status();
             }
             _ => {}
@@ -2376,6 +2574,9 @@ impl App {
         let upgrade_program = self.ui.ms_upgrade_program.clone();
         let upgrade_buffer = self.ui.ms_upgrade_buffer.clone();
         let proposal_type_idx = self.ui.ms_proposal_type_selected;
+        let preset_program_idx = self.ui.ms_preset_program_selected;
+        let preset_instruction_idx = self.ui.ms_preset_instruction_selected;
+        let preset_args = self.ui.ms_program_args.clone();
         let rpc_url = self.get_current_ms_rpc_url();
 
         // 切换到提交中
@@ -2393,6 +2594,9 @@ impl App {
                 &amount_str,
                 &upgrade_program,
                 &upgrade_buffer,
+                preset_program_idx,
+                preset_instruction_idx,
+                &preset_args,
             )
             .await;
 
@@ -3197,6 +3401,9 @@ async fn execute_create_proposal_async(
     amount_str: &str,
     upgrade_program: &str,
     upgrade_buffer: &str,
+    preset_program_idx: usize,
+    preset_instruction_idx: usize,
+    preset_args: &[String],
 ) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -3234,6 +3441,22 @@ async fn execute_create_proposal_async(
         }
         ProposalType::TokenTransfer => {
             return Err("Token 转账提案暂未实现，请使用 SOL 转账".into());
+        }
+        ProposalType::ProgramCall => {
+            let programs = multisig::presets::all_programs();
+            let program = programs
+                .get(preset_program_idx)
+                .ok_or("无效的预制程序")?;
+            let instruction = program
+                .instructions
+                .get(preset_instruction_idx)
+                .ok_or("无效的预制指令")?;
+
+            (instruction.build)(
+                &vault_pda.to_bytes(),
+                &program.program_id,
+                preset_args,
+            )?
         }
         ProposalType::ProgramUpgrade => {
             let program_bytes: [u8; 32] = bs58::decode(upgrade_program)
@@ -3375,6 +3598,84 @@ async fn verify_buffer_exists(
     }
 
     Ok(())
+}
+
+/// 验证预制程序的 config PDA 中的 authority/admin 是否为当前 vault
+async fn verify_program_authority(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    program_id: &[u8; 32],
+    vault_pda: &solana_sdk::pubkey::Pubkey,
+) -> Result<(), String> {
+    use solana_sdk::pubkey::Pubkey;
+
+    let pid = Pubkey::new_from_array(*program_id);
+
+    // 尝试 "config" PDA（大部分预制程序使用此 seed）
+    let config_pda = {
+        let (pda, _) = Pubkey::find_program_address(&[b"config"], &pid);
+        pda
+    };
+
+    // 也尝试 "quest_config"（Quest 程序使用此 seed）
+    let quest_config_pda = {
+        let (pda, _) = Pubkey::find_program_address(&[b"quest_config"], &pid);
+        pda
+    };
+
+    // 先尝试 "config"，再尝试 "quest_config"
+    for config_addr in &[config_pda, quest_config_pda] {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "getAccountInfo",
+            "params": [config_addr.to_string(), {"encoding": "base64"}],
+            "id": 1
+        });
+        let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+
+        let value = resp
+            .get("result")
+            .and_then(|r| r.get("value"));
+
+        if value.is_none() || value.unwrap().is_null() {
+            continue;
+        }
+
+        // 解析 base64 数据
+        let data_b64 = value
+            .unwrap()
+            .get("data")
+            .and_then(|d| d.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .ok_or("无法解析 config 账户数据")?;
+
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(data_b64)
+            .map_err(|e| format!("base64 解码失败: {e}"))?;
+
+        // Anchor 账户结构: 8 字节 discriminator + admin/authority pubkey (32 bytes)
+        if data.len() < 40 {
+            return Err("config 账户数据太短".to_string());
+        }
+
+        let authority_bytes: [u8; 32] = data[8..40]
+            .try_into()
+            .map_err(|_| "无法读取 authority 字段")?;
+        let authority = Pubkey::new_from_array(authority_bytes);
+
+        if authority != *vault_pda {
+            return Err(format!(
+                "authority 不匹配\n当前 vault: {}\n链上 authority: {}",
+                vault_pda, authority
+            ));
+        }
+
+        return Ok(());
+    }
+
+    Err("未找到 config 账户，该程序可能尚未初始化".to_string())
 }
 
 /// 空存储，用于渲染时的默认值

@@ -171,6 +171,13 @@ pub enum MultisigStep {
     InputUpgradeProgram,
     /// 输入 buffer 地址
     InputUpgradeBuffer,
+    // ---- 预制程序调用流程 ----
+    /// 选择预制程序
+    SelectProgram,
+    /// 选择预制指令
+    SelectProgramInstruction,
+    /// 输入预制指令参数（逐个）
+    InputProgramArgs,
     /// 确认创建提案（输入密码）
     ConfirmCreate,
     /// 确认投票（输入密码）
@@ -327,6 +334,12 @@ pub struct UiState {
     pub ms_transfer_mint: String, // SPL token mint (空=SOL)
     pub ms_upgrade_program: String, // 程序升级：程序地址
     pub ms_upgrade_buffer: String,  // 程序升级：buffer 地址
+    // 预制程序调用
+    pub ms_preset_program_selected: usize,
+    pub ms_preset_instruction_selected: usize,
+    pub ms_program_args: Vec<String>,     // 已收集的参数值
+    pub ms_program_arg_index: usize,      // 当前输入的参数索引
+    pub ms_program_arg_input: String,     // 当前参数输入缓冲
     pub ms_confirm_password: String,
     pub ms_vote_action: Option<VoteAction>,
     pub ms_result: Option<(bool, String)>,
@@ -411,6 +424,11 @@ impl UiState {
             ms_transfer_mint: String::new(),
             ms_upgrade_program: String::new(),
             ms_upgrade_buffer: String::new(),
+            ms_preset_program_selected: 0,
+            ms_preset_instruction_selected: 0,
+            ms_program_args: Vec::new(),
+            ms_program_arg_index: 0,
+            ms_program_arg_input: String::new(),
             ms_confirm_password: String::new(),
             ms_vote_action: None,
             ms_result: None,

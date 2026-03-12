@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::multisig::ProposalType;
+use crate::multisig::presets;
 use crate::storage::data::MultisigAccount;
 use crate::tui::state::{MultisigStep, UiState, VoteAction};
 
@@ -47,6 +48,9 @@ pub fn render(
         MultisigStep::InputTransferAmount => render_input_transfer_field(frame, center, state, "数量", &state.ms_transfer_amount),
         MultisigStep::InputUpgradeProgram => render_input_upgrade_field(frame, center, state, "程序地址", &state.ms_upgrade_program),
         MultisigStep::InputUpgradeBuffer => render_input_upgrade_field(frame, center, state, "Buffer 地址", &state.ms_upgrade_buffer),
+        MultisigStep::SelectProgram => render_select_program(frame, center, state),
+        MultisigStep::SelectProgramInstruction => render_select_program_instruction(frame, center, state),
+        MultisigStep::InputProgramArgs => render_input_program_args(frame, center, state),
         MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => render_confirm(frame, center, state),
         MultisigStep::Submitting => render_submitting(frame, center),
         MultisigStep::Result => render_result(frame, center, state),
@@ -617,6 +621,160 @@ fn render_input_upgrade_field(
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+fn render_select_program(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let block = Block::default()
+        .title(" 创建提案 - 选择程序 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [list_area, footer_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+
+    let programs = presets::all_programs();
+    let items: Vec<ListItem> = programs
+        .iter()
+        .map(|p| {
+            ListItem::new(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(p.name, Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("  ({} 个指令)", p.instructions.len()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(Color::Indexed(236))
+            .add_modifier(Modifier::BOLD),
+    );
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.ms_preset_program_selected));
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    let footer = Paragraph::new(Line::from(Span::styled(
+        " ↑↓选择  Enter确认  Esc返回",
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(footer, footer_area);
+}
+
+fn render_select_program_instruction(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let programs = presets::all_programs();
+    let program = programs.get(state.ms_preset_program_selected);
+    let title = program
+        .map(|p| format!(" {} - 选择指令 ", p.name))
+        .unwrap_or_else(|| " 选择指令 ".to_string());
+
+    let block = Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [list_area, footer_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+
+    let items: Vec<ListItem> = program
+        .map(|p| {
+            p.instructions
+                .iter()
+                .map(|ix| {
+                    let args_hint = if ix.args.is_empty() {
+                        " (无参数)".to_string()
+                    } else {
+                        format!(" ({} 个参数)", ix.args.len())
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled("  ", Style::default()),
+                        Span::styled(ix.label, Style::default().fg(Color::White)),
+                        Span::styled(args_hint, Style::default().fg(Color::DarkGray)),
+                    ]))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(Color::Indexed(236))
+            .add_modifier(Modifier::BOLD),
+    );
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.ms_preset_instruction_selected));
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    let footer = Paragraph::new(Line::from(Span::styled(
+        " ↑↓选择  Enter确认  Esc返回",
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(footer, footer_area);
+}
+
+fn render_input_program_args(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let programs = presets::all_programs();
+    let program = programs.get(state.ms_preset_program_selected);
+    let instruction = program.and_then(|p| p.instructions.get(state.ms_preset_instruction_selected));
+
+    let title = instruction
+        .map(|ix| format!(" {} - 输入参数 ", ix.label))
+        .unwrap_or_else(|| " 输入参数 ".to_string());
+
+    let mut lines = vec![Line::from("")];
+
+    if let Some(ix) = instruction {
+        // 显示已输入的参数
+        for (i, arg) in ix.args.iter().enumerate() {
+            if i < state.ms_program_args.len() {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("   {}: ", arg.label), Style::default().fg(Color::DarkGray)),
+                    Span::styled(&state.ms_program_args[i], Style::default().fg(Color::Green)),
+                ]));
+            }
+        }
+
+        // 当前输入的参数
+        if state.ms_program_arg_index < ix.args.len() {
+            let current_arg = &ix.args[state.ms_program_arg_index];
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!(" 请输入 {} ({}/{}):", current_arg.label, state.ms_program_arg_index + 1, ix.args.len()),
+                Style::default().fg(Color::White),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!(" > {}", state.ms_program_arg_input),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+    }
+
+    append_status(&mut lines, state);
+    append_hint(&mut lines, " Enter确认  Esc返回");
+
+    let block = Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
 fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
     let masked: String = "*".repeat(state.ms_confirm_password.len());
 
@@ -643,7 +801,34 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
                 Span::styled(ptype_label, Style::default().fg(Color::Cyan)),
             ]));
 
-            if ptype == Some(&ProposalType::ProgramUpgrade) {
+            if ptype == Some(&ProposalType::ProgramCall) {
+                let programs = presets::all_programs();
+                let prog = programs.get(state.ms_preset_program_selected);
+                let ix = prog.and_then(|p| p.instructions.get(state.ms_preset_instruction_selected));
+                lines.push(Line::from(vec![
+                    Span::styled("   程序: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        prog.map(|p| p.name).unwrap_or("未知"),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("   指令: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        ix.map(|i| i.label).unwrap_or("未知"),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ]));
+                if let Some(ix) = ix {
+                    for (i, arg) in ix.args.iter().enumerate() {
+                        let val = state.ms_program_args.get(i).map(|s| s.as_str()).unwrap_or("-");
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("   {}: ", arg.label), Style::default().fg(Color::DarkGray)),
+                            Span::styled(val, Style::default().fg(Color::White)),
+                        ]));
+                    }
+                }
+            } else if ptype == Some(&ProposalType::ProgramUpgrade) {
                 lines.push(Line::from(vec![
                     Span::styled("   程序: ", Style::default().fg(Color::DarkGray)),
                     Span::styled(

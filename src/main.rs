@@ -14,6 +14,10 @@ use app::App;
 use config::AppConfig;
 
 anchor_lang::declare_program!(squads_multisig_program);
+anchor_lang::declare_program!(nara_quest);
+anchor_lang::declare_program!(nara_agent_registry);
+anchor_lang::declare_program!(nara_skills_hub);
+anchor_lang::declare_program!(nara_zk);
 
 /// 解析命令行参数
 fn parse_args() -> anyhow::Result<(Option<PathBuf>, Option<PathBuf>)> {
