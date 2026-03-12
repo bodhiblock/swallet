@@ -146,7 +146,6 @@ fn quest_program() -> PresetProgram {
                 args: vec![
                     PresetArg { name: "answer_hash", label: "答案哈希 (bs58)", arg_type: ArgType::Pubkey },
                     PresetArg { name: "deadline", label: "截止时间 (Unix时间戳)", arg_type: ArgType::I64 },
-                    PresetArg { name: "reward_amount", label: "奖励数量 (lamports)", arg_type: ArgType::U64 },
                     PresetArg { name: "difficulty", label: "难度", arg_type: ArgType::U32 },
                 ],
                 build: build_quest_create_question,
@@ -161,6 +160,15 @@ fn quest_program() -> PresetProgram {
                 build: build_quest_set_reward_config,
             },
             PresetInstruction {
+                name: "set_reward_per_share",
+                label: "设置每份奖励",
+                args: vec![
+                    PresetArg { name: "reward_per_share", label: "每份奖励 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "extra_reward", label: "额外奖励 (lamports)", arg_type: ArgType::U64 },
+                ],
+                build: build_quest_set_reward_per_share,
+            },
+            PresetInstruction {
                 name: "set_stake_config",
                 label: "设置质押配置",
                 args: vec![
@@ -169,6 +177,22 @@ fn quest_program() -> PresetProgram {
                     PresetArg { name: "decay_ms", label: "衰减时间 (毫秒)", arg_type: ArgType::I64 },
                 ],
                 build: build_quest_set_stake_config,
+            },
+            PresetInstruction {
+                name: "set_quest_authority",
+                label: "设置出题权限",
+                args: vec![
+                    PresetArg { name: "new_quest_authority", label: "新出题地址", arg_type: ArgType::Pubkey },
+                ],
+                build: build_quest_set_quest_authority,
+            },
+            PresetInstruction {
+                name: "set_quest_interval",
+                label: "设置出题间隔",
+                args: vec![
+                    PresetArg { name: "min_quest_interval", label: "最小间隔 (秒)", arg_type: ArgType::I64 },
+                ],
+                build: build_quest_set_quest_interval,
             },
             PresetInstruction {
                 name: "transfer_authority",
@@ -190,6 +214,7 @@ fn build_quest_initialize(vault: &[u8; 32], pid: &[u8; 32], _args: &[String]) ->
         quest_client::accounts::Initialize {
             game_config: derive_pda(&[b"quest_config"], &program_id),
             pool: derive_pda(&[b"quest_pool"], &program_id),
+            treasury: derive_pda(&[b"quest_treasury"], &program_id),
             authority: vault_pk,
             system_program: solana_sdk::system_program::ID,
         },
@@ -198,13 +223,12 @@ fn build_quest_initialize(vault: &[u8; 32], pid: &[u8; 32], _args: &[String]) ->
 }
 
 fn build_quest_create_question(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
-    if args.len() < 4 { return Err("参数不足".into()); }
+    if args.len() < 3 { return Err("参数不足".into()); }
     let program_id = pk(pid);
     let vault_pk = pk(vault);
     let answer_hash: [u8; 32] = parse_pubkey(&args[0])?.to_bytes();
     let deadline = parse_i64(&args[1])?;
-    let reward_amount = parse_u64(&args[2])?;
-    let difficulty = parse_u32(&args[3])?;
+    let difficulty = parse_u32(&args[2])?;
 
     Ok(vec![to_vault_ix(
         pid,
@@ -212,14 +236,14 @@ fn build_quest_create_question(vault: &[u8; 32], pid: &[u8; 32], args: &[String]
             game_config: derive_pda(&[b"quest_config"], &program_id),
             pool: derive_pda(&[b"quest_pool"], &program_id),
             vault: derive_pda(&[b"quest_vault"], &program_id),
-            authority: vault_pk,
+            treasury: derive_pda(&[b"quest_treasury"], &program_id),
+            caller: vault_pk,
             system_program: solana_sdk::system_program::ID,
         },
         quest_client::args::CreateQuestion {
             question: String::new(),
             answer_hash,
             deadline,
-            reward_amount,
             difficulty,
         },
     )])
@@ -241,6 +265,22 @@ fn build_quest_set_reward_config(vault: &[u8; 32], pid: &[u8; 32], args: &[Strin
     )])
 }
 
+fn build_quest_set_reward_per_share(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.len() < 2 { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        quest_client::accounts::SetRewardPerShare {
+            game_config: derive_pda(&[b"quest_config"], &program_id),
+            authority: pk(vault),
+        },
+        quest_client::args::SetRewardPerShare {
+            reward_per_share: parse_u64(&args[0])?,
+            extra_reward: parse_u64(&args[1])?,
+        },
+    )])
+}
+
 fn build_quest_set_stake_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
     if args.len() < 3 { return Err("参数不足".into()); }
     let program_id = pk(pid);
@@ -254,6 +294,36 @@ fn build_quest_set_stake_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String
             bps_high: parse_u64(&args[0])?,
             bps_low: parse_u64(&args[1])?,
             decay_ms: parse_i64(&args[2])?,
+        },
+    )])
+}
+
+fn build_quest_set_quest_authority(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        quest_client::accounts::SetQuestAuthority {
+            game_config: derive_pda(&[b"quest_config"], &program_id),
+            authority: pk(vault),
+        },
+        quest_client::args::SetQuestAuthority {
+            new_quest_authority: parse_pubkey(&args[0])?,
+        },
+    )])
+}
+
+fn build_quest_set_quest_interval(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        quest_client::accounts::SetQuestInterval {
+            game_config: derive_pda(&[b"quest_config"], &program_id),
+            authority: pk(vault),
+        },
+        quest_client::args::SetQuestInterval {
+            min_quest_interval: parse_i64(&args[0])?,
         },
     )])
 }
@@ -299,14 +369,6 @@ fn agent_registry_program() -> PresetProgram {
                 build: build_agent_update_admin,
             },
             PresetInstruction {
-                name: "update_fee_recipient",
-                label: "更新手续费接收地址",
-                args: vec![
-                    PresetArg { name: "new_recipient", label: "新接收地址", arg_type: ArgType::Pubkey },
-                ],
-                build: build_agent_update_fee_recipient,
-            },
-            PresetInstruction {
                 name: "update_register_fee",
                 label: "更新注册费",
                 args: vec![
@@ -342,6 +404,14 @@ fn agent_registry_program() -> PresetProgram {
                 ],
                 build: build_agent_update_referral_config,
             },
+            PresetInstruction {
+                name: "withdraw_fees",
+                label: "提取手续费",
+                args: vec![
+                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64 },
+                ],
+                build: build_agent_withdraw_fees,
+            },
         ],
     }
 }
@@ -354,6 +424,7 @@ fn build_agent_init_config(vault: &[u8; 32], pid: &[u8; 32], _args: &[String]) -
         agent_client::accounts::InitConfig {
             admin: vault_pk,
             config: derive_pda(&[b"config"], &program_id),
+            fee_vault: derive_pda(&[b"fee_vault"], &program_id),
             point_mint: derive_pda(&[b"point_mint"], &program_id),
             referee_mint: derive_pda(&[b"referee_mint"], &program_id),
             referee_activity_mint: derive_pda(&[b"referee_activity_mint"], &program_id),
@@ -376,21 +447,6 @@ fn build_agent_update_admin(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -
         },
         agent_client::args::UpdateAdmin {
             new_admin: parse_pubkey(&args[0])?,
-        },
-    )])
-}
-
-fn build_agent_update_fee_recipient(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
-    if args.is_empty() { return Err("参数不足".into()); }
-    let program_id = pk(pid);
-    Ok(vec![to_vault_ix(
-        pid,
-        agent_client::accounts::UpdateFeeRecipient {
-            admin: pk(vault),
-            config: derive_pda(&[b"config"], &program_id),
-        },
-        agent_client::args::UpdateFeeRecipient {
-            new_recipient: parse_pubkey(&args[0])?,
         },
     )])
 }
@@ -459,6 +515,23 @@ fn build_agent_update_referral_config(vault: &[u8; 32], pid: &[u8; 32], args: &[
     )])
 }
 
+fn build_agent_withdraw_fees(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        agent_client::accounts::WithdrawFees {
+            admin: pk(vault),
+            config: derive_pda(&[b"config"], &program_id),
+            fee_vault: derive_pda(&[b"fee_vault"], &program_id),
+            system_program: solana_sdk::system_program::ID,
+        },
+        agent_client::args::WithdrawFees {
+            amount: parse_u64(&args[0])?,
+        },
+    )])
+}
+
 // ==================== Nara Skills Hub ====================
 
 use crate::nara_skills_hub::client as skills_client;
@@ -485,20 +558,20 @@ fn skills_hub_program() -> PresetProgram {
                 build: build_skills_update_admin,
             },
             PresetInstruction {
-                name: "update_fee_recipient",
-                label: "更新手续费接收地址",
-                args: vec![
-                    PresetArg { name: "new_recipient", label: "新接收地址", arg_type: ArgType::Pubkey },
-                ],
-                build: build_skills_update_fee_recipient,
-            },
-            PresetInstruction {
                 name: "update_register_fee",
                 label: "更新注册费",
                 args: vec![
                     PresetArg { name: "new_fee", label: "新注册费 (lamports)", arg_type: ArgType::U64 },
                 ],
                 build: build_skills_update_register_fee,
+            },
+            PresetInstruction {
+                name: "withdraw_fees",
+                label: "提取手续费",
+                args: vec![
+                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64 },
+                ],
+                build: build_skills_withdraw_fees,
             },
         ],
     }
@@ -532,21 +605,6 @@ fn build_skills_update_admin(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) 
     )])
 }
 
-fn build_skills_update_fee_recipient(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
-    if args.is_empty() { return Err("参数不足".into()); }
-    let program_id = pk(pid);
-    Ok(vec![to_vault_ix(
-        pid,
-        skills_client::accounts::UpdateFeeRecipient {
-            admin: pk(vault),
-            config: derive_pda(&[b"config"], &program_id),
-        },
-        skills_client::args::UpdateFeeRecipient {
-            new_recipient: parse_pubkey(&args[0])?,
-        },
-    )])
-}
-
 fn build_skills_update_register_fee(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
     if args.is_empty() { return Err("参数不足".into()); }
     let program_id = pk(pid);
@@ -558,6 +616,23 @@ fn build_skills_update_register_fee(vault: &[u8; 32], pid: &[u8; 32], args: &[St
         },
         skills_client::args::UpdateRegisterFee {
             new_fee: parse_u64(&args[0])?,
+        },
+    )])
+}
+
+fn build_skills_withdraw_fees(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        skills_client::accounts::WithdrawFees {
+            admin: pk(vault),
+            config: derive_pda(&[b"config"], &program_id),
+            vault: derive_pda(&[b"fee_vault"], &program_id),
+            system_program: solana_sdk::system_program::ID,
+        },
+        skills_client::args::WithdrawFees {
+            amount: parse_u64(&args[0])?,
         },
     )])
 }
@@ -577,7 +652,6 @@ fn zk_program() -> PresetProgram {
                 name: "initialize_config",
                 label: "初始化配置",
                 args: vec![
-                    PresetArg { name: "fee_recipient", label: "手续费接收地址", arg_type: ArgType::Pubkey },
                     PresetArg { name: "fee_amount", label: "手续费 (lamports)", arg_type: ArgType::U64 },
                 ],
                 build: build_zk_initialize_config,
@@ -587,7 +661,6 @@ fn zk_program() -> PresetProgram {
                 label: "更新配置",
                 args: vec![
                     PresetArg { name: "new_admin", label: "新管理员地址", arg_type: ArgType::Pubkey },
-                    PresetArg { name: "new_fee_recipient", label: "新手续费接收地址", arg_type: ArgType::Pubkey },
                     PresetArg { name: "new_fee_amount", label: "新手续费 (lamports)", arg_type: ArgType::U64 },
                 ],
                 build: build_zk_update_config,
@@ -600,29 +673,37 @@ fn zk_program() -> PresetProgram {
                 ],
                 build: build_zk_initialize,
             },
+            PresetInstruction {
+                name: "withdraw_fees",
+                label: "提取手续费",
+                args: vec![
+                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64 },
+                ],
+                build: build_zk_withdraw_fees,
+            },
         ],
     }
 }
 
 fn build_zk_initialize_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
-    if args.len() < 2 { return Err("参数不足".into()); }
+    if args.is_empty() { return Err("参数不足".into()); }
     let program_id = pk(pid);
     Ok(vec![to_vault_ix(
         pid,
         zk_client::accounts::InitializeConfig {
             admin: pk(vault),
             config: derive_pda(&[b"config"], &program_id),
+            fee_vault: derive_pda(&[b"fee_vault"], &program_id),
             system_program: solana_sdk::system_program::ID,
         },
         zk_client::args::InitializeConfig {
-            fee_recipient: parse_pubkey(&args[0])?,
-            fee_amount: parse_u64(&args[1])?,
+            fee_amount: parse_u64(&args[0])?,
         },
     )])
 }
 
 fn build_zk_update_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
-    if args.len() < 3 { return Err("参数不足".into()); }
+    if args.len() < 2 { return Err("参数不足".into()); }
     let program_id = pk(pid);
     Ok(vec![to_vault_ix(
         pid,
@@ -632,8 +713,7 @@ fn build_zk_update_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> 
         },
         zk_client::args::UpdateConfig {
             new_admin: parse_pubkey(&args[0])?,
-            new_fee_recipient: parse_pubkey(&args[1])?,
-            new_fee_amount: parse_u64(&args[2])?,
+            new_fee_amount: parse_u64(&args[1])?,
         },
     )])
 }
@@ -654,6 +734,23 @@ fn build_zk_initialize(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Res
         },
         zk_client::args::Initialize {
             denomination,
+        },
+    )])
+}
+
+fn build_zk_withdraw_fees(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        zk_client::accounts::WithdrawFees {
+            admin: pk(vault),
+            config: derive_pda(&[b"config"], &program_id),
+            fee_vault: derive_pda(&[b"fee_vault"], &program_id),
+            system_program: solana_sdk::system_program::ID,
+        },
+        zk_client::args::WithdrawFees {
+            amount: parse_u64(&args[0])?,
         },
     )])
 }
