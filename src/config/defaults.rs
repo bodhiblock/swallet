@@ -80,7 +80,7 @@ fn default_solana_chains() -> Vec<SolanaChainConfig> {
             id: "nara-mainnet".into(),
             name: "Nara".into(),
             rpc_url: "https://mainnet-api.nara.build/".into(),
-            native_symbol: "NSO".into(),
+            native_symbol: "NARA".into(),
             native_decimals: 9,
             explorer_url: None,
             tokens: vec![],

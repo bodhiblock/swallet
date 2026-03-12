@@ -121,6 +121,13 @@ fn collect_addresses(store: &WalletStore) -> (Vec<String>, Vec<String>) {
                     }
                 }
             },
+            WalletType::Multisig { vaults, .. } => {
+                for v in vaults.iter().filter(|v| !v.hidden) {
+                    if !sol_addresses.contains(&v.address) {
+                        sol_addresses.push(v.address.clone());
+                    }
+                }
+            }
         }
     }
 

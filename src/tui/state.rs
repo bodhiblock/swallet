@@ -40,6 +40,8 @@ pub enum AddWalletOption {
     ImportMnemonic,
     ImportPrivateKey,
     ImportWatchOnly,
+    CreateMultisig,
+    ImportMultisig,
     RestoreHiddenWallet,
     RestoreHiddenAddress,
 }
@@ -51,6 +53,8 @@ impl AddWalletOption {
             Self::ImportMnemonic,
             Self::ImportPrivateKey,
             Self::ImportWatchOnly,
+            Self::CreateMultisig,
+            Self::ImportMultisig,
             Self::RestoreHiddenWallet,
             Self::RestoreHiddenAddress,
         ]
@@ -62,6 +66,8 @@ impl AddWalletOption {
             Self::ImportMnemonic => "导入助记词钱包",
             Self::ImportPrivateKey => "导入私钥钱包",
             Self::ImportWatchOnly => "导入观察钱包",
+            Self::CreateMultisig => "创建多签钱包（Squads）",
+            Self::ImportMultisig => "导入多签钱包（Squads）",
             Self::RestoreHiddenWallet => "恢复隐藏钱包",
             Self::RestoreHiddenAddress => "恢复隐藏地址",
         }
@@ -105,6 +111,14 @@ pub enum ActionContext {
     PrivateKeyAddress { wallet_index: usize },
     /// 选中了观察钱包的地址
     WatchAddress { wallet_index: usize },
+    /// 选中了多签钱包标题行
+    MultisigWallet { wallet_index: usize },
+    /// 选中了多签钱包下的 vault
+    #[allow(dead_code)]
+    MultisigVault {
+        wallet_index: usize,
+        vault_pos: usize,
+    },
 }
 
 /// 转账流程步骤
@@ -206,6 +220,8 @@ pub enum ActionItem {
     EditAddressLabel,
     HideAddress,
     DeleteWatchWallet,
+    CreateMultisig,
+    AddVault,
 }
 
 impl ActionItem {
@@ -220,6 +236,8 @@ impl ActionItem {
             Self::EditAddressLabel => "修改备注",
             Self::HideAddress => "隐藏地址",
             Self::DeleteWatchWallet => "删除钱包",
+            Self::CreateMultisig => "创建多签地址",
+            Self::AddVault => "添加 Vault",
         }
     }
 
@@ -231,12 +249,24 @@ impl ActionItem {
         vec![Self::Transfer, Self::EditAddressLabel, Self::HideAddress]
     }
 
+    pub fn for_mnemonic_sol_address() -> Vec<Self> {
+        vec![Self::Transfer, Self::EditAddressLabel, Self::HideAddress, Self::CreateMultisig]
+    }
+
     pub fn for_private_key_address() -> Vec<Self> {
         vec![Self::Transfer, Self::EditName, Self::HideWallet]
     }
 
     pub fn for_watch_address() -> Vec<Self> {
         vec![Self::EditAddressLabel, Self::DeleteWatchWallet]
+    }
+
+    pub fn for_multisig_wallet() -> Vec<Self> {
+        vec![Self::AddVault, Self::EditName, Self::MoveUp, Self::MoveDown, Self::HideWallet]
+    }
+
+    pub fn for_multisig_vault() -> Vec<Self> {
+        vec![Self::EditAddressLabel, Self::HideAddress]
     }
 }
 
@@ -278,7 +308,8 @@ pub struct UiState {
     pub ms_step: MultisigStep,
     pub ms_list_selected: usize,
     pub ms_current_info: Option<MultisigInfo>,
-    pub ms_current_index: usize, // 在 store.multisigs 中的索引
+    pub ms_current_index: usize, // 在 store.multisigs 中的索引（旧，兼容）
+    pub ms_current_wallet_index: usize, // 在 store.wallets 中的索引（新）
     pub ms_proposals: Vec<ProposalInfo>,
     pub ms_proposal_selected: usize,
     pub ms_current_proposal: Option<ProposalInfo>,
@@ -363,6 +394,7 @@ impl UiState {
             ms_list_selected: 0,
             ms_current_info: None,
             ms_current_index: 0,
+            ms_current_wallet_index: 0,
             ms_proposals: Vec::new(),
             ms_proposal_selected: 0,
             ms_current_proposal: None,
@@ -429,9 +461,17 @@ impl UiState {
     pub fn enter_action_menu(&mut self, context: ActionContext) {
         let items = match &context {
             ActionContext::Wallet { .. } => ActionItem::for_wallet(),
-            ActionContext::MnemonicAddress { .. } => ActionItem::for_mnemonic_address(),
+            ActionContext::MnemonicAddress { chain_type, .. } => {
+                if *chain_type == ChainType::Solana {
+                    ActionItem::for_mnemonic_sol_address()
+                } else {
+                    ActionItem::for_mnemonic_address()
+                }
+            }
             ActionContext::PrivateKeyAddress { .. } => ActionItem::for_private_key_address(),
             ActionContext::WatchAddress { .. } => ActionItem::for_watch_address(),
+            ActionContext::MultisigWallet { .. } => ActionItem::for_multisig_wallet(),
+            ActionContext::MultisigVault { .. } => ActionItem::for_multisig_vault(),
         };
         self.action_context = Some(context);
         self.action_items = items;
@@ -463,39 +503,6 @@ impl UiState {
         self.transfer_amount.clear();
         self.transfer_confirm_password.clear();
         self.transfer_result = None;
-        self.clear_status();
-    }
-
-    /// 进入多签管理界面
-    pub fn enter_multisig(&mut self) {
-        self.screen = Screen::Multisig;
-        self.ms_step = MultisigStep::List;
-        self.ms_list_selected = 0;
-        self.ms_current_info = None;
-        self.ms_proposals.clear();
-        self.ms_proposal_selected = 0;
-        self.ms_current_proposal = None;
-        self.ms_input_address.clear();
-        self.ms_chain_select_purpose = MsChainSelectPurpose::Import;
-        self.ms_solana_chains.clear();
-        self.ms_chain_selected = 0;
-        self.ms_selected_chain_id.clear();
-        self.ms_selected_chain_name.clear();
-        self.ms_selected_rpc_url.clear();
-        self.ms_transfer_to.clear();
-        self.ms_transfer_amount.clear();
-        self.ms_transfer_mint.clear();
-        self.ms_upgrade_program.clear();
-        self.ms_upgrade_buffer.clear();
-        self.ms_confirm_password.clear();
-        self.ms_vote_action = None;
-        self.ms_result = None;
-        self.ms_create_sol_addresses.clear();
-        self.ms_create_creator_selected = 0;
-        self.ms_create_members.clear();
-        self.ms_create_member_input.clear();
-        self.ms_create_threshold_input.clear();
-        self.ms_created_address = None;
         self.clear_status();
     }
 

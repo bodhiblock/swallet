@@ -1,7 +1,7 @@
 pub mod proposals;
 pub mod squads;
 
-use solana_sdk::pubkey::Pubkey;
+pub use solana_sdk::pubkey::Pubkey;
 
 /// PDA seed 前缀
 const SEED_PREFIX: &[u8] = b"multisig";

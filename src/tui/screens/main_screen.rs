@@ -73,6 +73,7 @@ fn render_wallet_list(
                 WalletType::Mnemonic { .. } => "助记词钱包",
                 WalletType::PrivateKey { .. } => "私钥钱包",
                 WalletType::WatchOnly { .. } => "观察钱包",
+                WalletType::Multisig { .. } => "多签钱包",
             };
 
             items.push(ListItem::new(Line::from(vec![
@@ -102,6 +103,10 @@ fn render_wallet_list(
                         let label = format_label(&acc.label);
                         let mut spans = vec![
                             Span::raw("    "),
+                            Span::styled(
+                                format!("#{} ", acc.derivation_index),
+                                Style::default().fg(Color::DarkGray),
+                            ),
                             Span::styled("ETH ", Style::default().fg(Color::Blue)),
                             Span::styled(label, Style::default().fg(Color::Yellow)),
                             Span::styled(
@@ -117,6 +122,10 @@ fn render_wallet_list(
                         let label = format_label(&acc.label);
                         let mut spans = vec![
                             Span::raw("    "),
+                            Span::styled(
+                                format!("#{} ", acc.derivation_index),
+                                Style::default().fg(Color::DarkGray),
+                            ),
                             Span::styled("SOL ", Style::default().fg(Color::Magenta)),
                             Span::styled(label, Style::default().fg(Color::Yellow)),
                             Span::styled(
@@ -155,6 +164,25 @@ fn render_wallet_list(
                     append_balance_spans(&mut spans, cache, address);
                     items.push(ListItem::new(Line::from(spans)));
                 }
+                WalletType::Multisig { vaults, .. } => {
+                    for v in vaults.iter().filter(|v| !v.hidden) {
+                        let label = format_label(&v.label);
+                        let mut spans = vec![
+                            Span::raw("    "),
+                            Span::styled(
+                                format!("#{} ", v.vault_index),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                            Span::styled(label, Style::default().fg(Color::Yellow)),
+                            Span::styled(
+                                v.address.clone(),
+                                Style::default().fg(Color::Gray),
+                            ),
+                        ];
+                        append_balance_spans(&mut spans, cache, &v.address);
+                        items.push(ListItem::new(Line::from(spans)));
+                    }
+                }
             }
         }
     }
@@ -172,7 +200,7 @@ fn render_wallet_list(
         .block(Block::default().borders(Borders::NONE))
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(Color::Indexed(236))
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -254,7 +282,7 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState
     let msg = state
         .status_message
         .as_deref()
-        .unwrap_or("↑↓ 选择  Enter 操作  r 刷新  m 多签  s Swap  Ctrl+Q 退出");
+        .unwrap_or("↑↓ 选择  Enter 操作  r 刷新  s Swap  Ctrl+Q 退出");
 
     let footer = Paragraph::new(Line::from(Span::styled(
         format!(" {msg}"),

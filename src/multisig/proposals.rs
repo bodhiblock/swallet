@@ -195,17 +195,12 @@ pub fn serialize_vault_transaction_message(
         .collect();
 
     // Squads v4 beet 格式序列化（u8/u16 长度前缀）
-    let mut buf = Vec::new();
-
-    // num_signers: u8
-    buf.push(num_signers as u8);
-    // num_writable_signers: u8
-    buf.push(num_writable_signers as u8);
-    // num_writable_non_signers: u8
-    buf.push(num_writable_non_signers as u8);
-
-    // account_keys: u8 长度前缀 + N * 32 bytes
-    buf.push(account_keys.len() as u8);
+    let mut buf = vec![
+        num_signers as u8,
+        num_writable_signers as u8,
+        num_writable_non_signers as u8,
+        account_keys.len() as u8,
+    ];
     for key in &account_keys {
         buf.extend_from_slice(&key.pubkey);
     }
