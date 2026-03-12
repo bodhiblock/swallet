@@ -130,8 +130,13 @@ impl ProposalType {
         }
     }
 
-    pub fn all() -> Vec<Self> {
-        vec![Self::SolTransfer, Self::TokenTransfer, Self::ProgramUpgrade, Self::ProgramCall]
+    /// 根据链过滤可用提案类型（无预制程序时隐藏 ProgramCall）
+    pub fn for_chain(chain_id: &str) -> Vec<Self> {
+        let mut types = vec![Self::SolTransfer, Self::TokenTransfer, Self::ProgramUpgrade];
+        if !presets::programs_for_chain(chain_id).is_empty() {
+            types.push(Self::ProgramCall);
+        }
+        types
     }
 }
 

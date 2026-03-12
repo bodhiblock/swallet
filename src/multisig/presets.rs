@@ -51,6 +51,8 @@ pub struct PresetInstruction {
 pub struct PresetProgram {
     pub name: &'static str,
     pub program_id: [u8; 32],
+    /// 所属链 ID（与 config 中的 SolanaChainConfig.id 对应）
+    pub chain_id: &'static str,
     pub instructions: Vec<PresetInstruction>,
 }
 
@@ -62,6 +64,14 @@ pub fn all_programs() -> Vec<PresetProgram> {
         skills_hub_program(),
         zk_program(),
     ]
+}
+
+/// 获取指定链的预制程序
+pub fn programs_for_chain(chain_id: &str) -> Vec<PresetProgram> {
+    all_programs()
+        .into_iter()
+        .filter(|p| p.chain_id == chain_id)
+        .collect()
 }
 
 // ==================== 辅助函数 ====================
@@ -122,6 +132,7 @@ fn quest_program() -> PresetProgram {
     PresetProgram {
         name: "Nara Quest",
         program_id,
+        chain_id: "nara-mainnet",
         instructions: vec![
             PresetInstruction {
                 name: "initialize",
@@ -271,6 +282,7 @@ fn agent_registry_program() -> PresetProgram {
     PresetProgram {
         name: "Nara Agent Registry",
         program_id,
+        chain_id: "nara-mainnet",
         instructions: vec![
             PresetInstruction {
                 name: "init_config",
@@ -456,6 +468,7 @@ fn skills_hub_program() -> PresetProgram {
     PresetProgram {
         name: "Nara Skills Hub",
         program_id,
+        chain_id: "nara-mainnet",
         instructions: vec![
             PresetInstruction {
                 name: "init_config",
@@ -558,6 +571,7 @@ fn zk_program() -> PresetProgram {
     PresetProgram {
         name: "Nara ZK Identity",
         program_id,
+        chain_id: "nara-mainnet",
         instructions: vec![
             PresetInstruction {
                 name: "initialize_config",

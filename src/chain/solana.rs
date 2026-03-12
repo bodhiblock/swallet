@@ -82,7 +82,7 @@ async fn get_sol_balance(
     let body = json!({
         "jsonrpc": "2.0",
         "method": "getBalance",
-        "params": [address],
+        "params": [address, {"commitment": "confirmed"}],
         "id": 1
     });
 
@@ -110,6 +110,7 @@ async fn get_stake_balance(
             "Stake11111111111111111111111111111111111111",
             {
                 "encoding": "jsonParsed",
+                "commitment": "confirmed",
                 "filters": [
                     {
                         "memcmp": {
@@ -157,7 +158,7 @@ async fn get_token_accounts(
         "params": [
             address,
             {"programId": program_id},
-            {"encoding": "jsonParsed"}
+            {"encoding": "jsonParsed", "commitment": "confirmed"}
         ],
         "id": 1
     });

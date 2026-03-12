@@ -52,7 +52,7 @@ pub fn render(
         MultisigStep::SelectProgramInstruction => render_select_program_instruction(frame, center, state),
         MultisigStep::InputProgramArgs => render_input_program_args(frame, center, state),
         MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => render_confirm(frame, center, state),
-        MultisigStep::Submitting => render_submitting(frame, center),
+        MultisigStep::Submitting => render_submitting(frame, center, state),
         MultisigStep::Result => render_result(frame, center, state),
         MultisigStep::CreateSelectCreator => render_create_select_creator(frame, center, state),
         MultisigStep::CreateInputMembers => render_create_input_members(frame, center, state, address_labels),
@@ -124,7 +124,7 @@ fn render_list(
 
     let list = List::new(items).highlight_style(
         Style::default()
-            .bg(Color::DarkGray)
+            .bg(Color::Indexed(236))
             .add_modifier(Modifier::BOLD),
     );
     let mut list_state = ListState::default();
@@ -176,7 +176,7 @@ fn render_select_chain(frame: &mut Frame, area: ratatui::layout::Rect, state: &U
 
     let list = List::new(items).highlight_style(
         Style::default()
-            .bg(Color::DarkGray)
+            .bg(Color::Indexed(236))
             .add_modifier(Modifier::BOLD),
     );
     let mut list_state = ListState::default();
@@ -498,7 +498,7 @@ fn render_select_proposal_type(
     ])
     .areas(inner);
 
-    let types = ProposalType::all();
+    let types = ProposalType::for_chain(&state.ms_selected_chain_id);
     let items: Vec<ListItem> = types
         .iter()
         .map(|t| {
@@ -511,7 +511,7 @@ fn render_select_proposal_type(
 
     let list = List::new(items).highlight_style(
         Style::default()
-            .bg(Color::DarkGray)
+            .bg(Color::Indexed(236))
             .add_modifier(Modifier::BOLD),
     );
     let mut list_state = ListState::default();
@@ -637,7 +637,7 @@ fn render_select_program(frame: &mut Frame, area: ratatui::layout::Rect, state: 
     ])
     .areas(inner);
 
-    let programs = presets::all_programs();
+    let programs = presets::programs_for_chain(&state.ms_selected_chain_id);
     let items: Vec<ListItem> = programs
         .iter()
         .map(|p| {
@@ -669,7 +669,7 @@ fn render_select_program(frame: &mut Frame, area: ratatui::layout::Rect, state: 
 }
 
 fn render_select_program_instruction(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
-    let programs = presets::all_programs();
+    let programs = presets::programs_for_chain(&state.ms_selected_chain_id);
     let program = programs.get(state.ms_preset_program_selected);
     let title = program
         .map(|p| format!(" {} - 选择指令 ", p.name))
@@ -684,8 +684,10 @@ fn render_select_program_instruction(frame: &mut Frame, area: ratatui::layout::R
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let [list_area, footer_area] = Layout::vertical([
+    let status_height = if state.status_message.is_some() { 2 } else { 0 };
+    let [list_area, status_area, footer_area] = Layout::vertical([
         Constraint::Fill(1),
+        Constraint::Length(status_height),
         Constraint::Length(1),
     ])
     .areas(inner);
@@ -703,6 +705,7 @@ fn render_select_program_instruction(frame: &mut Frame, area: ratatui::layout::R
                     ListItem::new(Line::from(vec![
                         Span::styled("  ", Style::default()),
                         Span::styled(ix.label, Style::default().fg(Color::White)),
+                        Span::styled(format!("  {}", ix.name), Style::default().fg(Color::DarkGray)),
                         Span::styled(args_hint, Style::default().fg(Color::DarkGray)),
                     ]))
                 })
@@ -719,6 +722,14 @@ fn render_select_program_instruction(frame: &mut Frame, area: ratatui::layout::R
     list_state.select(Some(state.ms_preset_instruction_selected));
     frame.render_stateful_widget(list, list_area, &mut list_state);
 
+    if let Some(ref msg) = state.status_message {
+        let status = Paragraph::new(Line::from(Span::styled(
+            format!("  {msg}"),
+            Style::default().fg(Color::Red),
+        )));
+        frame.render_widget(status, status_area);
+    }
+
     let footer = Paragraph::new(Line::from(Span::styled(
         " ↑↓选择  Enter确认  Esc返回",
         Style::default().fg(Color::DarkGray),
@@ -727,7 +738,7 @@ fn render_select_program_instruction(frame: &mut Frame, area: ratatui::layout::R
 }
 
 fn render_input_program_args(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
-    let programs = presets::all_programs();
+    let programs = presets::programs_for_chain(&state.ms_selected_chain_id);
     let program = programs.get(state.ms_preset_program_selected);
     let instruction = program.and_then(|p| p.instructions.get(state.ms_preset_instruction_selected));
 
@@ -791,7 +802,7 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
 
     match state.ms_step {
         MultisigStep::ConfirmCreate => {
-            let proposal_types = ProposalType::all();
+            let proposal_types = ProposalType::for_chain(&state.ms_selected_chain_id);
             let ptype = proposal_types.get(state.ms_proposal_type_selected);
             let ptype_label = ptype
                 .map(|t| t.label().to_string())
@@ -802,7 +813,7 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
             ]));
 
             if ptype == Some(&ProposalType::ProgramCall) {
-                let programs = presets::all_programs();
+                let programs = presets::programs_for_chain(&state.ms_selected_chain_id);
                 let prog = programs.get(state.ms_preset_program_selected);
                 let ix = prog.and_then(|p| p.instructions.get(state.ms_preset_instruction_selected));
                 lines.push(Line::from(vec![
@@ -926,13 +937,14 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_submitting(frame: &mut Frame, area: ratatui::layout::Rect) {
+fn render_submitting(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let msg = state.status_message.as_deref().unwrap_or("正在提交交易，请稍候...");
     let lines = vec![
         Line::from(""),
         Line::from(""),
         Line::from(""),
         Line::from(Span::styled(
-            "   正在提交交易，请稍候...",
+            format!("   {msg}"),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -940,7 +952,7 @@ fn render_submitting(frame: &mut Frame, area: ratatui::layout::Rect) {
     ];
 
     let block = Block::default()
-        .title(" 提交中 ")
+        .title(" 处理中 ")
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));

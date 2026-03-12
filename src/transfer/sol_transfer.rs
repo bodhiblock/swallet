@@ -420,7 +420,7 @@ pub(crate) async fn get_latest_blockhash(client: &Client, rpc_url: &str) -> Resu
     let body = json!({
         "jsonrpc": "2.0",
         "method": "getLatestBlockhash",
-        "params": [{}],
+        "params": [{"commitment": "confirmed"}],
         "id": 1
     });
     let resp = rpc_call(client, rpc_url, &body).await?;
@@ -475,7 +475,7 @@ pub(crate) async fn account_exists(client: &Client, rpc_url: &str, address: &str
     let body = json!({
         "jsonrpc": "2.0",
         "method": "getAccountInfo",
-        "params": [address, {"encoding": "base64"}],
+        "params": [address, {"encoding": "base64", "commitment": "confirmed"}],
         "id": 1
     });
     if let Ok(resp) = rpc_call(client, rpc_url, &body).await {

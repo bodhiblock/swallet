@@ -23,6 +23,8 @@ pub enum Screen {
     Multisig,
     /// DEX/Swap（占位）
     Dex,
+    /// 删除确认（需密码）
+    ConfirmDelete,
 }
 
 /// 解锁界面状态
@@ -229,6 +231,7 @@ pub enum ActionItem {
     DeleteWatchWallet,
     CreateMultisig,
     AddVault,
+    DeleteMultisig,
 }
 
 impl ActionItem {
@@ -245,6 +248,7 @@ impl ActionItem {
             Self::DeleteWatchWallet => "删除钱包",
             Self::CreateMultisig => "创建多签地址",
             Self::AddVault => "添加 Vault",
+            Self::DeleteMultisig => "删除多签钱包",
         }
     }
 
@@ -269,7 +273,7 @@ impl ActionItem {
     }
 
     pub fn for_multisig_wallet() -> Vec<Self> {
-        vec![Self::AddVault, Self::EditName, Self::MoveUp, Self::MoveDown, Self::HideWallet]
+        vec![Self::AddVault, Self::EditName, Self::MoveUp, Self::MoveDown, Self::HideWallet, Self::DeleteMultisig]
     }
 
     pub fn for_multisig_vault() -> Vec<Self> {
@@ -349,8 +353,8 @@ pub struct UiState {
     pub ms_create_members: Vec<String>,     // 已添加的成员地址
     pub ms_create_member_input: String,     // 当前输入
     pub ms_create_threshold_input: String,
-    /// 创建成功后待导入的多签地址
-    pub ms_created_address: Option<String>,
+    /// 创建成功后待导入的多签地址和交易签名
+    pub ms_created_address: Option<(String, String)>,
 
     // 转账流程
     pub transfer_step: TransferStep,
@@ -365,6 +369,10 @@ pub struct UiState {
     pub transfer_amount: String,
     pub transfer_confirm_password: String,
     pub transfer_result: Option<(bool, String)>,
+
+    // 删除钱包确认
+    pub pending_delete_wallet: Option<usize>,
+    pub delete_confirm_password: String,
 }
 
 /// 文本输入的用途
@@ -451,6 +459,8 @@ impl UiState {
             transfer_amount: String::new(),
             transfer_confirm_password: String::new(),
             transfer_result: None,
+            pending_delete_wallet: None,
+            delete_confirm_password: String::new(),
         }
     }
 

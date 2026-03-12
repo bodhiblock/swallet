@@ -12,7 +12,7 @@ use super::{AddressPortfolio, BalanceCache, ChainBalance};
 
 /// 构建占位余额缓存（所有链显示 `-`，等待 RPC 查询）
 pub fn build_placeholder_cache(config: &AppConfig, store: &WalletStore) -> BalanceCache {
-    let (eth_addresses, sol_addresses) = collect_addresses(store);
+    let (eth_addresses, sol_addresses, chain_sol_addresses) = collect_addresses(store);
     let mut cache: BalanceCache = HashMap::new();
 
     for address in &eth_addresses {
@@ -55,13 +55,37 @@ pub fn build_placeholder_cache(config: &AppConfig, store: &WalletStore) -> Balan
         cache.insert(address.clone(), portfolio);
     }
 
+    // 多签 vault 等限定链的地址，只添加对应链的占位
+    for (address, chain_id) in &chain_sol_addresses {
+        let mut portfolio = AddressPortfolio {
+            address: address.clone(),
+            chains: Vec::new(),
+        };
+        if let Some(sol_config) = config.chains.solana.iter().find(|c| c.id == *chain_id) {
+            portfolio.chains.push(ChainBalance {
+                chain_id: sol_config.id.clone(),
+                chain_name: sol_config.name.clone(),
+                native_symbol: sol_config.native_symbol.clone(),
+                native_decimals: sol_config.native_decimals,
+                native_balance: 0,
+                staked_balance: 0,
+                tokens: Vec::new(),
+                rpc_failed: true,
+            });
+        }
+        cache.insert(address.clone(), portfolio);
+    }
+
     cache
 }
 
 /// 收集所有需要查询的地址
-fn collect_addresses(store: &WalletStore) -> (Vec<String>, Vec<String>) {
+/// 返回 (eth_addresses, sol_addresses, chain_specific_sol_addresses)
+/// chain_specific_sol_addresses: 多签 vault 等只需查特定链的地址
+fn collect_addresses(store: &WalletStore) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
     let mut eth_addresses: Vec<String> = Vec::new();
     let mut sol_addresses: Vec<String> = Vec::new();
+    let mut chain_sol_addresses: Vec<(String, String)> = Vec::new();
 
     for wallet in &store.wallets {
         if wallet.hidden {
@@ -121,17 +145,18 @@ fn collect_addresses(store: &WalletStore) -> (Vec<String>, Vec<String>) {
                     }
                 }
             },
-            WalletType::Multisig { vaults, .. } => {
+            WalletType::Multisig { vaults, chain_id, .. } => {
                 for v in vaults.iter().filter(|v| !v.hidden) {
-                    if !sol_addresses.contains(&v.address) {
-                        sol_addresses.push(v.address.clone());
+                    let pair = (v.address.clone(), chain_id.clone());
+                    if !chain_sol_addresses.contains(&pair) {
+                        chain_sol_addresses.push(pair);
                     }
                 }
             }
         }
     }
 
-    (eth_addresses, sol_addresses)
+    (eth_addresses, sol_addresses, chain_sol_addresses)
 }
 
 /// 查询所有钱包地址的余额（全并发，每个查询独立 task）
@@ -142,7 +167,7 @@ pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> Bala
         .build()
         .unwrap_or_default();
 
-    let (eth_addresses, sol_addresses) = collect_addresses(store);
+    let (eth_addresses, sol_addresses, chain_sol_addresses) = collect_addresses(store);
 
     // 每个 (地址, 链) 独立 spawn，真正多线程并发
     let mut handles = Vec::new();
@@ -172,6 +197,30 @@ pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> Bala
 
     for address in &sol_addresses {
         for sol_config in &config.chains.solana {
+            let client = client.clone();
+            let cfg = sol_config.clone();
+            let addr = address.clone();
+            handles.push(tokio::spawn(async move {
+                let balance = query_sol_balance(&client, &cfg, &addr)
+                    .await
+                    .unwrap_or(ChainBalance {
+                        chain_id: cfg.id.clone(),
+                        chain_name: cfg.name.clone(),
+                        native_symbol: cfg.native_symbol.clone(),
+                        native_decimals: cfg.native_decimals,
+                        native_balance: 0,
+                        staked_balance: 0,
+                        tokens: Vec::new(),
+                        rpc_failed: true,
+                    });
+                (addr, balance)
+            }));
+        }
+    }
+
+    // 多签 vault 等限定链的地址，只查对应链
+    for (address, chain_id) in &chain_sol_addresses {
+        if let Some(sol_config) = config.chains.solana.iter().find(|c| c.id == *chain_id) {
             let client = client.clone();
             let cfg = sol_config.clone();
             let addr = address.clone();

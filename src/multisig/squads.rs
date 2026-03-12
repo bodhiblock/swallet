@@ -578,7 +578,7 @@ async fn fetch_account_data(
     let body = json!({
         "jsonrpc": "2.0",
         "method": "getAccountInfo",
-        "params": [address, {"encoding": "base64"}],
+        "params": [address, {"encoding": "base64", "commitment": "confirmed"}],
         "id": 1
     });
 

@@ -70,10 +70,10 @@ fn render_wallet_list(
     } else {
         for (i, wallet) in visible_wallets.iter().enumerate() {
             let type_label = match &wallet.wallet_type {
-                WalletType::Mnemonic { .. } => "助记词钱包",
-                WalletType::PrivateKey { .. } => "私钥钱包",
-                WalletType::WatchOnly { .. } => "观察钱包",
-                WalletType::Multisig { .. } => "多签钱包",
+                WalletType::Mnemonic { .. } => "助记词钱包".to_string(),
+                WalletType::PrivateKey { .. } => "私钥钱包".to_string(),
+                WalletType::WatchOnly { .. } => "观察钱包".to_string(),
+                WalletType::Multisig { chain_name, .. } => format!("多签钱包 - {chain_name}"),
             };
 
             items.push(ListItem::new(Line::from(vec![
@@ -115,7 +115,7 @@ fn render_wallet_list(
                             ),
                         ];
                         // 添加余额信息
-                        append_balance_spans(&mut spans, cache, &acc.address);
+                        append_balance_spans(&mut spans, cache, &acc.address, None);
                         items.push(ListItem::new(Line::from(spans)));
                     }
                     for acc in sol_accounts.iter().filter(|a| !a.hidden) {
@@ -133,7 +133,7 @@ fn render_wallet_list(
                                 Style::default().fg(Color::Gray),
                             ),
                         ];
-                        append_balance_spans(&mut spans, cache, &acc.address);
+                        append_balance_spans(&mut spans, cache, &acc.address, None);
                         items.push(ListItem::new(Line::from(spans)));
                     }
                 }
@@ -147,7 +147,7 @@ fn render_wallet_list(
                             Style::default().fg(Color::Gray),
                         ),
                     ];
-                    append_balance_spans(&mut spans, cache, address);
+                    append_balance_spans(&mut spans, cache, address, None);
                     items.push(ListItem::new(Line::from(spans)));
                 }
                 WalletType::WatchOnly { address, label, .. } => {
@@ -161,10 +161,10 @@ fn render_wallet_list(
                             Style::default().fg(Color::Gray),
                         ),
                     ];
-                    append_balance_spans(&mut spans, cache, address);
+                    append_balance_spans(&mut spans, cache, address, None);
                     items.push(ListItem::new(Line::from(spans)));
                 }
-                WalletType::Multisig { vaults, .. } => {
+                WalletType::Multisig { vaults, chain_id, .. } => {
                     for v in vaults.iter().filter(|v| !v.hidden) {
                         let label = format_label(&v.label);
                         let mut spans = vec![
@@ -179,7 +179,7 @@ fn render_wallet_list(
                                 Style::default().fg(Color::Gray),
                             ),
                         ];
-                        append_balance_spans(&mut spans, cache, &v.address);
+                        append_balance_spans(&mut spans, cache, &v.address, Some(chain_id));
                         items.push(ListItem::new(Line::from(spans)));
                     }
                 }
@@ -210,11 +210,12 @@ fn render_wallet_list(
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-/// 在地址行后面追加余额摘要
+/// 在地址行后面追加余额摘要（filter_chain_id 限定只显示指定链）
 fn append_balance_spans<'a>(
     spans: &mut Vec<Span<'a>>,
     cache: &BalanceCache,
     address: &str,
+    filter_chain_id: Option<&str>,
 ) {
     let portfolio = match cache.get(address) {
         Some(p) => p,
@@ -228,7 +229,9 @@ fn append_balance_spans<'a>(
     spans.push(Span::raw("  "));
 
     let mut first = true;
-    for chain_bal in &portfolio.chains {
+    for chain_bal in portfolio.chains.iter().filter(|c| {
+        filter_chain_id.is_none_or(|id| c.chain_id == id)
+    }) {
         if !first {
             spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
         }

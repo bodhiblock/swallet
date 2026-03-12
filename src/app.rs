@@ -143,6 +143,11 @@ impl App {
             Screen::Dex => {
                 dex_screen::render(frame);
             }
+            Screen::ConfirmDelete => {
+                let store = self.store.as_ref().unwrap_or(&EMPTY_STORE);
+                main_screen::render(frame, &self.ui, store, &self.balance_cache, self.loading_balances);
+                self.render_confirm_delete(frame);
+            }
         }
     }
 
@@ -209,8 +214,8 @@ impl App {
                         format!("多签创建成功!\n地址: {address}\n交易: {tx_sig}\n\n按任意键导入该多签..."),
                     ));
                     self.ui.ms_step = MultisigStep::Result;
-                    // 存储待导入的地址
-                    self.ui.ms_created_address = Some(address);
+                    // 存储待导入的地址和交易签名
+                    self.ui.ms_created_address = Some((address, tx_sig));
                 }
             }
         }
@@ -270,6 +275,7 @@ impl App {
                     self.ui.back_to_main();
                 }
             }
+            Screen::ConfirmDelete => self.handle_confirm_delete_key(key),
         }
     }
 
@@ -566,16 +572,19 @@ impl App {
             Some(w) => w,
             None => return,
         };
-        let (multisig_address, rpc_url) = match &wallet.wallet_type {
+        let (multisig_address, rpc_url, chain_id) = match &wallet.wallet_type {
             WalletType::Multisig {
                 multisig_address,
                 rpc_url,
+                chain_id,
                 ..
-            } => (multisig_address.clone(), rpc_url.clone()),
+            } => (multisig_address.clone(), rpc_url.clone(), chain_id.clone()),
             _ => return,
         };
 
         self.ui.ms_current_wallet_index = wallet_index;
+        self.ui.ms_selected_chain_id = chain_id;
+        self.ui.ms_selected_rpc_url = rpc_url.clone();
         self.ui.screen = Screen::Multisig;
         self.ui.ms_step = MultisigStep::ViewDetail;
         self.ui.set_status("正在加载...");
@@ -1122,6 +1131,14 @@ impl App {
                     self.add_vault_to_multisig(wallet_index);
                 }
             }
+            ActionItem::DeleteMultisig => {
+                if let ActionContext::MultisigWallet { wallet_index } = context {
+                    self.ui.pending_delete_wallet = Some(wallet_index);
+                    self.ui.delete_confirm_password.clear();
+                    self.ui.screen = Screen::ConfirmDelete;
+                    self.ui.clear_status();
+                }
+            }
         }
     }
 
@@ -1341,6 +1358,99 @@ impl App {
                 let _ = self.save_store_inner();
             }
         self.ui.back_to_main();
+    }
+
+    fn render_confirm_delete(&self, frame: &mut ratatui::Frame) {
+        use ratatui::layout::Alignment;
+        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
+        use ratatui::style::{Color, Style, Modifier};
+        use ratatui::text::{Line, Span};
+
+        let area = frame.area();
+        let popup_width = 50.min(area.width.saturating_sub(4));
+        let popup_height = 7.min(area.height.saturating_sub(4));
+        let x = (area.width.saturating_sub(popup_width)) / 2;
+        let y = (area.height.saturating_sub(popup_height)) / 2;
+        let popup_area = ratatui::layout::Rect::new(x, y, popup_width, popup_height);
+
+        frame.render_widget(Clear, popup_area);
+
+        let wallet_name = self.store.as_ref()
+            .and_then(|s| self.ui.pending_delete_wallet.and_then(|i| s.wallets.get(i)))
+            .map(|w| w.name.as_str())
+            .unwrap_or("未知");
+
+        let mask = "*".repeat(self.ui.delete_confirm_password.len());
+        let status_line = self.ui.status_message.as_deref().unwrap_or("");
+
+        let lines = vec![
+            Line::from(Span::styled(
+                format!("  确认删除: {wallet_name}"),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!("  密码: {mask}")),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("  {status_line}"),
+                Style::default().fg(Color::Yellow),
+            )),
+            Line::from(Span::styled(
+                "  Enter 确认 | Esc 取消",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+
+        let block = Block::default()
+            .title(" 删除钱包 ")
+            .title_alignment(Alignment::Center)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Red));
+
+        frame.render_widget(Paragraph::new(lines).block(block), popup_area);
+    }
+
+    fn handle_confirm_delete_key(&mut self, key: crossterm::event::KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) => {
+                self.ui.clear_status();
+                self.ui.delete_confirm_password.push(c);
+            }
+            KeyCode::Backspace => {
+                self.ui.clear_status();
+                self.ui.delete_confirm_password.pop();
+            }
+            KeyCode::Enter => {
+                if self.ui.delete_confirm_password.is_empty() {
+                    self.ui.set_status("请输入密码");
+                    return;
+                }
+                // 验证密码
+                let pw = match &self.password {
+                    Some(pw) => pw.clone(),
+                    None => {
+                        self.ui.set_status("密码未设置");
+                        return;
+                    }
+                };
+                if self.ui.delete_confirm_password.as_bytes() != pw.as_slice() {
+                    self.ui.set_status("密码错误");
+                    self.ui.delete_confirm_password.clear();
+                    return;
+                }
+                // 密码正确，执行删除
+                if let Some(wallet_index) = self.ui.pending_delete_wallet.take() {
+                    self.delete_wallet(wallet_index);
+                    self.ui.set_status("钱包已删除");
+                }
+                self.ui.delete_confirm_password.clear();
+            }
+            KeyCode::Esc => {
+                self.ui.pending_delete_wallet = None;
+                self.ui.delete_confirm_password.clear();
+                self.ui.back_to_main();
+            }
+            _ => {}
+        }
     }
 
     fn handle_restore_hidden(&mut self, option: &AddWalletOption) {
@@ -1780,18 +1890,20 @@ impl App {
             }
             MultisigStep::Submitting => {} // 忽略输入
             MultisigStep::Result => {
-                // 如果有刚创建的多签待导入，触发导入
-                if let Some(address) = self.ui.ms_created_address.take() {
-                    self.ui.ms_input_address = address;
+                // 如果有刚创建的多签待导入，直接导入
+                if let Some((address, _tx_sig)) = self.ui.ms_created_address.take() {
+                    self.ui.ms_input_address = address.clone();
                     self.ui.ms_step = MultisigStep::Submitting;
-                    self.ui.set_status("正在导入新建的多签...");
-                    self.import_multisig();
-                } else if self.ui.ms_current_info.is_some() {
-                    self.ui.ms_step = MultisigStep::ViewDetail;
+                    self.ui.set_status("正在导入多签...");
+                    self.import_created_multisig(address);
                 } else {
-                    self.ui.back_to_main();
+                    self.ui.clear_status();
+                    if self.ui.ms_current_info.is_some() {
+                        self.ui.ms_step = MultisigStep::ViewDetail;
+                    } else {
+                        self.ui.back_to_main();
+                    }
                 }
-                self.ui.clear_status();
             }
             MultisigStep::CreateSelectCreator => self.handle_ms_create_select_creator_key(key),
             MultisigStep::CreateInputMembers => self.handle_ms_create_input_members_key(key),
@@ -1971,7 +2083,7 @@ impl App {
     }
 
     fn handle_ms_select_proposal_type_key(&mut self, key: KeyEvent) {
-        let types = ProposalType::all();
+        let types = ProposalType::for_chain(&self.ui.ms_selected_chain_id);
         match key.code {
             KeyCode::Up => {
                 if self.ui.ms_proposal_type_selected > 0 {
@@ -2013,7 +2125,7 @@ impl App {
     }
 
     fn handle_ms_select_program_key(&mut self, key: KeyEvent) {
-        let programs = multisig::presets::all_programs();
+        let programs = multisig::presets::programs_for_chain(&self.ui.ms_selected_chain_id);
         match key.code {
             KeyCode::Up => {
                 if self.ui.ms_preset_program_selected > 0 {
@@ -2039,7 +2151,7 @@ impl App {
     }
 
     fn handle_ms_select_program_instruction_key(&mut self, key: KeyEvent) {
-        let programs = multisig::presets::all_programs();
+        let programs = multisig::presets::programs_for_chain(&self.ui.ms_selected_chain_id);
         let ix_count = programs
             .get(self.ui.ms_preset_program_selected)
             .map(|p| p.instructions.len())
@@ -2132,7 +2244,7 @@ impl App {
                 }
 
                 // 验证参数格式
-                let programs = multisig::presets::all_programs();
+                let programs = multisig::presets::programs_for_chain(&self.ui.ms_selected_chain_id);
                 let arg_def = programs
                     .get(self.ui.ms_preset_program_selected)
                     .and_then(|p| p.instructions.get(self.ui.ms_preset_instruction_selected))
@@ -2332,7 +2444,7 @@ impl App {
                 self.ui.clear_status();
                 match self.ui.ms_step {
                     MultisigStep::ConfirmCreate => {
-                        let types = ProposalType::all();
+                        let types = ProposalType::for_chain(&self.ui.ms_selected_chain_id);
                         match types.get(self.ui.ms_proposal_type_selected) {
                             Some(ProposalType::ProgramUpgrade) => {
                                 self.ui.ms_step = MultisigStep::InputUpgradeBuffer;
@@ -2433,6 +2545,23 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// 创建成功后直接导入多签
+    fn import_created_multisig(&mut self, address: String) {
+        let rpc_url = self.ui.ms_selected_rpc_url.clone();
+        let tx = self.bg_tx.clone();
+        self.runtime.spawn(async move {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap();
+
+            match multisig::squads::fetch_multisig(&client, &rpc_url, &address).await {
+                Ok(info) => { let _ = tx.send(BgMessage::MultisigFetched(info)); }
+                Err(err) => { let _ = tx.send(BgMessage::MultisigFetchError(err)); }
+            }
+        });
     }
 
     /// 导入多签
@@ -2577,6 +2706,7 @@ impl App {
         let preset_program_idx = self.ui.ms_preset_program_selected;
         let preset_instruction_idx = self.ui.ms_preset_instruction_selected;
         let preset_args = self.ui.ms_program_args.clone();
+        let chain_id = self.ui.ms_selected_chain_id.clone();
         let rpc_url = self.get_current_ms_rpc_url();
 
         // 切换到提交中
@@ -2597,6 +2727,7 @@ impl App {
                 preset_program_idx,
                 preset_instruction_idx,
                 &preset_args,
+                &chain_id,
             )
             .await;
 
@@ -3404,6 +3535,7 @@ async fn execute_create_proposal_async(
     preset_program_idx: usize,
     preset_instruction_idx: usize,
     preset_args: &[String],
+    chain_id: &str,
 ) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -3415,7 +3547,7 @@ async fn execute_create_proposal_async(
 
     let (vault_pda, _) = multisig::derive_vault_pda(&multisig_pubkey, 0);
 
-    let proposal_types = ProposalType::all();
+    let proposal_types = ProposalType::for_chain(chain_id);
     let proposal_type = proposal_types
         .get(proposal_type_idx)
         .ok_or("无效的提案类型")?;
@@ -3443,7 +3575,7 @@ async fn execute_create_proposal_async(
             return Err("Token 转账提案暂未实现，请使用 SOL 转账".into());
         }
         ProposalType::ProgramCall => {
-            let programs = multisig::presets::all_programs();
+            let programs = multisig::presets::programs_for_chain(chain_id);
             let program = programs
                 .get(preset_program_idx)
                 .ok_or("无效的预制程序")?;
@@ -3516,7 +3648,7 @@ async fn verify_upgrade_authority(
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "getAccountInfo",
-        "params": [programdata_pda.to_string(), {"encoding": "base64"}],
+        "params": [programdata_pda.to_string(), {"encoding": "base64", "commitment": "confirmed"}],
         "id": 1
     });
     let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
@@ -3584,7 +3716,7 @@ async fn verify_buffer_exists(
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "getAccountInfo",
-        "params": [buffer_address, {"encoding": "base64"}],
+        "params": [buffer_address, {"encoding": "base64", "commitment": "confirmed"}],
         "id": 1
     });
     let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
@@ -3628,7 +3760,7 @@ async fn verify_program_authority(
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "getAccountInfo",
-            "params": [config_addr.to_string(), {"encoding": "base64"}],
+            "params": [config_addr.to_string(), {"encoding": "base64", "commitment": "confirmed"}],
             "id": 1
         });
         let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
