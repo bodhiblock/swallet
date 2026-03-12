@@ -76,7 +76,7 @@ fn render_wallet_list(
                 WalletType::Multisig { chain_name, .. } => format!("多签钱包 - {chain_name}"),
             };
 
-            items.push(ListItem::new(Line::from(vec![
+            let mut title_spans = vec![
                 Span::styled(
                     format!("{}. ", i + 1),
                     Style::default().fg(Color::DarkGray),
@@ -91,7 +91,14 @@ fn render_wallet_list(
                     format!(" [{type_label}]"),
                     Style::default().fg(Color::DarkGray),
                 ),
-            ])));
+            ];
+            if let WalletType::Multisig { multisig_address, .. } = &wallet.wallet_type {
+                title_spans.push(Span::styled(
+                    format!(" {multisig_address}"),
+                    Style::default().fg(Color::Gray),
+                ));
+            }
+            items.push(ListItem::new(Line::from(title_spans)));
 
             match &wallet.wallet_type {
                 WalletType::Mnemonic {

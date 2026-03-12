@@ -321,6 +321,10 @@ pub struct UiState {
     pub ms_current_info: Option<MultisigInfo>,
     pub ms_current_index: usize, // 在 store.multisigs 中的索引（旧，兼容）
     pub ms_current_wallet_index: usize, // 在 store.wallets 中的索引（新）
+    pub ms_current_vault_index: u8,       // 当前选中的 vault index
+    pub ms_current_vault_address: String, // 当前选中的 vault 地址
+    pub ms_current_vault_label: Option<String>, // 当前选中的 vault 备注
+    pub ms_detail_selected: usize,  // 详情页菜单选中项
     pub ms_proposals: Vec<ProposalInfo>,
     pub ms_proposal_selected: usize,
     pub ms_current_proposal: Option<ProposalInfo>,
@@ -379,6 +383,7 @@ pub struct UiState {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputPurpose {
     EditLabel,
+    EditVaultLabel,
 }
 
 impl UiState {
@@ -416,6 +421,10 @@ impl UiState {
             ms_current_info: None,
             ms_current_index: 0,
             ms_current_wallet_index: 0,
+            ms_current_vault_index: 0,
+            ms_current_vault_address: String::new(),
+            ms_current_vault_label: None,
+            ms_detail_selected: 0,
             ms_proposals: Vec::new(),
             ms_proposal_selected: 0,
             ms_current_proposal: None,

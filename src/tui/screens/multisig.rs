@@ -233,33 +233,70 @@ fn render_view_detail(
     state: &UiState,
     address_labels: &HashMap<String, String>,
 ) {
+    let block = Block::default()
+        .title(" 多签详情 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // 上方信息区 + 下方菜单区
+    let has_info = state.ms_current_info.is_some();
+    let menu_height = if has_info { 5 } else { 0 };
+    let [info_area, menu_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(menu_height),
+    ])
+    .areas(inner);
+
+    // 渲染信息区
     let mut lines = vec![Line::from("")];
 
     if let Some(ref info) = state.ms_current_info {
         lines.push(Line::from(vec![
-            Span::styled(" 地址: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  地址: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 shorten_address(&info.address.to_string()),
                 Style::default().fg(Color::Yellow),
             ),
         ]));
         lines.push(Line::from(vec![
-            Span::styled(" 阈值: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  阈值: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("{}/{}", info.threshold, info.members.len()),
                 Style::default().fg(Color::Cyan),
             ),
         ]));
         lines.push(Line::from(vec![
-            Span::styled(" 交易数: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  交易数: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("{}", info.transaction_index),
                 Style::default().fg(Color::White),
             ),
         ]));
+        let mut vault_spans = vec![
+            Span::styled("  Vault: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("#{} ", state.ms_current_vault_index),
+                Style::default().fg(Color::Cyan),
+            ),
+        ];
+        if let Some(ref label) = state.ms_current_vault_label {
+            vault_spans.push(Span::styled(
+                format!("[{label}] "),
+                Style::default().fg(Color::Green),
+            ));
+        }
+        vault_spans.push(Span::styled(
+            state.ms_current_vault_address.clone(),
+            Style::default().fg(Color::Yellow),
+        ));
+        lines.push(Line::from(vault_spans));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            " 成员:",
+            "  成员:",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -267,7 +304,7 @@ fn render_view_detail(
         for member in &info.members {
             let addr = member.address();
             let mut spans = vec![
-                Span::styled("   ", Style::default()),
+                Span::styled("    ", Style::default()),
                 Span::styled(
                     addr.clone(),
                     Style::default().fg(Color::Yellow),
@@ -285,24 +322,49 @@ fn render_view_detail(
             }
             lines.push(Line::from(spans));
         }
+
+        if let Some(ref msg) = state.status_message {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("  {msg}"),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
     } else {
         lines.push(Line::from(Span::styled(
-            " 正在加载...",
+            "  正在加载...",
             Style::default().fg(Color::Yellow),
         )));
     }
 
-    append_status(&mut lines, state);
-    lines.push(Line::from(""));
-    append_hint(&mut lines, " P查看提案  N创建提案  Esc返回");
+    frame.render_widget(Paragraph::new(lines), info_area);
 
-    let block = Block::default()
-        .title(" 多签详情 ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+    // 渲染菜单区
+    if has_info {
+        let menu_items = [
+            "  查看提案",
+            "  创建提案",
+            "  修改 Vault 备注",
+        ];
+        let items: Vec<ListItem> = menu_items
+            .iter()
+            .map(|&label| {
+                ListItem::new(Line::from(Span::styled(
+                    label,
+                    Style::default().fg(Color::White),
+                )))
+            })
+            .collect();
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+        let list = List::new(items).highlight_style(
+            Style::default()
+                .bg(Color::Indexed(236))
+                .add_modifier(Modifier::BOLD),
+        );
+        let mut list_state = ListState::default();
+        list_state.select(Some(state.ms_detail_selected));
+        frame.render_stateful_widget(list, menu_area, &mut list_state);
+    }
 }
 
 fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
@@ -532,23 +594,13 @@ fn render_input_transfer_field(
     field_name: &str,
     field_value: &str,
 ) {
-    let vault_addr = state
-        .ms_current_info
-        .as_ref()
-        .map(|i| {
-            let (vault_pda, _) = crate::multisig::derive_vault_pda(&i.address, 0);
-            vault_pda.to_string()
-        })
-        .unwrap_or_default();
+    let vault_label = format_vault_label(state);
 
     let mut lines = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled(" 从 Vault: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                shorten_address(&vault_addr),
-                Style::default().fg(Color::Yellow),
-            ),
+            Span::styled(vault_label, Style::default().fg(Color::Yellow)),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -580,23 +632,13 @@ fn render_input_upgrade_field(
     field_name: &str,
     field_value: &str,
 ) {
-    let vault_addr = state
-        .ms_current_info
-        .as_ref()
-        .map(|i| {
-            let (vault_pda, _) = crate::multisig::derive_vault_pda(&i.address, 0);
-            vault_pda.to_string()
-        })
-        .unwrap_or_default();
+    let vault_label = format_vault_label(state);
 
     let mut lines = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled(" Vault (Authority): ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                shorten_address(&vault_addr),
-                Style::default().fg(Color::Yellow),
-            ),
+            Span::styled(vault_label, Style::default().fg(Color::Yellow)),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -811,6 +853,10 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
                 Span::styled("   类型: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(ptype_label, Style::default().fg(Color::Cyan)),
             ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Vault: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_vault_label(state), Style::default().fg(Color::Yellow)),
+            ]));
 
             if ptype == Some(&ProposalType::ProgramCall) {
                 let programs = presets::programs_for_chain(&state.ms_selected_chain_id);
@@ -854,18 +900,10 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
                         Style::default().fg(Color::Yellow),
                     ),
                 ]));
-                let vault_addr = state
-                    .ms_current_info
-                    .as_ref()
-                    .map(|i| {
-                        let (vault_pda, _) = crate::multisig::derive_vault_pda(&i.address, 0);
-                        vault_pda.to_string()
-                    })
-                    .unwrap_or_default();
                 lines.push(Line::from(vec![
                     Span::styled("  Spill: ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
-                        shorten_address(&vault_addr),
+                        shorten_address(&state.ms_current_vault_address),
                         Style::default().fg(Color::DarkGray),
                     ),
                 ]));
@@ -1288,6 +1326,17 @@ fn append_hint<'a>(lines: &mut Vec<Line<'a>>, hint: &'a str) {
 
 fn shorten_address(addr: &str) -> String {
     addr.to_string()
+}
+
+/// 格式化当前 vault 标签：#index [label] address
+fn format_vault_label(state: &UiState) -> String {
+    let idx = state.ms_current_vault_index;
+    let addr = &state.ms_current_vault_address;
+    if let Some(ref label) = state.ms_current_vault_label {
+        format!("#{idx} [{label}] {addr}")
+    } else {
+        format!("#{idx} {addr}")
+    }
 }
 
 fn shorten_rpc(url: &str) -> String {

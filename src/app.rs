@@ -552,9 +552,9 @@ impl App {
             }
             SelectionTarget::MultisigVault {
                 wallet_index,
-                vault_pos: _,
+                vault_pos,
             } => {
-                self.enter_multisig_from_wallet(wallet_index);
+                self.enter_multisig_from_wallet(wallet_index, vault_pos);
             }
             SelectionTarget::AddWallet => {
                 self.ui.enter_add_wallet();
@@ -562,8 +562,8 @@ impl App {
         }
     }
 
-    /// 从主页进入多签详情（通过 wallet_index）
-    fn enter_multisig_from_wallet(&mut self, wallet_index: usize) {
+    /// 从主页进入多签详情（通过 wallet_index 和 vault_pos）
+    fn enter_multisig_from_wallet(&mut self, wallet_index: usize, vault_pos: usize) {
         let store = match &self.store {
             Some(s) => s,
             None => return,
@@ -572,15 +572,24 @@ impl App {
             Some(w) => w,
             None => return,
         };
-        let (multisig_address, rpc_url, chain_id) = match &wallet.wallet_type {
+        let (multisig_address, rpc_url, chain_id, vaults) = match &wallet.wallet_type {
             WalletType::Multisig {
                 multisig_address,
                 rpc_url,
                 chain_id,
+                vaults,
                 ..
-            } => (multisig_address.clone(), rpc_url.clone(), chain_id.clone()),
+            } => (multisig_address.clone(), rpc_url.clone(), chain_id.clone(), vaults),
             _ => return,
         };
+
+        // 找到选中的 vault（按可见 vault 的位置）
+        let visible_vaults: Vec<_> = vaults.iter().filter(|v| !v.hidden).collect();
+        if let Some(vault) = visible_vaults.get(vault_pos) {
+            self.ui.ms_current_vault_index = vault.vault_index;
+            self.ui.ms_current_vault_address = vault.address.clone();
+            self.ui.ms_current_vault_label = vault.label.clone();
+        }
 
         self.ui.ms_current_wallet_index = wallet_index;
         self.ui.ms_selected_chain_id = chain_id;
@@ -715,10 +724,16 @@ impl App {
                 self.process_text_input();
             }
             KeyCode::Esc => {
-                // 编辑标签时按 Esc 直接返回主界面
+                // 编辑标签时按 Esc 返回
                 if self.ui.input_purpose == Some(InputPurpose::EditLabel) {
                     self.ui.input_purpose = None;
                     self.ui.back_to_main();
+                    return;
+                }
+                if self.ui.input_purpose == Some(InputPurpose::EditVaultLabel) {
+                    self.ui.input_purpose = None;
+                    self.ui.screen = Screen::Multisig;
+                    self.ui.ms_step = MultisigStep::ViewDetail;
                     return;
                 }
                 match self.ui.add_wallet_step {
@@ -757,6 +772,10 @@ impl App {
         // 如果是编辑标签，走专门的处理逻辑
         if self.ui.input_purpose == Some(InputPurpose::EditLabel) {
             self.save_edited_label();
+            return;
+        }
+        if self.ui.input_purpose == Some(InputPurpose::EditVaultLabel) {
+            self.save_vault_label();
             return;
         }
 
@@ -1077,7 +1096,7 @@ impl App {
                 }
             }
             ActionItem::EditName | ActionItem::EditAddressLabel => {
-                self.ui.input_buffer.clear();
+                self.ui.input_buffer = self.get_current_label(&Some(context.clone())).unwrap_or_default();
                 self.ui.input_purpose = Some(InputPurpose::EditLabel);
                 self.ui.add_wallet_step = AddWalletStep::InputName;
                 self.ui.screen = Screen::TextInput;
@@ -1283,6 +1302,51 @@ impl App {
         self.ui.back_to_main();
     }
 
+    /// 获取当前 context 对应的备注/名称
+    fn get_current_label(&self, context: &Option<ActionContext>) -> Option<String> {
+        let store = self.store.as_ref()?;
+        match context {
+            Some(ActionContext::Wallet { wallet_index })
+            | Some(ActionContext::PrivateKeyAddress { wallet_index })
+            | Some(ActionContext::MultisigWallet { wallet_index }) => {
+                store.wallets.get(*wallet_index).map(|w| w.name.clone())
+            }
+            Some(ActionContext::MnemonicAddress {
+                wallet_index,
+                chain_type,
+                account_index,
+            }) => {
+                let w = store.wallets.get(*wallet_index)?;
+                if let WalletType::Mnemonic { eth_accounts, sol_accounts, .. } = &w.wallet_type {
+                    let accounts = match chain_type {
+                        ChainType::Ethereum => eth_accounts,
+                        ChainType::Solana => sol_accounts,
+                    };
+                    accounts.get(*account_index).and_then(|a| a.label.clone())
+                } else {
+                    None
+                }
+            }
+            Some(ActionContext::WatchAddress { wallet_index }) => {
+                let w = store.wallets.get(*wallet_index)?;
+                if let WalletType::WatchOnly { label, .. } = &w.wallet_type {
+                    label.clone()
+                } else {
+                    None
+                }
+            }
+            Some(ActionContext::MultisigVault { wallet_index, vault_pos }) => {
+                let w = store.wallets.get(*wallet_index)?;
+                if let WalletType::Multisig { vaults, .. } = &w.wallet_type {
+                    vaults.get(*vault_pos).and_then(|v| v.label.clone())
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
     fn save_edited_label(&mut self) {
         let new_label = self.ui.input_buffer.trim().to_string();
         let context = self.ui.action_context.clone();
@@ -1348,6 +1412,30 @@ impl App {
             let _ = self.save_store_inner();
         }
         self.ui.back_to_main();
+        self.ui.set_status("备注已更新");
+    }
+
+    /// 从多签详情页保存 vault 备注
+    fn save_vault_label(&mut self) {
+        let new_label = self.ui.input_buffer.trim().to_string();
+        self.ui.input_purpose = None;
+
+        let wi = self.ui.ms_current_wallet_index;
+        let vault_idx = self.ui.ms_current_vault_index;
+
+        if let Some(ref mut store) = self.store {
+            if let Some(w) = store.wallets.get_mut(wi)
+                && let WalletType::Multisig { ref mut vaults, .. } = w.wallet_type
+                && let Some(v) = vaults.iter_mut().find(|v| v.vault_index == vault_idx)
+            {
+                let label = if new_label.is_empty() { None } else { Some(new_label.clone()) };
+                v.label = label.clone();
+                self.ui.ms_current_vault_label = label;
+            }
+            let _ = self.save_store_inner();
+        }
+        self.ui.screen = Screen::Multisig;
+        self.ui.ms_step = MultisigStep::ViewDetail;
         self.ui.set_status("备注已更新");
     }
 
@@ -2000,16 +2088,39 @@ impl App {
     }
 
     fn handle_ms_detail_key(&mut self, key: KeyEvent) {
+        const DETAIL_MENU_COUNT: usize = 3;
         match key.code {
-            KeyCode::Char('p') | KeyCode::Char('P') => {
-                // 查看提案
-                self.fetch_proposals();
+            KeyCode::Up => {
+                if self.ui.ms_detail_selected > 0 {
+                    self.ui.ms_detail_selected -= 1;
+                }
             }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                // 创建提案
-                self.ui.ms_step = MultisigStep::SelectProposalType;
-                self.ui.ms_proposal_type_selected = 0;
-                self.ui.clear_status();
+            KeyCode::Down => {
+                if self.ui.ms_detail_selected + 1 < DETAIL_MENU_COUNT {
+                    self.ui.ms_detail_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                match self.ui.ms_detail_selected {
+                    0 => {
+                        // 查看提案
+                        self.fetch_proposals();
+                    }
+                    1 => {
+                        // 创建提案
+                        self.ui.ms_step = MultisigStep::SelectProposalType;
+                        self.ui.ms_proposal_type_selected = 0;
+                        self.ui.clear_status();
+                    }
+                    2 => {
+                        // 修改 Vault 备注
+                        self.ui.input_buffer = self.ui.ms_current_vault_label.clone().unwrap_or_default();
+                        self.ui.input_purpose = Some(InputPurpose::EditVaultLabel);
+                        self.ui.add_wallet_step = AddWalletStep::InputName;
+                        self.ui.screen = Screen::TextInput;
+                    }
+                    _ => {}
+                }
             }
             KeyCode::Esc => {
                 self.ui.back_to_main();
@@ -2707,6 +2818,7 @@ impl App {
         let preset_instruction_idx = self.ui.ms_preset_instruction_selected;
         let preset_args = self.ui.ms_program_args.clone();
         let chain_id = self.ui.ms_selected_chain_id.clone();
+        let vault_index = self.ui.ms_current_vault_index;
         let rpc_url = self.get_current_ms_rpc_url();
 
         // 切换到提交中
@@ -2728,6 +2840,7 @@ impl App {
                 preset_instruction_idx,
                 &preset_args,
                 &chain_id,
+                vault_index,
             )
             .await;
 
@@ -2792,6 +2905,7 @@ impl App {
         let rpc_url = self.get_current_ms_rpc_url();
         let multisig_address = ms_info.address.to_string();
         let tx_index = proposal.transaction_index;
+        let vault_index = self.ui.ms_current_vault_index;
 
         self.ui.ms_step = MultisigStep::Submitting;
         self.ui.clear_status();
@@ -2832,7 +2946,7 @@ impl App {
                             &private_key,
                             &multisig_address,
                             tx_index,
-                            0, // vault_index = 0 (default)
+                            vault_index,
                         )
                         .await
                     }
@@ -3536,6 +3650,7 @@ async fn execute_create_proposal_async(
     preset_instruction_idx: usize,
     preset_args: &[String],
     chain_id: &str,
+    vault_index: u8,
 ) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -3545,7 +3660,7 @@ async fn execute_create_proposal_async(
     let multisig_pubkey = solana_sdk::pubkey::Pubkey::from_str(multisig_address)
         .map_err(|e| format!("无效的多签地址: {e}"))?;
 
-    let (vault_pda, _) = multisig::derive_vault_pda(&multisig_pubkey, 0);
+    let (vault_pda, _) = multisig::derive_vault_pda(&multisig_pubkey, vault_index);
 
     let proposal_types = ProposalType::for_chain(chain_id);
     let proposal_type = proposal_types
@@ -3623,7 +3738,7 @@ async fn execute_create_proposal_async(
         rpc_url,
         private_key,
         multisig_address,
-        0, // vault_index = 0
+        vault_index,
         inner_instructions,
     )
     .await

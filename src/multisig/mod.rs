@@ -123,7 +123,7 @@ pub enum ProposalType {
 impl ProposalType {
     pub fn label(&self) -> &str {
         match self {
-            Self::SolTransfer => "SOL 转账",
+            Self::SolTransfer => "原生币转账",
             Self::TokenTransfer => "代币转账",
             Self::ProgramUpgrade => "升级程序",
             Self::ProgramCall => "调用程序",
