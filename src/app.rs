@@ -665,6 +665,11 @@ impl App {
                         self.ui.chain_type_selected = 0;
                     }
                     AddWalletOption::CreateMultisig => {
+                        self.ui.ms_create_use_seed = false;
+                        self.enter_chain_select(MsChainSelectPurpose::Create);
+                    }
+                    AddWalletOption::CreateMultisigWithSeed => {
+                        self.ui.ms_create_use_seed = true;
                         self.enter_chain_select(MsChainSelectPurpose::Create);
                     }
                     AddWalletOption::ImportMultisig => {
@@ -1993,6 +1998,7 @@ impl App {
                     }
                 }
             }
+            MultisigStep::CreateInputSeed => self.handle_ms_create_input_seed_key(key),
             MultisigStep::CreateSelectCreator => self.handle_ms_create_select_creator_key(key),
             MultisigStep::CreateInputMembers => self.handle_ms_create_input_members_key(key),
             MultisigStep::CreateInputThreshold => self.handle_ms_create_input_threshold_key(key),
@@ -2981,8 +2987,13 @@ impl App {
         self.ui.ms_create_members.clear();
         self.ui.ms_create_member_input.clear();
         self.ui.ms_create_threshold_input.clear();
+        self.ui.ms_create_seed_input.clear();
         self.ui.ms_confirm_password.clear();
-        self.ui.ms_step = MultisigStep::CreateSelectCreator;
+        if self.ui.ms_create_use_seed {
+            self.ui.ms_step = MultisigStep::CreateInputSeed;
+        } else {
+            self.ui.ms_step = MultisigStep::CreateSelectCreator;
+        }
         self.ui.clear_status();
     }
 
@@ -3023,6 +3034,52 @@ impl App {
         result
     }
 
+    fn handle_ms_create_input_seed_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) => {
+                self.ui.clear_status();
+                self.ui.ms_create_seed_input.push(c);
+            }
+            KeyCode::Backspace => {
+                self.ui.clear_status();
+                self.ui.ms_create_seed_input.pop();
+            }
+            KeyCode::Enter => {
+                let seed = self.ui.ms_create_seed_input.trim().to_string();
+                if seed.is_empty() {
+                    self.ui.set_status("请输入种子私钥");
+                    return;
+                }
+                // 验证 base58 解码后为 32 字节
+                match bs58::decode(&seed).into_vec() {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        // 显示该种子对应的多签 PDA 地址
+                        let seed_bytes: [u8; 32] = bytes.try_into().unwrap();
+                        let keypair = solana_sdk::signer::keypair::Keypair::new_from_array(seed_bytes);
+                        let create_key_pubkey = solana_sdk::signer::Signer::pubkey(&keypair);
+                        let (multisig_pda, _) = crate::multisig::derive_multisig_pda(&create_key_pubkey);
+                        self.ui.set_status(format!("对应多签地址: {multisig_pda}"));
+                        self.ui.ms_step = MultisigStep::CreateSelectCreator;
+                    }
+                    Ok(bytes) => {
+                        self.ui.set_status(format!(
+                            "种子私钥长度错误: {} 字节（需要 32 字节）",
+                            bytes.len()
+                        ));
+                    }
+                    Err(_) => {
+                        self.ui.set_status("无效的 base58 编码");
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::SelectChain;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
     fn handle_ms_create_select_creator_key(&mut self, key: KeyEvent) {
         let count = self.ui.ms_create_sol_addresses.len();
         match key.code {
@@ -3050,7 +3107,12 @@ impl App {
                 self.ui.clear_status();
             }
             KeyCode::Esc => {
-                self.ui.ms_step = MultisigStep::List;
+                if self.ui.ms_create_use_seed {
+                    self.ui.ms_step = MultisigStep::CreateInputSeed;
+                } else {
+                    self.ui.ms_step = MultisigStep::SelectChain;
+                }
+                self.ui.clear_status();
             }
             _ => {}
         }
@@ -3227,6 +3289,20 @@ impl App {
 
         let rpc_url = self.ui.ms_selected_rpc_url.clone();
 
+        // 如果使用种子模式，解析种子私钥
+        let seed_key = if self.ui.ms_create_use_seed {
+            let seed = self.ui.ms_create_seed_input.trim().to_string();
+            match bs58::decode(&seed).into_vec() {
+                Ok(bytes) if bytes.len() == 32 => Some(bytes),
+                _ => {
+                    self.ui.set_status("种子私钥无效");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
         self.ui.ms_step = MultisigStep::Submitting;
         self.ui.clear_status();
 
@@ -3245,6 +3321,7 @@ impl App {
                         &private_key,
                         &members,
                         threshold,
+                        seed_key.as_deref(),
                     )
                     .await
                 }

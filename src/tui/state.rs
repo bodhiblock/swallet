@@ -43,6 +43,7 @@ pub enum AddWalletOption {
     ImportPrivateKey,
     ImportWatchOnly,
     CreateMultisig,
+    CreateMultisigWithSeed,
     ImportMultisig,
     RestoreHiddenWallet,
     RestoreHiddenAddress,
@@ -56,6 +57,7 @@ impl AddWalletOption {
             Self::ImportPrivateKey,
             Self::ImportWatchOnly,
             Self::CreateMultisig,
+            Self::CreateMultisigWithSeed,
             Self::ImportMultisig,
             Self::RestoreHiddenWallet,
             Self::RestoreHiddenAddress,
@@ -69,6 +71,7 @@ impl AddWalletOption {
             Self::ImportPrivateKey => "导入私钥钱包",
             Self::ImportWatchOnly => "导入观察钱包",
             Self::CreateMultisig => "创建多签钱包（Squads）",
+            Self::CreateMultisigWithSeed => "创建多签钱包（Squads使用种子）",
             Self::ImportMultisig => "导入多签钱包（Squads）",
             Self::RestoreHiddenWallet => "恢复隐藏钱包",
             Self::RestoreHiddenAddress => "恢复隐藏地址",
@@ -189,6 +192,8 @@ pub enum MultisigStep {
     /// 操作结果
     Result,
     // ---- 创建多签流程 ----
+    /// 输入种子私钥（使用种子创建时）
+    CreateInputSeed,
     /// 选择创建者（本地 SOL 地址）
     CreateSelectCreator,
     /// 添加成员地址
@@ -352,6 +357,8 @@ pub struct UiState {
     pub ms_vote_action: Option<VoteAction>,
     pub ms_result: Option<(bool, String)>,
     // 创建多签流程
+    pub ms_create_use_seed: bool,           // 是否使用种子模式
+    pub ms_create_seed_input: String,       // 种子私钥输入（base58）
     pub ms_create_sol_addresses: Vec<(String, String)>, // (address, label)
     pub ms_create_creator_selected: usize,
     pub ms_create_members: Vec<String>,     // 已添加的成员地址
@@ -449,6 +456,8 @@ impl UiState {
             ms_confirm_password: String::new(),
             ms_vote_action: None,
             ms_result: None,
+            ms_create_use_seed: false,
+            ms_create_seed_input: String::new(),
             ms_create_sol_addresses: Vec::new(),
             ms_create_creator_selected: 0,
             ms_create_members: Vec::new(),

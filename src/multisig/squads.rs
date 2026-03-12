@@ -479,6 +479,7 @@ pub async fn create_multisig_v2(
     creator_private_key: &[u8],
     member_pubkeys: &[Pubkey],
     threshold: u16,
+    seed_private_key: Option<&[u8]>,
 ) -> Result<String, String> {
     let key_bytes: [u8; 32] = creator_private_key
         .try_into()
@@ -486,8 +487,15 @@ pub async fn create_multisig_v2(
     let creator_keypair = Keypair::new_from_array(key_bytes);
     let creator_pubkey = creator_keypair.pubkey();
 
-    // 生成随机 create_key（防前抢交易）
-    let create_key_keypair = Keypair::new();
+    // 使用种子或生成随机 create_key
+    let create_key_keypair = if let Some(seed_key) = seed_private_key {
+        let seed_bytes: [u8; 32] = seed_key
+            .try_into()
+            .map_err(|_| "种子私钥长度必须为 32 字节".to_string())?;
+        Keypair::new_from_array(seed_bytes)
+    } else {
+        Keypair::new()
+    };
     let create_key_pubkey = create_key_keypair.pubkey();
 
     // 推导 PDA

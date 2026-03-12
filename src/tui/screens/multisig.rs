@@ -54,6 +54,7 @@ pub fn render(
         MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => render_confirm(frame, center, state),
         MultisigStep::Submitting => render_submitting(frame, center, state),
         MultisigStep::Result => render_result(frame, center, state),
+        MultisigStep::CreateInputSeed => render_create_input_seed(frame, center, state),
         MultisigStep::CreateSelectCreator => render_create_select_creator(frame, center, state),
         MultisigStep::CreateInputMembers => render_create_input_members(frame, center, state, address_labels),
         MultisigStep::CreateInputThreshold => render_create_input_threshold(frame, center, state),
@@ -1064,6 +1065,51 @@ fn render_result(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(color));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_create_input_seed(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+) {
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  请输入种子私钥（base58 编码，32 字节）:",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  > ", Style::default().fg(Color::Cyan)),
+            Span::styled(&state.ms_create_seed_input, Style::default().fg(Color::White)),
+            Span::styled("_", Style::default().fg(Color::Gray)),
+        ]),
+        Line::from(""),
+    ];
+
+    if let Some(msg) = &state.status_message {
+        lines.push(Line::from(Span::styled(
+            format!("  {msg}"),
+            Style::default().fg(Color::Green),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(Span::styled(
+        "  该私钥将作为 create_key 推导多签 PDA 地址",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    append_hint(&mut lines, " Enter确认  Esc返回");
+
+    let block = Block::default()
+        .title(" 创建多签 - 输入种子 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

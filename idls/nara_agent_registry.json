@@ -439,6 +439,28 @@
           }
         },
         {
+          "name": "fee_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "point_mint",
           "writable": true,
           "pda": {
@@ -1217,8 +1239,26 @@
           }
         },
         {
-          "name": "fee_recipient",
-          "writable": true
+          "name": "fee_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "system_program",
@@ -1291,8 +1331,26 @@
           }
         },
         {
-          "name": "fee_recipient",
-          "writable": true
+          "name": "fee_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "point_mint",
@@ -1962,53 +2020,6 @@
       ]
     },
     {
-      "name": "update_fee_recipient",
-      "discriminator": [
-        249,
-        0,
-        198,
-        35,
-        183,
-        123,
-        57,
-        188
-      ],
-      "accounts": [
-        {
-          "name": "admin",
-          "signer": true,
-          "relations": [
-            "config"
-          ]
-        },
-        {
-          "name": "config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "new_recipient",
-          "type": "pubkey"
-        }
-      ]
-    },
-    {
       "name": "update_points_config",
       "discriminator": [
         15,
@@ -2157,6 +2168,79 @@
       "args": [
         {
           "name": "new_fee",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_fees",
+      "discriminator": [
+        198,
+        212,
+        171,
+        109,
+        144,
+        215,
+        174,
+        89
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
           "type": "u64"
         }
       ]
@@ -2357,8 +2441,8 @@
     },
     {
       "code": 6015,
-      "name": "InvalidFeeRecipient",
-      "msg": "Fee recipient does not match config.fee_recipient"
+      "name": "InsufficientFeeVaultBalance",
+      "msg": "Fee vault has insufficient balance for withdrawal"
     },
     {
       "code": 6016,
@@ -2608,7 +2692,7 @@
             "type": "pubkey"
           },
           {
-            "name": "fee_recipient",
+            "name": "fee_vault",
             "type": "pubkey"
           },
           {

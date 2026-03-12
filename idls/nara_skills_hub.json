@@ -449,8 +449,26 @@
           }
         },
         {
-          "name": "fee_recipient",
-          "writable": true
+          "name": "fee_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "system_program",
@@ -640,50 +658,6 @@
       ]
     },
     {
-      "name": "update_fee_recipient",
-      "discriminator": [
-        249,
-        0,
-        198,
-        35,
-        183,
-        123,
-        57,
-        188
-      ],
-      "accounts": [
-        {
-          "name": "admin",
-          "signer": true
-        },
-        {
-          "name": "config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "new_recipient",
-          "type": "pubkey"
-        }
-      ]
-    },
-    {
       "name": "update_metadata",
       "discriminator": [
         170,
@@ -799,6 +773,76 @@
       "args": [
         {
           "name": "new_fee",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_fees",
+      "discriminator": [
+        198,
+        212,
+        171,
+        109,
+        144,
+        215,
+        174,
+        89
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
           "type": "u64"
         }
       ]
@@ -1012,31 +1056,36 @@
     },
     {
       "code": 6016,
-      "name": "InvalidFeeRecipient",
-      "msg": "Fee recipient does not match config.fee_recipient"
+      "name": "InvalidFeeVault",
+      "msg": "Fee vault does not match the expected PDA"
     },
     {
       "code": 6017,
+      "name": "InsufficientVaultBalance",
+      "msg": "Insufficient vault balance for withdrawal"
+    },
+    {
+      "code": 6018,
       "name": "AuthorTooLong",
       "msg": "Author name too long: max 64 bytes"
     },
     {
-      "code": 6018,
+      "code": 6019,
       "name": "NameNotLowercase",
       "msg": "Name must be lowercase: uppercase letters are not allowed"
     },
     {
-      "code": 6019,
+      "code": 6020,
       "name": "ContentAlreadyInitialized",
       "msg": "new_content account is already initialized"
     },
     {
-      "code": 6020,
+      "code": 6021,
       "name": "ContentSelfReference",
       "msg": "new_content must differ from old_content"
     },
     {
-      "code": 6021,
+      "code": 6022,
       "name": "MetadataTooLong",
       "msg": "Metadata too long: max 800 bytes"
     }
@@ -1058,7 +1107,7 @@
           {
             "name": "admin",
             "docs": [
-              "Who may call update_admin / update_fee_recipient / update_register_fee."
+              "Who may call update_admin / update_register_fee / withdraw_fees."
             ],
             "type": "pubkey"
           },
@@ -1070,9 +1119,9 @@
             "type": "u64"
           },
           {
-            "name": "fee_recipient",
+            "name": "fee_vault",
             "docs": [
-              "Account that receives registration fees. Defaults to admin at init."
+              "PDA vault that collects registration fees. seeds = [b\"fee_vault\"], immutable."
             ],
             "type": "pubkey"
           },
