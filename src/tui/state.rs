@@ -23,6 +23,8 @@ pub enum Screen {
     Multisig,
     /// DEX/Swap（占位）
     Dex,
+    /// Staking（Vote/Stake 账户）
+    Staking,
     /// 删除确认（需密码）
     ConfirmDelete,
 }
@@ -222,6 +224,51 @@ impl VoteAction {
     }
 }
 
+/// Staking 流程步骤（Vote/Stake 账户管理）
+#[derive(Debug, Clone, PartialEq)]
+pub enum StakingStep {
+    // 选择网络
+    SelectChain,
+    // 选择 fee payer（有余额的地址）
+    SelectFeePayer,
+    // 创建 Vote Account
+    CreateVoteInputIdentity,
+    CreateVoteInputWithdrawer,
+    CreateVoteConfirm,
+    // 创建 Stake Account
+    CreateStakeInputAmount,
+    CreateStakeConfirm,
+    // Vote Account 详情
+    VoteDetail,
+    VoteAuthorize,
+    // Stake Account 详情
+    StakeDetail,
+    StakeAuthorize,
+    StakeDelegateInput,
+    StakeDeactivateConfirm,
+    StakeWithdrawInput,
+    // 通用
+    Confirm,
+    Submitting,
+    Result,
+}
+
+/// Staking 创建类型（用于 SelectChain 后区分流程）
+#[derive(Debug, Clone, PartialEq)]
+pub enum StakingCreateType {
+    Vote,
+    Stake,
+}
+
+/// Staking 操作类型（用于 Confirm 步骤区分）
+#[derive(Debug, Clone, PartialEq)]
+pub enum StakingOp {
+    VoteAuthorize,
+    StakeAuthorize,
+    StakeDelegate,
+    StakeWithdraw,
+}
+
 /// 操作菜单项
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActionItem {
@@ -235,6 +282,8 @@ pub enum ActionItem {
     HideAddress,
     DeleteWatchWallet,
     CreateMultisig,
+    CreateVoteAccount,
+    CreateStakeAccount,
     AddVault,
     DeleteMultisig,
 }
@@ -252,6 +301,8 @@ impl ActionItem {
             Self::HideAddress => "隐藏地址",
             Self::DeleteWatchWallet => "删除钱包",
             Self::CreateMultisig => "创建多签地址",
+            Self::CreateVoteAccount => "创建 Vote 账户",
+            Self::CreateStakeAccount => "创建 Stake 账户",
             Self::AddVault => "添加 Vault",
             Self::DeleteMultisig => "删除多签钱包",
         }
@@ -266,7 +317,7 @@ impl ActionItem {
     }
 
     pub fn for_mnemonic_sol_address() -> Vec<Self> {
-        vec![Self::Transfer, Self::EditAddressLabel, Self::HideAddress, Self::CreateMultisig]
+        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditAddressLabel, Self::HideAddress, Self::CreateMultisig]
     }
 
     pub fn for_private_key_address() -> Vec<Self> {
@@ -381,6 +432,35 @@ pub struct UiState {
     pub transfer_confirm_password: String,
     pub transfer_result: Option<(bool, String)>,
 
+    // Staking (Vote/Stake 账户)
+    pub stk_step: StakingStep,
+    pub stk_from_address: String,
+    pub stk_wallet_index: usize,
+    pub stk_account_index: usize,
+    pub stk_rpc_url: String,
+    pub stk_solana_chains: Vec<(String, String, String)>, // (id, name, rpc_url)
+    pub stk_chain_selected: usize,
+    pub stk_create_type: StakingCreateType,
+    // Fee Payer 选择
+    pub stk_fee_payer_list: Vec<(String, String, usize, usize)>, // (address, label, wallet_index, account_index)
+    pub stk_fee_payer_selected: usize,
+    pub stk_fee_payer_wallet_index: usize,
+    pub stk_fee_payer_account_index: usize,
+    pub stk_identity_input: String,
+    pub stk_withdrawer_input: String,
+    pub stk_amount_input: String,
+    pub stk_vote_account_input: String,
+    pub stk_confirm_password: String,
+    pub stk_result: Option<(bool, String)>,
+    pub stk_vote_info: Option<crate::staking::VoteAccountInfo>,
+    pub stk_stake_info: Option<crate::staking::StakeAccountInfo>,
+    pub stk_detail_selected: usize,
+    pub stk_target_address: String,
+    pub stk_authorize_type: u32,
+    pub stk_new_authority_input: String,
+    /// Confirm 步骤前的操作类型（用于区分不同确认流程）
+    pub stk_confirm_op: StakingOp,
+
     // 删除钱包确认
     pub pending_delete_wallet: Option<usize>,
     pub delete_confirm_password: String,
@@ -391,6 +471,8 @@ pub struct UiState {
 pub enum InputPurpose {
     EditLabel,
     EditVaultLabel,
+    /// 助记词钱包添加地址（选链后派生）
+    AddMnemonicAddress,
 }
 
 impl UiState {
@@ -477,6 +559,32 @@ impl UiState {
             transfer_amount: String::new(),
             transfer_confirm_password: String::new(),
             transfer_result: None,
+            stk_step: StakingStep::VoteDetail,
+            stk_from_address: String::new(),
+            stk_wallet_index: 0,
+            stk_account_index: 0,
+            stk_rpc_url: String::new(),
+            stk_solana_chains: Vec::new(),
+            stk_chain_selected: 0,
+            stk_create_type: StakingCreateType::Vote,
+            stk_fee_payer_list: Vec::new(),
+            stk_fee_payer_selected: 0,
+            stk_fee_payer_wallet_index: 0,
+            stk_fee_payer_account_index: 0,
+            stk_identity_input: String::new(),
+            stk_withdrawer_input: String::new(),
+            stk_amount_input: String::new(),
+            stk_vote_account_input: String::new(),
+            stk_confirm_password: String::new(),
+            stk_result: None,
+            stk_vote_info: None,
+            stk_stake_info: None,
+            stk_detail_selected: 0,
+            stk_target_address: String::new(),
+            stk_authorize_type: 0,
+            stk_new_authority_input: String::new(),
+            stk_confirm_op: StakingOp::VoteAuthorize,
+
             pending_delete_wallet: None,
             delete_confirm_password: String::new(),
         }

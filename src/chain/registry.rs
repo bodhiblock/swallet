@@ -7,7 +7,7 @@ use crate::config::AppConfig;
 use crate::storage::data::{ChainType, WalletStore, WalletType};
 
 use super::ethereum::query_evm_balance;
-use super::solana::query_sol_balance;
+use super::solana::query_sol_balance_batch;
 use super::{AddressPortfolio, BalanceCache, ChainBalance};
 
 /// 构建占位余额缓存（所有链显示 `-`，等待 RPC 查询）
@@ -19,6 +19,7 @@ pub fn build_placeholder_cache(config: &AppConfig, store: &WalletStore) -> Balan
         let mut portfolio = AddressPortfolio {
             address: address.clone(),
             chains: Vec::new(),
+            account_owner: None,
         };
         for evm_config in &config.chains.ethereum {
             portfolio.chains.push(ChainBalance {
@@ -39,6 +40,7 @@ pub fn build_placeholder_cache(config: &AppConfig, store: &WalletStore) -> Balan
         let mut portfolio = AddressPortfolio {
             address: address.clone(),
             chains: Vec::new(),
+            account_owner: None,
         };
         for sol_config in &config.chains.solana {
             portfolio.chains.push(ChainBalance {
@@ -60,6 +62,7 @@ pub fn build_placeholder_cache(config: &AppConfig, store: &WalletStore) -> Balan
         let mut portfolio = AddressPortfolio {
             address: address.clone(),
             chains: Vec::new(),
+            account_owner: None,
         };
         if let Some(sol_config) = config.chains.solana.iter().find(|c| c.id == *chain_id) {
             portfolio.chains.push(ChainBalance {
@@ -145,7 +148,9 @@ fn collect_addresses(store: &WalletStore) -> (Vec<String>, Vec<String>, Vec<(Str
                     }
                 }
             },
-            WalletType::Multisig { vaults, chain_id, .. } => {
+            WalletType::Multisig {
+                vaults, chain_id, ..
+            } => {
                 for v in vaults.iter().filter(|v| !v.hidden) {
                     let pair = (v.address.clone(), chain_id.clone());
                     if !chain_sol_addresses.contains(&pair) {
@@ -159,7 +164,7 @@ fn collect_addresses(store: &WalletStore) -> (Vec<String>, Vec<String>, Vec<(Str
     (eth_addresses, sol_addresses, chain_sol_addresses)
 }
 
-/// 查询所有钱包地址的余额（全并发，每个查询独立 task）
+/// 查询所有钱包地址的余额
 pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> BalanceCache {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -169,9 +174,9 @@ pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> Bala
 
     let (eth_addresses, sol_addresses, chain_sol_addresses) = collect_addresses(store);
 
-    // 每个 (地址, 链) 独立 spawn，真正多线程并发
     let mut handles = Vec::new();
 
+    // ETH: 每个 (地址, 链) 独立 spawn
     for address in &eth_addresses {
         for evm_config in &config.chains.ethereum {
             let client = client.clone();
@@ -190,54 +195,41 @@ pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> Bala
                         tokens: Vec::new(),
                         rpc_failed: true,
                     });
-                (addr, balance)
+                // ETH 没有 account_owner 概念
+                vec![(addr, balance, None::<String>)]
             }));
         }
     }
 
-    for address in &sol_addresses {
-        for sol_config in &config.chains.solana {
-            let client = client.clone();
-            let cfg = sol_config.clone();
-            let addr = address.clone();
-            handles.push(tokio::spawn(async move {
-                let balance = query_sol_balance(&client, &cfg, &addr)
-                    .await
-                    .unwrap_or(ChainBalance {
-                        chain_id: cfg.id.clone(),
-                        chain_name: cfg.name.clone(),
-                        native_symbol: cfg.native_symbol.clone(),
-                        native_decimals: cfg.native_decimals,
-                        native_balance: 0,
-                        staked_balance: 0,
-                        tokens: Vec::new(),
-                        rpc_failed: true,
-                    });
-                (addr, balance)
-            }));
+    // SOL: 按链批量查询（一次 getMultipleAccounts 获取 native + tokens + owner）
+    for sol_config in &config.chains.solana {
+        if sol_addresses.is_empty() {
+            continue;
         }
+        let client = client.clone();
+        let cfg = sol_config.clone();
+        let addrs = sol_addresses.clone();
+        handles.push(tokio::spawn(async move {
+            let result = query_sol_balance_batch(&client, &cfg, &addrs).await;
+            result.balances
+        }));
     }
 
-    // 多签 vault 等限定链的地址，只查对应链
+    // 多签 vault: 按链分组后批量查询
+    let mut vault_by_chain: HashMap<String, Vec<String>> = HashMap::new();
     for (address, chain_id) in &chain_sol_addresses {
-        if let Some(sol_config) = config.chains.solana.iter().find(|c| c.id == *chain_id) {
+        vault_by_chain
+            .entry(chain_id.clone())
+            .or_default()
+            .push(address.clone());
+    }
+    for (chain_id, vault_addrs) in vault_by_chain {
+        if let Some(sol_config) = config.chains.solana.iter().find(|c| c.id == chain_id) {
             let client = client.clone();
             let cfg = sol_config.clone();
-            let addr = address.clone();
             handles.push(tokio::spawn(async move {
-                let balance = query_sol_balance(&client, &cfg, &addr)
-                    .await
-                    .unwrap_or(ChainBalance {
-                        chain_id: cfg.id.clone(),
-                        chain_name: cfg.name.clone(),
-                        native_symbol: cfg.native_symbol.clone(),
-                        native_decimals: cfg.native_decimals,
-                        native_balance: 0,
-                        staked_balance: 0,
-                        tokens: Vec::new(),
-                        rpc_failed: true,
-                    });
-                (addr, balance)
+                let result = query_sol_balance_batch(&client, &cfg, &vault_addrs).await;
+                result.balances
             }));
         }
     }
@@ -246,15 +238,21 @@ pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> Bala
     let results = join_all(handles).await;
 
     let mut cache: BalanceCache = HashMap::new();
-    for (addr, balance) in results.into_iter().flatten() {
-        cache
-            .entry(addr.clone())
-            .or_insert_with(|| AddressPortfolio {
-                address: addr,
-                chains: Vec::new(),
-            })
-            .chains
-            .push(balance);
+    for batch in results.into_iter().flatten() {
+        for (addr, balance, owner) in batch {
+            let portfolio = cache
+                .entry(addr.clone())
+                .or_insert_with(|| AddressPortfolio {
+                    address: addr,
+                    chains: Vec::new(),
+                    account_owner: None,
+                });
+            portfolio.chains.push(balance);
+            // 设置 account_owner（取第一个非 None 的值）
+            if owner.is_some() && portfolio.account_owner.is_none() {
+                portfolio.account_owner = owner;
+            }
+        }
     }
 
     cache

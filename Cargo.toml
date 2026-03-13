@@ -46,3 +46,4 @@ futures = "0.3.32"
 solana-sdk = "2"
 anchor-lang = { version = "0.31.0", features = ["idl-build"] }
 bytemuck = { version = "1.25.0", features = ["derive", "min_const_generics"] }
+spl-token = "7"

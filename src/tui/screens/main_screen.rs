@@ -6,6 +6,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::chain::solana::{STAKE_PROGRAM, VOTE_PROGRAM};
 use crate::chain::{format_balance, BalanceCache};
 use crate::storage::data::{WalletStore, WalletType};
 use crate::tui::state::UiState;
@@ -127,6 +128,7 @@ fn render_wallet_list(
                     }
                     for acc in sol_accounts.iter().filter(|a| !a.hidden) {
                         let label = format_label(&acc.label);
+                        let account_type_label = account_type_span(cache, &acc.address);
                         let mut spans = vec![
                             Span::raw("    "),
                             Span::styled(
@@ -134,12 +136,15 @@ fn render_wallet_list(
                                 Style::default().fg(Color::DarkGray),
                             ),
                             Span::styled("SOL ", Style::default().fg(Color::Magenta)),
-                            Span::styled(label, Style::default().fg(Color::Yellow)),
-                            Span::styled(
-                                acc.address.clone(),
-                                Style::default().fg(Color::Gray),
-                            ),
                         ];
+                        if let Some(type_span) = account_type_label {
+                            spans.push(type_span);
+                        }
+                        spans.push(Span::styled(label, Style::default().fg(Color::Yellow)));
+                        spans.push(Span::styled(
+                            acc.address.clone(),
+                            Style::default().fg(Color::Gray),
+                        ));
                         append_balance_spans(&mut spans, cache, &acc.address, None);
                         items.push(ListItem::new(Line::from(spans)));
                     }
@@ -312,4 +317,14 @@ fn format_label(label: &Option<String>) -> String {
         .as_deref()
         .map(|l| format!("[{l}] "))
         .unwrap_or_default()
+}
+
+/// 根据 account_owner 生成类型标签 Span
+fn account_type_span<'a>(cache: &BalanceCache, address: &str) -> Option<Span<'a>> {
+    let owner = cache.get(address)?.account_owner.as_deref()?;
+    match owner {
+        VOTE_PROGRAM => Some(Span::styled("[Vote] ", Style::default().fg(Color::Cyan))),
+        STAKE_PROGRAM => Some(Span::styled("[Stake] ", Style::default().fg(Color::Green))),
+        _ => None,
+    }
 }
