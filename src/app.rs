@@ -243,7 +243,7 @@ impl App {
                     self.ui.clear_status();
                 }
                 BgMessage::StakingFetchError(err) => {
-                    self.ui.set_status(format!("获取账户信息失败: {err}"));
+                    self.ui.stk_fetch_error = Some(err);
                 }
             }
         }
@@ -4125,10 +4125,11 @@ impl App {
         self.ui.stk_from_address = address.to_string();
         self.ui.stk_wallet_index = wallet_index;
         self.ui.stk_account_index = account_index;
-        self.ui.stk_rpc_url = self.get_sol_rpc_url();
+        self.ui.stk_rpc_url = self.get_rpc_url_for_address(address);
+        self.ui.stk_native_symbol = self.get_native_symbol_for_address(address);
         self.ui.stk_vote_info = None;
+        self.ui.stk_fetch_error = None;
         self.ui.stk_detail_selected = 0;
-        self.ui.set_status("正在加载...");
         self.fetch_vote_account_info(address);
     }
 
@@ -4138,10 +4139,11 @@ impl App {
         self.ui.stk_from_address = address.to_string();
         self.ui.stk_wallet_index = wallet_index;
         self.ui.stk_account_index = account_index;
-        self.ui.stk_rpc_url = self.get_sol_rpc_url();
+        self.ui.stk_rpc_url = self.get_rpc_url_for_address(address);
+        self.ui.stk_native_symbol = self.get_native_symbol_for_address(address);
         self.ui.stk_stake_info = None;
+        self.ui.stk_fetch_error = None;
         self.ui.stk_detail_selected = 0;
-        self.ui.set_status("正在加载...");
         self.fetch_stake_account_info(address);
     }
 
@@ -4165,12 +4167,12 @@ impl App {
             None => return,
         };
 
-        let chains: Vec<(String, String, String)> = self
+        let chains: Vec<(String, String, String, String)> = self
             .config
             .chains
             .solana
             .iter()
-            .map(|c| (c.id.clone(), c.name.clone(), c.rpc_url.clone()))
+            .map(|c| (c.id.clone(), c.name.clone(), c.rpc_url.clone(), c.native_symbol.clone()))
             .collect();
 
         if chains.is_empty() {
@@ -4186,8 +4188,9 @@ impl App {
 
         // 只有一条链时跳过选择
         if chains.len() == 1 {
-            let (_id, _name, rpc) = chains[0].clone();
+            let (_id, _name, rpc, symbol) = chains[0].clone();
             self.ui.stk_rpc_url = rpc;
+            self.ui.stk_native_symbol = symbol;
             self.proceed_after_chain_select();
             return;
         }
@@ -4253,7 +4256,7 @@ impl App {
     }
 
     /// 构建有余额的 SOL 地址列表（用于 fee payer 选择）
-    fn build_fee_payer_list(&self) -> Vec<(String, String, usize, usize)> {
+    fn build_fee_payer_list(&self) -> Vec<(String, String, u128, usize, usize)> {
         let mut list = Vec::new();
         let store = match self.store.as_ref() {
             Some(s) => s,
@@ -4272,6 +4275,15 @@ impl App {
                     if acc.address == self.ui.stk_from_address {
                         continue;
                     }
+                    // 排除 Vote/Stake 账户（不能作为 fee payer）
+                    let is_special_account = self
+                        .balance_cache
+                        .get(&acc.address)
+                        .and_then(|p| p.account_owner.as_deref())
+                        .is_some_and(|o| o == crate::chain::solana::VOTE_PROGRAM || o == crate::chain::solana::STAKE_PROGRAM);
+                    if is_special_account {
+                        continue;
+                    }
                     // 检查有余额
                     let has_balance = self
                         .balance_cache
@@ -4283,7 +4295,13 @@ impl App {
                             .label
                             .as_deref()
                             .unwrap_or(&wallet.name);
-                        list.push((acc.address.clone(), label.to_string(), wi, ai));
+                        let balance_lamports = self
+                            .balance_cache
+                            .get(&acc.address)
+                            .and_then(|p| p.chains.iter().find(|c| c.native_balance > 0))
+                            .map(|c| c.native_balance)
+                            .unwrap_or(0);
+                        list.push((acc.address.clone(), label.to_string(), balance_lamports, wi, ai));
                     }
                 }
             }
@@ -4293,7 +4311,7 @@ impl App {
 
     /// fee payer 选择后，进入具体创建步骤
     fn proceed_after_fee_payer_select(&mut self) {
-        let (_, _, wi, ai) = self.ui.stk_fee_payer_list[self.ui.stk_fee_payer_selected].clone();
+        let (_, _, _, wi, ai) = self.ui.stk_fee_payer_list[self.ui.stk_fee_payer_selected].clone();
         self.ui.stk_fee_payer_wallet_index = wi;
         self.ui.stk_fee_payer_account_index = ai;
 
@@ -4353,6 +4371,29 @@ impl App {
             .first()
             .map(|c| c.rpc_url.clone())
             .unwrap_or_default()
+    }
+
+    /// 根据地址的 balance_cache 中的 chain_id 找到对应的 RPC URL
+    /// 根据 account_owner 所在链找 RPC URL（Vote/Stake 账户只属于一条链）
+    fn get_rpc_url_for_address(&self, address: &str) -> String {
+        if let Some(portfolio) = self.balance_cache.get(address) {
+            // 优先使用 account_owner 来源链
+            if let Some(chain_id) = &portfolio.account_owner_chain_id
+                && let Some(cfg) = self.config.chains.solana.iter().find(|c| &c.id == chain_id) {
+                    return cfg.rpc_url.clone();
+                }
+        }
+        self.get_sol_rpc_url()
+    }
+
+    /// 根据 account_owner 所在链找 native_symbol
+    fn get_native_symbol_for_address(&self, address: &str) -> String {
+        if let Some(portfolio) = self.balance_cache.get(address)
+            && let Some(chain_id) = &portfolio.account_owner_chain_id
+                && let Some(chain_bal) = portfolio.chains.iter().find(|c| c.chain_id == *chain_id) {
+                    return chain_bal.native_symbol.clone();
+                }
+        self.config.chains.solana.first().map(|c| c.native_symbol.clone()).unwrap_or_else(|| "SOL".to_string())
     }
 
     /// 获取 fee payer 的 SOL 私钥
@@ -4441,9 +4482,10 @@ impl App {
                 if count == 0 {
                     return;
                 }
-                let (_id, _name, rpc) =
+                let (_id, _name, rpc, symbol) =
                     self.ui.stk_solana_chains[self.ui.stk_chain_selected].clone();
                 self.ui.stk_rpc_url = rpc;
+                self.ui.stk_native_symbol = symbol;
                 self.proceed_after_chain_select();
             }
             KeyCode::Esc => {
@@ -4480,12 +4522,13 @@ impl App {
     }
 
     fn handle_vote_detail_key(&mut self, key: KeyEvent) {
+        let menu_count: usize = 3; // 修改Voter, 修改Withdrawer, 修改备注
         match key.code {
             KeyCode::Esc => self.ui.back_to_main(),
             KeyCode::Char('r') => {
                 let addr = self.ui.stk_from_address.clone();
                 self.ui.stk_vote_info = None;
-                self.ui.set_status("正在加载...");
+                self.ui.stk_fetch_error = None;
                 self.fetch_vote_account_info(&addr);
             }
             KeyCode::Up => {
@@ -4494,22 +4537,24 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                self.ui.stk_detail_selected += 1;
-            }
-            KeyCode::Char('1') | KeyCode::Enter if self.ui.stk_detail_selected == 5 => {
-                // 修改 Voter
-                if self.ui.stk_vote_info.is_some() {
-                    self.ui.stk_authorize_type = 0;
-                    self.ui.stk_new_authority_input.clear();
-                    self.ui.stk_step = StakingStep::VoteAuthorize;
+                if self.ui.stk_detail_selected + 1 < menu_count {
+                    self.ui.stk_detail_selected += 1;
                 }
             }
-            KeyCode::Char('2') | KeyCode::Enter if self.ui.stk_detail_selected == 6 => {
-                // 修改 Withdrawer
-                if self.ui.stk_vote_info.is_some() {
-                    self.ui.stk_authorize_type = 1;
-                    self.ui.stk_new_authority_input.clear();
-                    self.ui.stk_step = StakingStep::VoteAuthorize;
+            KeyCode::Enter if self.ui.stk_vote_info.is_some() => {
+                match self.ui.stk_detail_selected {
+                    0 => {
+                        self.ui.stk_authorize_type = 0;
+                        self.ui.stk_new_authority_input.clear();
+                        self.ui.stk_step = StakingStep::VoteAuthorize;
+                    }
+                    1 => {
+                        self.ui.stk_authorize_type = 1;
+                        self.ui.stk_new_authority_input.clear();
+                        self.ui.stk_step = StakingStep::VoteAuthorize;
+                    }
+                    2 => self.enter_staking_edit_label(),
+                    _ => {}
                 }
             }
             _ => {}
@@ -4517,12 +4562,13 @@ impl App {
     }
 
     fn handle_stake_detail_key(&mut self, key: KeyEvent) {
+        let menu_count: usize = 6; // Staker, Withdrawer, Delegate, Deactivate, Withdraw, 修改备注
         match key.code {
             KeyCode::Esc => self.ui.back_to_main(),
             KeyCode::Char('r') => {
                 let addr = self.ui.stk_from_address.clone();
                 self.ui.stk_stake_info = None;
-                self.ui.set_status("正在加载...");
+                self.ui.stk_fetch_error = None;
                 self.fetch_stake_account_info(&addr);
             }
             KeyCode::Up => {
@@ -4531,48 +4577,56 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                self.ui.stk_detail_selected += 1;
-            }
-            KeyCode::Char('1') | KeyCode::Enter if self.ui.stk_detail_selected == 6 => {
-                // 修改 Staker
-                if self.ui.stk_stake_info.is_some() {
-                    self.ui.stk_authorize_type = 0;
-                    self.ui.stk_new_authority_input.clear();
-                    self.ui.stk_step = StakingStep::StakeAuthorize;
+                if self.ui.stk_detail_selected + 1 < menu_count {
+                    self.ui.stk_detail_selected += 1;
                 }
             }
-            KeyCode::Char('2') | KeyCode::Enter if self.ui.stk_detail_selected == 7 => {
-                // 修改 Withdrawer
-                if self.ui.stk_stake_info.is_some() {
-                    self.ui.stk_authorize_type = 1;
-                    self.ui.stk_new_authority_input.clear();
-                    self.ui.stk_step = StakingStep::StakeAuthorize;
-                }
-            }
-            KeyCode::Char('3') | KeyCode::Enter if self.ui.stk_detail_selected == 8 => {
-                // Delegate
-                if self.ui.stk_stake_info.is_some() {
-                    self.ui.stk_vote_account_input.clear();
-                    self.ui.stk_step = StakingStep::StakeDelegateInput;
-                }
-            }
-            KeyCode::Char('4') | KeyCode::Enter if self.ui.stk_detail_selected == 9 => {
-                // Deactivate
-                if self.ui.stk_stake_info.is_some() {
-                    self.ui.stk_confirm_password.clear();
-                    self.ui.stk_step = StakingStep::StakeDeactivateConfirm;
-                }
-            }
-            KeyCode::Char('5') | KeyCode::Enter if self.ui.stk_detail_selected == 10 => {
-                // Withdraw
-                if self.ui.stk_stake_info.is_some() {
-                    self.ui.stk_target_address = self.ui.stk_from_address.clone();
-                    self.ui.stk_amount_input.clear();
-                    self.ui.stk_step = StakingStep::StakeWithdrawInput;
+            KeyCode::Enter if self.ui.stk_stake_info.is_some() => {
+                match self.ui.stk_detail_selected {
+                    0 => {
+                        self.ui.stk_authorize_type = 0;
+                        self.ui.stk_new_authority_input.clear();
+                        self.ui.stk_step = StakingStep::StakeAuthorize;
+                    }
+                    1 => {
+                        self.ui.stk_authorize_type = 1;
+                        self.ui.stk_new_authority_input.clear();
+                        self.ui.stk_step = StakingStep::StakeAuthorize;
+                    }
+                    2 => {
+                        self.ui.stk_vote_account_input.clear();
+                        self.ui.stk_step = StakingStep::StakeDelegateInput;
+                    }
+                    3 => {
+                        self.ui.stk_confirm_password.clear();
+                        self.ui.stk_step = StakingStep::StakeDeactivateConfirm;
+                    }
+                    4 => {
+                        self.ui.stk_target_address = self.ui.stk_from_address.clone();
+                        self.ui.stk_amount_input.clear();
+                        self.ui.stk_step = StakingStep::StakeWithdrawInput;
+                    }
+                    5 => self.enter_staking_edit_label(),
+                    _ => {}
                 }
             }
             _ => {}
         }
+    }
+
+    fn enter_staking_edit_label(&mut self) {
+        use crate::tui::state::{ActionContext, AddWalletStep, InputPurpose};
+        let wi = self.ui.stk_wallet_index;
+        let ai = self.ui.stk_account_index;
+        self.ui.action_context = Some(ActionContext::MnemonicAddress {
+            wallet_index: wi,
+            chain_type: crate::storage::data::ChainType::Solana,
+            account_index: ai,
+        });
+        self.ui.input_buffer = self.get_current_label(&self.ui.action_context.clone()).unwrap_or_default();
+        self.ui.input_purpose = Some(InputPurpose::EditLabel);
+        self.ui.add_wallet_step = AddWalletStep::InputName;
+        self.ui.screen = Screen::TextInput;
     }
 
     fn handle_stk_text_input(&mut self, key: KeyEvent, field: StakingTextField) {

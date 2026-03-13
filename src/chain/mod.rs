@@ -39,6 +39,8 @@ pub struct AddressPortfolio {
     pub chains: Vec<ChainBalance>,
     /// 账户 owner 程序地址（用于区分 Vote/Stake/普通账户）
     pub account_owner: Option<String>,
+    /// account_owner 来源链 ID
+    pub account_owner_chain_id: Option<String>,
 }
 
 /// 全部钱包的余额缓存，key = 地址

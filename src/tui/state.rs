@@ -438,11 +438,12 @@ pub struct UiState {
     pub stk_wallet_index: usize,
     pub stk_account_index: usize,
     pub stk_rpc_url: String,
-    pub stk_solana_chains: Vec<(String, String, String)>, // (id, name, rpc_url)
+    pub stk_solana_chains: Vec<(String, String, String, String)>, // (id, name, rpc_url, native_symbol)
     pub stk_chain_selected: usize,
     pub stk_create_type: StakingCreateType,
+    pub stk_native_symbol: String,
     // Fee Payer 选择
-    pub stk_fee_payer_list: Vec<(String, String, usize, usize)>, // (address, label, wallet_index, account_index)
+    pub stk_fee_payer_list: Vec<(String, String, u128, usize, usize)>, // (address, label, balance_lamports, wallet_index, account_index)
     pub stk_fee_payer_selected: usize,
     pub stk_fee_payer_wallet_index: usize,
     pub stk_fee_payer_account_index: usize,
@@ -454,6 +455,7 @@ pub struct UiState {
     pub stk_result: Option<(bool, String)>,
     pub stk_vote_info: Option<crate::staking::VoteAccountInfo>,
     pub stk_stake_info: Option<crate::staking::StakeAccountInfo>,
+    pub stk_fetch_error: Option<String>,
     pub stk_detail_selected: usize,
     pub stk_target_address: String,
     pub stk_authorize_type: u32,
@@ -567,6 +569,7 @@ impl UiState {
             stk_solana_chains: Vec::new(),
             stk_chain_selected: 0,
             stk_create_type: StakingCreateType::Vote,
+            stk_native_symbol: String::new(),
             stk_fee_payer_list: Vec::new(),
             stk_fee_payer_selected: 0,
             stk_fee_payer_wallet_index: 0,
@@ -579,6 +582,7 @@ impl UiState {
             stk_result: None,
             stk_vote_info: None,
             stk_stake_info: None,
+            stk_fetch_error: None,
             stk_detail_selected: 0,
             stk_target_address: String::new(),
             stk_authorize_type: 0,

@@ -612,13 +612,24 @@ pub async fn fetch_vote_account(
 
     let resp: Value = rpc_call(client, rpc_url, &body).await?;
 
-    let info = resp
+    let value = resp
         .get("result")
-        .and_then(|r| r.get("value"))
-        .and_then(|v| v.get("data"))
+        .and_then(|r| r.get("value"));
+
+    // value 为 null 说明账户不存在
+    let value = match value {
+        Some(v) if !v.is_null() => v,
+        _ => return Err(format!("账户不存在或无法访问 (rpc: {rpc_url})")),
+    };
+
+    let info = value
+        .get("data")
         .and_then(|d| d.get("parsed"))
         .and_then(|p| p.get("info"))
-        .ok_or("无法解析 Vote 账户数据")?;
+        .ok_or_else(|| {
+            let owner = value.get("owner").and_then(|o| o.as_str()).unwrap_or("unknown");
+            format!("无法解析 Vote 账户数据 (owner: {owner}, rpc: {rpc_url})")
+        })?;
 
     let authorized = info.get("authorizedVoters").and_then(|v| v.as_array());
     let voter = authorized
@@ -696,8 +707,11 @@ pub async fn fetch_stake_account(
 
     let value = resp
         .get("result")
-        .and_then(|r| r.get("value"))
-        .ok_or("账户不存在")?;
+        .and_then(|r| r.get("value"));
+    let value = match value {
+        Some(v) if !v.is_null() => v,
+        _ => return Err(format!("账户不存在或无法访问 (rpc: {rpc_url})")),
+    };
 
     let lamports = value
         .get("lamports")

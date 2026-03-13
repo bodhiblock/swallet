@@ -128,7 +128,6 @@ fn render_wallet_list(
                     }
                     for acc in sol_accounts.iter().filter(|a| !a.hidden) {
                         let label = format_label(&acc.label);
-                        let account_type_label = account_type_span(cache, &acc.address);
                         let mut spans = vec![
                             Span::raw("    "),
                             Span::styled(
@@ -137,9 +136,6 @@ fn render_wallet_list(
                             ),
                             Span::styled("SOL ", Style::default().fg(Color::Magenta)),
                         ];
-                        if let Some(type_span) = account_type_label {
-                            spans.push(type_span);
-                        }
                         spans.push(Span::styled(label, Style::default().fg(Color::Yellow)));
                         spans.push(Span::styled(
                             acc.address.clone(),
@@ -251,9 +247,20 @@ fn append_balance_spans<'a>(
 
         // [链名]
         spans.push(Span::styled(
-            format!("[{}] ", chain_bal.chain_name),
+            format!("[{}]", chain_bal.chain_name),
             Style::default().fg(Color::DarkGray),
         ));
+        // Vote/Stake 类型标签（紧跟链名）
+        if let Some(owner) = &portfolio.account_owner
+            && let Some(owner_chain) = &portfolio.account_owner_chain_id
+                && *owner_chain == chain_bal.chain_id {
+                    match owner.as_str() {
+                        VOTE_PROGRAM => spans.push(Span::styled("[Vote]", Style::default().fg(Color::Cyan))),
+                        STAKE_PROGRAM => spans.push(Span::styled("[Stake]", Style::default().fg(Color::Green))),
+                        _ => {}
+                    }
+                }
+        spans.push(Span::raw(" "));
 
         if chain_bal.rpc_failed {
             // RPC 失败显示 -
@@ -319,12 +326,3 @@ fn format_label(label: &Option<String>) -> String {
         .unwrap_or_default()
 }
 
-/// 根据 account_owner 生成类型标签 Span
-fn account_type_span<'a>(cache: &BalanceCache, address: &str) -> Option<Span<'a>> {
-    let owner = cache.get(address)?.account_owner.as_deref()?;
-    match owner {
-        VOTE_PROGRAM => Some(Span::styled("[Vote] ", Style::default().fg(Color::Cyan))),
-        STAKE_PROGRAM => Some(Span::styled("[Stake] ", Style::default().fg(Color::Green))),
-        _ => None,
-    }
-}

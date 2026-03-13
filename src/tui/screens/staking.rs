@@ -6,6 +6,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::chain::format_balance;
 use crate::tui::state::{StakingStep, UiState};
 
 pub fn render(frame: &mut Frame, state: &UiState) {
@@ -72,7 +73,7 @@ fn render_select_chain(frame: &mut Frame, state: &UiState) {
     let items: Vec<ListItem> = state
         .stk_solana_chains
         .iter()
-        .map(|(_id, name, _rpc)| ListItem::new(Span::styled(format!("  {name}"), Style::default().fg(Color::White))))
+        .map(|(_id, name, _rpc, _sym)| ListItem::new(Span::styled(format!("  {name}"), Style::default().fg(Color::White))))
         .collect();
 
     let list = List::new(items)
@@ -113,8 +114,9 @@ fn render_select_fee_payer(frame: &mut Frame, state: &UiState) {
     };
     let title = format!("创建 {type_name} 账户 - 选择 Fee Payer");
 
+    let symbol = &state.stk_native_symbol;
     let height = (state.stk_fee_payer_list.len() as u16 + 5).min(18);
-    let area = centered_rect(60, height, frame.area());
+    let area = centered_rect(90, height, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -128,16 +130,13 @@ fn render_select_fee_payer(frame: &mut Frame, state: &UiState) {
     let items: Vec<ListItem> = state
         .stk_fee_payer_list
         .iter()
-        .map(|(addr, label, _wi, _ai)| {
-            let short_addr = if addr.len() > 16 {
-                format!("{}...{}", &addr[..8], &addr[addr.len() - 8..])
-            } else {
-                addr.clone()
-            };
-            ListItem::new(Span::styled(
-                format!("  {label}  ({short_addr})"),
-                Style::default().fg(Color::White),
-            ))
+        .map(|(addr, label, lamports, _wi, _ai)| {
+            let bal_str = format_balance(*lamports, 9);
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("  {addr}"), Style::default().fg(Color::White)),
+                Span::styled(format!("  {label}"), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("  {bal_str} {symbol}"), Style::default().fg(Color::Green)),
+            ]))
         })
         .collect();
 
@@ -308,7 +307,7 @@ fn render_create_stake_amount(frame: &mut Frame, state: &UiState) {
         Paragraph::new(Line::from(vec![
             Span::styled("> ", Style::default().fg(Color::Green)),
             Span::raw(&state.stk_amount_input),
-            Span::styled(" SOL", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!(" {}", state.stk_native_symbol), Style::default().fg(Color::DarkGray)),
             Span::styled("_", Style::default().fg(Color::Green)),
         ])),
         input_area,
@@ -316,7 +315,7 @@ fn render_create_stake_amount(frame: &mut Frame, state: &UiState) {
 
     frame.render_widget(
         Paragraph::new(Span::styled(
-            "输入质押数量 (SOL)  Enter 确认  Esc 返回",
+            format!("输入质押数量 ({})  Enter 确认  Esc 返回", state.stk_native_symbol),
             Style::default().fg(Color::DarkGray),
         )),
         hint_area,
@@ -374,223 +373,181 @@ fn render_confirm(frame: &mut Frame, state: &UiState, title: &str) {
 // ========== Vote 详情 ==========
 
 fn render_vote_detail(frame: &mut Frame, state: &UiState) {
-    let area = frame.area();
+    let area = centered_rect(80, 17, frame.area());
+    frame.render_widget(Clear, area);
 
-    let [header_area, main_area, footer_area] = Layout::vertical([
-        Constraint::Length(3),
+    let block = Block::default()
+        .title(" Vote 账户详情 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [info_area, menu_area, hint_area] = Layout::vertical([
+        Constraint::Length(7),
         Constraint::Fill(1),
-        Constraint::Length(3),
+        Constraint::Length(1),
     ])
-    .areas(area);
+    .areas(inner);
 
-    // Header
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " Vote 账户详情 ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" {}", state.stk_from_address),
-            Style::default().fg(Color::Gray),
-        ),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
-    frame.render_widget(header, header_area);
+    // 信息区（不可选）
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("  地址:        ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&state.stk_from_address, Style::default().fg(Color::Yellow)),
+    ]));
+    lines.push(Line::from(""));
 
-    // Main content
-    let mut items: Vec<ListItem> = Vec::new();
-
-    if let Some(info) = &state.stk_vote_info {
-        items.push(ListItem::new(Line::from(vec![
+    if let Some(ref err) = state.stk_fetch_error {
+        lines.push(Line::from(Span::styled(
+            format!("  错误: {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    } else if let Some(info) = &state.stk_vote_info {
+        lines.push(Line::from(vec![
             Span::styled("  Identity:    ", Style::default().fg(Color::DarkGray)),
             Span::styled(&info.validator_identity, Style::default().fg(Color::White)),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
+        ]));
+        lines.push(Line::from(vec![
             Span::styled("  Voter:       ", Style::default().fg(Color::DarkGray)),
             Span::styled(&info.authorized_voter, Style::default().fg(Color::White)),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
+        ]));
+        lines.push(Line::from(vec![
             Span::styled("  Withdrawer:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                &info.authorized_withdrawer,
-                Style::default().fg(Color::White),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
+            Span::styled(&info.authorized_withdrawer, Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(vec![
             Span::styled("  Commission:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{}%", info.commission),
-                Style::default().fg(Color::Green),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from("")));
-        // 操作菜单
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  [1] 修改 Voter 权限",
-            Style::default().fg(Color::Yellow),
-        ))));
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  [2] 修改 Withdrawer 权限",
-            Style::default().fg(Color::Yellow),
-        ))));
+            Span::styled(format!("{}%", info.commission), Style::default().fg(Color::Green)),
+        ]));
     } else {
-        items.push(ListItem::new(Span::styled(
-            "  加载中...",
-            Style::default().fg(Color::DarkGray),
-        )));
+        lines.push(Line::from(Span::styled("  加载中...", Style::default().fg(Color::DarkGray))));
     }
+    frame.render_widget(Paragraph::new(lines), info_area);
 
-    let list = List::new(items)
-        .block(Block::default().borders(Borders::NONE))
-        .highlight_style(
+    // 操作菜单（光标选择）
+    if state.stk_vote_info.is_some() {
+        let menu_items = vec![
+            ListItem::new(Span::styled("  修改 Voter 权限", Style::default().fg(Color::Yellow))),
+            ListItem::new(Span::styled("  修改 Withdrawer 权限", Style::default().fg(Color::Yellow))),
+            ListItem::new(Span::styled("  修改备注", Style::default().fg(Color::Yellow))),
+        ];
+        let menu = List::new(menu_items).highlight_style(
             Style::default()
                 .bg(Color::Indexed(236))
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         );
-    let mut list_state = ListState::default();
-    list_state.select(Some(state.stk_detail_selected));
-    frame.render_stateful_widget(list, main_area, &mut list_state);
+        let mut menu_state = ListState::default();
+        menu_state.select(Some(state.stk_detail_selected));
+        frame.render_stateful_widget(menu, menu_area, &mut menu_state);
+    }
 
-    // Footer
-    let footer = Paragraph::new(Span::styled(
-        " ↑↓ 选择  Enter 操作  r 刷新  Esc 返回",
-        Style::default().fg(Color::DarkGray),
-    ))
-    .block(
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray)),
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            " ↑↓ 选择  Enter 确认  r 刷新  Esc 返回",
+            Style::default().fg(Color::DarkGray),
+        )),
+        hint_area,
     );
-    frame.render_widget(footer, footer_area);
 }
 
 // ========== Stake 详情 ==========
 
 fn render_stake_detail(frame: &mut Frame, state: &UiState) {
-    let area = frame.area();
+    let area = centered_rect(80, 21, frame.area());
+    frame.render_widget(Clear, area);
 
-    let [header_area, main_area, footer_area] = Layout::vertical([
-        Constraint::Length(3),
+    let block = Block::default()
+        .title(" Stake 账户详情 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let symbol = &state.stk_native_symbol;
+
+    // 动态计算 info 行数
+    let has_delegate = state.stk_stake_info.as_ref().and_then(|i| i.delegated_vote_account.as_ref()).is_some();
+    let info_lines = if state.stk_fetch_error.is_some() { 3 } else if state.stk_stake_info.is_some() { if has_delegate { 8 } else { 7 } } else { 3 };
+
+    let [info_area, menu_area, hint_area] = Layout::vertical([
+        Constraint::Length(info_lines as u16),
         Constraint::Fill(1),
-        Constraint::Length(3),
+        Constraint::Length(1),
     ])
-    .areas(area);
+    .areas(inner);
 
-    // Header
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " Stake 账户详情 ",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" {}", state.stk_from_address),
-            Style::default().fg(Color::Gray),
-        ),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
-    frame.render_widget(header, header_area);
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("  地址:        ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&state.stk_from_address, Style::default().fg(Color::Yellow)),
+    ]));
+    lines.push(Line::from(""));
 
-    // Main content
-    let mut items: Vec<ListItem> = Vec::new();
-
-    if let Some(info) = &state.stk_stake_info {
-        items.push(ListItem::new(Line::from(vec![
+    if let Some(ref err) = state.stk_fetch_error {
+        lines.push(Line::from(Span::styled(
+            format!("  错误: {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    } else if let Some(info) = &state.stk_stake_info {
+        let bal_str = format_balance(info.stake_lamports as u128, 9);
+        lines.push(Line::from(vec![
             Span::styled("  状态:        ", Style::default().fg(Color::DarkGray)),
             Span::styled(&info.state, Style::default().fg(Color::White)),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
+        ]));
+        lines.push(Line::from(vec![
             Span::styled("  质押数量:    ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!(
-                    "{} SOL",
-                    crate::chain::format_balance(info.stake_lamports as u128, 9)
-                ),
-                Style::default().fg(Color::Green),
-            ),
-        ])));
+            Span::styled(format!("{bal_str} {symbol}"), Style::default().fg(Color::Green)),
+        ]));
         if let Some(vote) = &info.delegated_vote_account {
-            items.push(ListItem::new(Line::from(vec![
+            lines.push(Line::from(vec![
                 Span::styled("  委托 Vote:   ", Style::default().fg(Color::DarkGray)),
-                Span::styled(vote, Style::default().fg(Color::White)),
-            ])));
+                Span::styled(vote.as_str(), Style::default().fg(Color::White)),
+            ]));
         }
-        items.push(ListItem::new(Line::from(vec![
+        lines.push(Line::from(vec![
             Span::styled("  Staker:      ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                &info.authorized_staker,
-                Style::default().fg(Color::White),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from(vec![
+            Span::styled(&info.authorized_staker, Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(vec![
             Span::styled("  Withdrawer:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                &info.authorized_withdrawer,
-                Style::default().fg(Color::White),
-            ),
-        ])));
-        items.push(ListItem::new(Line::from("")));
-        // 操作菜单
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  [1] 修改 Staker 权限",
-            Style::default().fg(Color::Yellow),
-        ))));
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  [2] 修改 Withdrawer 权限",
-            Style::default().fg(Color::Yellow),
-        ))));
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  [3] 委托 (Delegate)",
-            Style::default().fg(Color::Yellow),
-        ))));
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  [4] 取消质押 (Deactivate)",
-            Style::default().fg(Color::Yellow),
-        ))));
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  [5] 提取 (Withdraw)",
-            Style::default().fg(Color::Yellow),
-        ))));
+            Span::styled(&info.authorized_withdrawer, Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(""));
     } else {
-        items.push(ListItem::new(Span::styled(
-            "  加载中...",
-            Style::default().fg(Color::DarkGray),
-        )));
+        lines.push(Line::from(Span::styled("  加载中...", Style::default().fg(Color::DarkGray))));
     }
+    frame.render_widget(Paragraph::new(lines), info_area);
 
-    let list = List::new(items)
-        .block(Block::default().borders(Borders::NONE))
-        .highlight_style(
+    // 操作菜单（光标选择）
+    if state.stk_stake_info.is_some() {
+        let menu_items = vec![
+            ListItem::new(Span::styled("  修改 Staker 权限", Style::default().fg(Color::Yellow))),
+            ListItem::new(Span::styled("  修改 Withdrawer 权限", Style::default().fg(Color::Yellow))),
+            ListItem::new(Span::styled("  委托 (Delegate)", Style::default().fg(Color::Yellow))),
+            ListItem::new(Span::styled("  取消质押 (Deactivate)", Style::default().fg(Color::Yellow))),
+            ListItem::new(Span::styled("  提取 (Withdraw)", Style::default().fg(Color::Yellow))),
+            ListItem::new(Span::styled("  修改备注", Style::default().fg(Color::Yellow))),
+        ];
+        let menu = List::new(menu_items).highlight_style(
             Style::default()
                 .bg(Color::Indexed(236))
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         );
-    let mut list_state = ListState::default();
-    list_state.select(Some(state.stk_detail_selected));
-    frame.render_stateful_widget(list, main_area, &mut list_state);
+        let mut menu_state = ListState::default();
+        menu_state.select(Some(state.stk_detail_selected));
+        frame.render_stateful_widget(menu, menu_area, &mut menu_state);
+    }
 
-    // Footer
-    let footer = Paragraph::new(Span::styled(
-        " ↑↓ 选择  Enter 操作  r 刷新  Esc 返回",
-        Style::default().fg(Color::DarkGray),
-    ))
-    .block(
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray)),
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            " ↑↓ 选择  Enter 确认  r 刷新  Esc 返回",
+            Style::default().fg(Color::DarkGray),
+        )),
+        hint_area,
     );
-    frame.render_widget(footer, footer_area);
 }
 
 // ========== 权限修改输入 ==========

@@ -20,6 +20,7 @@ pub fn build_placeholder_cache(config: &AppConfig, store: &WalletStore) -> Balan
             address: address.clone(),
             chains: Vec::new(),
             account_owner: None,
+            account_owner_chain_id: None,
         };
         for evm_config in &config.chains.ethereum {
             portfolio.chains.push(ChainBalance {
@@ -41,6 +42,7 @@ pub fn build_placeholder_cache(config: &AppConfig, store: &WalletStore) -> Balan
             address: address.clone(),
             chains: Vec::new(),
             account_owner: None,
+            account_owner_chain_id: None,
         };
         for sol_config in &config.chains.solana {
             portfolio.chains.push(ChainBalance {
@@ -63,6 +65,7 @@ pub fn build_placeholder_cache(config: &AppConfig, store: &WalletStore) -> Balan
             address: address.clone(),
             chains: Vec::new(),
             account_owner: None,
+            account_owner_chain_id: None,
         };
         if let Some(sol_config) = config.chains.solana.iter().find(|c| c.id == *chain_id) {
             portfolio.chains.push(ChainBalance {
@@ -240,17 +243,20 @@ pub async fn fetch_all_balances(config: &AppConfig, store: &WalletStore) -> Bala
     let mut cache: BalanceCache = HashMap::new();
     for batch in results.into_iter().flatten() {
         for (addr, balance, owner) in batch {
+            let chain_id = balance.chain_id.clone();
             let portfolio = cache
                 .entry(addr.clone())
                 .or_insert_with(|| AddressPortfolio {
                     address: addr,
                     chains: Vec::new(),
                     account_owner: None,
+                    account_owner_chain_id: None,
                 });
             portfolio.chains.push(balance);
             // 设置 account_owner（取第一个非 None 的值）
             if owner.is_some() && portfolio.account_owner.is_none() {
                 portfolio.account_owner = owner;
+                portfolio.account_owner_chain_id = Some(chain_id);
             }
         }
     }
