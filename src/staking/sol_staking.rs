@@ -255,11 +255,13 @@ pub async fn create_stake_account(
     );
 
     // 指令2: Stake Initialize (index 0)
-    // data: [0,0,0,0] + staker(32) + withdrawer(32)
-    // staker 和 withdrawer 设为 stake account 自己
-    let mut init_data = vec![0u8, 0, 0, 0]; // instruction index 0
+    // data: [0,0,0,0] + Authorized{staker(32)+withdrawer(32)} + Lockup{timestamp(8)+epoch(8)+custodian(32)}
+    let mut init_data = vec![0u8, 0, 0, 0]; // instruction index 0 = Initialize
     init_data.extend_from_slice(&stake_pubkey); // staker = stake account
     init_data.extend_from_slice(&stake_pubkey); // withdrawer = stake account
+    init_data.extend_from_slice(&0i64.to_le_bytes()); // lockup.unix_timestamp = 0
+    init_data.extend_from_slice(&0u64.to_le_bytes()); // lockup.epoch = 0
+    init_data.extend_from_slice(&[0u8; 32]); // lockup.custodian = default (no lockup)
 
     let rent_sysvar = decode_pubkey(SYSVAR_RENT)?;
 
