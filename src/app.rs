@@ -3050,20 +3050,22 @@ impl App {
                     self.ui.set_status("请输入种子私钥");
                     return;
                 }
-                // 验证 base58 解码后为 32 字节
+                // 验证 base58 解码后为 64 字节（keypair）或 32 字节（纯私钥）
                 match bs58::decode(&seed).into_vec() {
-                    Ok(bytes) if bytes.len() == 32 => {
-                        // 显示该种子对应的多签 PDA 地址
-                        let seed_bytes: [u8; 32] = bytes.try_into().unwrap();
+                    Ok(bytes) if bytes.len() == 64 || bytes.len() == 32 => {
+                        // 取前 32 字节作为私钥
+                        let seed_bytes: [u8; 32] = bytes[..32].try_into().unwrap();
                         let keypair = solana_sdk::signer::keypair::Keypair::new_from_array(seed_bytes);
                         let create_key_pubkey = solana_sdk::signer::Signer::pubkey(&keypair);
                         let (multisig_pda, _) = crate::multisig::derive_multisig_pda(&create_key_pubkey);
                         self.ui.set_status(format!("对应多签地址: {multisig_pda}"));
+                        // 统一存储前 32 字节私钥的 base58
+                        self.ui.ms_create_seed_input = bs58::encode(&bytes[..32]).into_string();
                         self.ui.ms_step = MultisigStep::CreateSelectCreator;
                     }
                     Ok(bytes) => {
                         self.ui.set_status(format!(
-                            "种子私钥长度错误: {} 字节（需要 32 字节）",
+                            "私钥长度错误: {} 字节（需要 64 或 32 字节）",
                             bytes.len()
                         ));
                     }

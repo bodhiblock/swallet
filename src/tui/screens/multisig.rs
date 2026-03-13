@@ -1077,7 +1077,7 @@ fn render_create_input_seed(
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  请输入种子私钥（base58 编码，32 字节）:",
+            "  请输入种子私钥（base58 编码，64 或 32 字节）:",
             Style::default().fg(Color::Yellow),
         )),
         Line::from(""),
