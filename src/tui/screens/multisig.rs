@@ -564,11 +564,22 @@ fn render_select_proposal_type(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let [list_area, footer_area] = Layout::vertical([
+    let [vault_area, _, list_area, footer_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
         Constraint::Fill(1),
         Constraint::Length(1),
     ])
     .areas(inner);
+
+    let vault_label = format_vault_label(state);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" Vault: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(vault_label, Style::default().fg(Color::Yellow)),
+        ])),
+        vault_area,
+    );
 
     let types = ProposalType::for_chain(&state.ms_selected_chain_id);
     let items: Vec<ListItem> = types
@@ -736,10 +747,12 @@ fn render_select_program_instruction(frame: &mut Frame, area: ratatui::layout::R
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let status_height = if state.status_message.is_some() { 2 } else { 0 };
+    let status_line_count = state.status_message.as_ref()
+        .map(|m| m.split('\n').count().max(1) as u16 + 1)
+        .unwrap_or(0);
     let [list_area, status_area, footer_area] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(status_height),
+        Constraint::Length(status_line_count),
         Constraint::Length(1),
     ])
     .areas(inner);
@@ -775,11 +788,10 @@ fn render_select_program_instruction(frame: &mut Frame, area: ratatui::layout::R
     frame.render_stateful_widget(list, list_area, &mut list_state);
 
     if let Some(ref msg) = state.status_message {
-        let status = Paragraph::new(Line::from(Span::styled(
-            format!("  {msg}"),
-            Style::default().fg(Color::Red),
-        )));
-        frame.render_widget(status, status_area);
+        let lines: Vec<Line> = msg.split('\n')
+            .map(|line| Line::from(Span::styled(format!("  {line}"), Style::default().fg(Color::Red))))
+            .collect();
+        frame.render_widget(Paragraph::new(lines), status_area);
     }
 
     let footer = Paragraph::new(Line::from(Span::styled(

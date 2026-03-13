@@ -4206,8 +4206,8 @@ async fn verify_upgrade_authority(
 
     if authority != *vault_pda {
         return Err(format!(
-            "程序的 upgrade authority ({}) 不是当前多签 vault ({})",
-            authority, vault_pda
+            "upgrade authority 不匹配\n当前 vault: {}\n链上 authority: {}",
+            vault_pda, authority
         ));
     }
 
