@@ -341,6 +341,53 @@ pub async fn vote_authorize(
     sign_and_send(client, rpc_url, &keypair, &[ix]).await
 }
 
+// ========== Vote Withdraw ==========
+
+/// 从 Vote 账户提取
+pub async fn vote_withdraw(
+    client: &Client,
+    rpc_url: &str,
+    private_key: &[u8],
+    to_address: &str,
+    amount_sol: &str,
+) -> Result<String, String> {
+    let keypair = keypair_from_private_key(private_key)?;
+    let vote_pubkey = keypair.pubkey().to_bytes();
+    let to_pubkey = decode_pubkey(to_address)?;
+    let vote_program = decode_pubkey(VOTE_PROGRAM_STR)?;
+
+    let amount_lamports = parse_sol_amount(amount_sol)?;
+
+    // Vote Withdraw (index 3)
+    // data: [3,0,0,0] + lamports(8)
+    let mut data = vec![3u8, 0, 0, 0];
+    data.extend_from_slice(&amount_lamports.to_le_bytes());
+
+    let ix = Instruction {
+        program_id: vote_program,
+        accounts: vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: to_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: vote_pubkey, // authorized withdrawer = self
+                is_signer: true,
+                is_writable: false,
+            },
+        ],
+        data,
+    };
+
+    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+}
+
 // ========== Stake Authorize ==========
 
 /// 修改 Stake 账户权限

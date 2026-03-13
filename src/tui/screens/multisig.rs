@@ -51,6 +51,15 @@ pub fn render(
         MultisigStep::SelectProgram => render_select_program(frame, center, state),
         MultisigStep::SelectProgramInstruction => render_select_program_instruction(frame, center, state),
         MultisigStep::InputProgramArgs => render_input_program_args(frame, center, state),
+        MultisigStep::SelectVoteStakeOp => render_select_vote_stake_op(frame, center, state),
+        MultisigStep::InputVoteStakeTarget => render_input_vote_stake_field(frame, center, state, "目标账户地址", &state.ms_vs_target.clone()),
+        MultisigStep::InputVoteStakeParam => {
+            let op = state.ms_vs_ops.get(state.ms_vs_op_selected);
+            let label = op.map(|o| o.param_label()).unwrap_or("参数");
+            let val = state.ms_vs_param.clone();
+            render_input_vote_stake_field(frame, center, state, label, &val);
+        }
+        MultisigStep::InputVoteStakeAmount => render_input_vote_stake_field(frame, center, state, "提取数量 (SOL)", &state.ms_vs_amount.clone()),
         MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => render_confirm(frame, center, state),
         MultisigStep::Submitting => render_submitting(frame, center, state),
         MultisigStep::Result => render_result(frame, center, state),
@@ -1383,6 +1392,106 @@ fn format_vault_label(state: &UiState) -> String {
     } else {
         format!("#{idx} {addr}")
     }
+}
+
+// ========== Vote/Stake 管理提案 ==========
+
+fn render_select_vote_stake_op(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+) {
+    let vault_label = format_vault_label(state);
+    let is_vote = state.ms_vs_ops.first().is_some_and(|o| matches!(
+        o,
+        crate::multisig::MsVoteStakeOp::VoteAuthorizeVoter | crate::multisig::MsVoteStakeOp::VoteAuthorizeWithdrawer
+    ));
+    let title = if is_vote { " Vote 账户管理 " } else { " Stake 账户管理 " };
+
+    let block = Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [vault_area, _, list_area, footer_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" Vault: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(vault_label, Style::default().fg(Color::Yellow)),
+        ])),
+        vault_area,
+    );
+
+    let items: Vec<ListItem> = state
+        .ms_vs_ops
+        .iter()
+        .map(|op| ListItem::new(Span::styled(format!("  {}", op.label()), Style::default().fg(Color::White))))
+        .collect();
+
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(Color::Indexed(236))
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.ms_vs_op_selected));
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(" ↑↓选择  Enter确认  Esc返回", Style::default().fg(Color::DarkGray))),
+        footer_area,
+    );
+}
+
+fn render_input_vote_stake_field(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+    field_name: &str,
+    field_value: &str,
+) {
+    let vault_label = format_vault_label(state);
+    let op_label = state.ms_vs_ops.get(state.ms_vs_op_selected).map(|o| o.label()).unwrap_or("");
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" Vault: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(vault_label, Style::default().fg(Color::Yellow)),
+            Span::styled(format!("  操作: {op_label}"), Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(" {field_name}:"),
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            format!(" > {field_value}"),
+            Style::default().fg(Color::Yellow),
+        )),
+    ];
+
+    append_status(&mut lines, state);
+    append_hint(&mut lines, " Enter确认  Esc返回");
+
+    let block = Block::default()
+        .title(" 创建提案 - Vote/Stake 管理 ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn shorten_rpc(url: &str) -> String {

@@ -25,7 +25,7 @@ pub fn render(frame: &mut Frame, state: &UiState) {
         }
         StakingStep::StakeDelegateInput => render_delegate_input(frame, state),
         StakingStep::StakeDeactivateConfirm => render_confirm(frame, state, "取消质押"),
-        StakingStep::StakeWithdrawInput => render_withdraw_input(frame, state),
+        StakingStep::VoteWithdrawInput | StakingStep::StakeWithdrawInput => render_withdraw_input(frame, state),
         StakingStep::Confirm => render_confirm(frame, state, "确认操作"),
         StakingStep::Submitting => render_submitting(frame),
         StakingStep::Result => render_result(frame, state),
@@ -373,7 +373,7 @@ fn render_confirm(frame: &mut Frame, state: &UiState, title: &str) {
 // ========== Vote 详情 ==========
 
 fn render_vote_detail(frame: &mut Frame, state: &UiState) {
-    let area = centered_rect(80, 17, frame.area());
+    let area = centered_rect(80, 19, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -384,7 +384,7 @@ fn render_vote_detail(frame: &mut Frame, state: &UiState) {
     frame.render_widget(block, area);
 
     let [info_area, menu_area, hint_area] = Layout::vertical([
-        Constraint::Length(7),
+        Constraint::Length(8),
         Constraint::Fill(1),
         Constraint::Length(1),
     ])
@@ -420,6 +420,17 @@ fn render_vote_detail(frame: &mut Frame, state: &UiState) {
             Span::styled("  Commission:  ", Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{}%", info.commission), Style::default().fg(Color::Green)),
         ]));
+        // Credits
+        if let Some(&(epoch, credits, prev_credits)) = info.epoch_credits.last() {
+            let current_credits = credits - prev_credits;
+            lines.push(Line::from(vec![
+                Span::styled("  Credits:     ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("Epoch {} +{} (累计 {})", epoch, current_credits, credits),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
+        }
     } else {
         lines.push(Line::from(Span::styled("  加载中...", Style::default().fg(Color::DarkGray))));
     }
@@ -430,6 +441,7 @@ fn render_vote_detail(frame: &mut Frame, state: &UiState) {
         let menu_items = vec![
             ListItem::new(Span::styled("  修改 Voter 权限", Style::default().fg(Color::Yellow))),
             ListItem::new(Span::styled("  修改 Withdrawer 权限", Style::default().fg(Color::Yellow))),
+            ListItem::new(Span::styled("  提取 (Withdraw)", Style::default().fg(Color::Yellow))),
             ListItem::new(Span::styled("  修改备注", Style::default().fg(Color::Yellow))),
         ];
         let menu = List::new(menu_items).highlight_style(

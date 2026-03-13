@@ -118,6 +118,10 @@ pub enum ProposalType {
     ProgramUpgrade,
     /// 调用预制程序指令
     ProgramCall,
+    /// Vote 账户管理（vault 作为 voter/withdrawer 权限）
+    VoteManage,
+    /// Stake 账户管理（vault 作为 staker/withdrawer 权限）
+    StakeManage,
 }
 
 impl ProposalType {
@@ -127,16 +131,90 @@ impl ProposalType {
             Self::TokenTransfer => "代币转账",
             Self::ProgramUpgrade => "升级程序",
             Self::ProgramCall => "调用程序",
+            Self::VoteManage => "Vote 账户管理",
+            Self::StakeManage => "Stake 账户管理",
         }
     }
 
     /// 根据链过滤可用提案类型（无预制程序时隐藏 ProgramCall）
     pub fn for_chain(chain_id: &str) -> Vec<Self> {
-        let mut types = vec![Self::SolTransfer, Self::TokenTransfer, Self::ProgramUpgrade];
+        let mut types = vec![
+            Self::SolTransfer,
+            Self::TokenTransfer,
+            Self::ProgramUpgrade,
+            Self::VoteManage,
+            Self::StakeManage,
+        ];
         if !presets::programs_for_chain(chain_id).is_empty() {
             types.push(Self::ProgramCall);
         }
         types
+    }
+}
+
+/// Vote/Stake 多签提案操作类型
+#[derive(Debug, Clone, PartialEq)]
+pub enum MsVoteStakeOp {
+    VoteAuthorizeVoter,
+    VoteAuthorizeWithdrawer,
+    VoteWithdraw,
+    StakeAuthorizeStaker,
+    StakeAuthorizeWithdrawer,
+    StakeDelegate,
+    StakeDeactivate,
+    StakeWithdraw,
+}
+
+impl MsVoteStakeOp {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::VoteAuthorizeVoter => "修改 Voter 权限",
+            Self::VoteAuthorizeWithdrawer => "修改 Withdrawer 权限",
+            Self::VoteWithdraw => "提取 (Withdraw)",
+            Self::StakeAuthorizeStaker => "修改 Staker 权限",
+            Self::StakeAuthorizeWithdrawer => "修改 Withdrawer 权限",
+            Self::StakeDelegate => "委托 (Delegate)",
+            Self::StakeDeactivate => "取消质押 (Deactivate)",
+            Self::StakeWithdraw => "提取 (Withdraw)",
+        }
+    }
+
+    pub fn vote_ops() -> Vec<Self> {
+        vec![Self::VoteAuthorizeVoter, Self::VoteAuthorizeWithdrawer, Self::VoteWithdraw]
+    }
+
+    pub fn stake_ops() -> Vec<Self> {
+        vec![
+            Self::StakeAuthorizeStaker,
+            Self::StakeAuthorizeWithdrawer,
+            Self::StakeDelegate,
+            Self::StakeDeactivate,
+            Self::StakeWithdraw,
+        ]
+    }
+
+    /// 是否需要输入第二个参数（new authority / vote account / to address）
+    pub fn needs_param(&self) -> bool {
+        !matches!(self, Self::StakeDeactivate)
+    }
+
+    /// 第二个参数的提示文字
+    pub fn param_label(&self) -> &str {
+        match self {
+            Self::VoteAuthorizeVoter => "新 Voter 地址",
+            Self::VoteAuthorizeWithdrawer => "新 Withdrawer 地址",
+            Self::VoteWithdraw => "提取到地址",
+            Self::StakeAuthorizeStaker => "新 Staker 地址",
+            Self::StakeAuthorizeWithdrawer => "新 Withdrawer 地址",
+            Self::StakeDelegate => "Vote 账户地址",
+            Self::StakeWithdraw => "提取到地址",
+            Self::StakeDeactivate => "",
+        }
+    }
+
+    /// 是否需要输入金额
+    pub fn needs_amount(&self) -> bool {
+        matches!(self, Self::VoteWithdraw | Self::StakeWithdraw)
     }
 }
 

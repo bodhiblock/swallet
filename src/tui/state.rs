@@ -185,6 +185,15 @@ pub enum MultisigStep {
     SelectProgramInstruction,
     /// 输入预制指令参数（逐个）
     InputProgramArgs,
+    // ---- Vote/Stake 管理提案流程 ----
+    /// 选择 Vote/Stake 操作类型
+    SelectVoteStakeOp,
+    /// 输入目标 Vote/Stake 账户地址
+    InputVoteStakeTarget,
+    /// 输入参数（new authority / vote account / to address）
+    InputVoteStakeParam,
+    /// 输入金额（仅 Withdraw）
+    InputVoteStakeAmount,
     /// 确认创建提案（输入密码）
     ConfirmCreate,
     /// 确认投票（输入密码）
@@ -241,6 +250,7 @@ pub enum StakingStep {
     // Vote Account 详情
     VoteDetail,
     VoteAuthorize,
+    VoteWithdrawInput,
     // Stake Account 详情
     StakeDetail,
     StakeAuthorize,
@@ -264,6 +274,7 @@ pub enum StakingCreateType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StakingOp {
     VoteAuthorize,
+    VoteWithdraw,
     StakeAuthorize,
     StakeDelegate,
     StakeWithdraw,
@@ -407,6 +418,12 @@ pub struct UiState {
     pub ms_confirm_password: String,
     pub ms_vote_action: Option<VoteAction>,
     pub ms_result: Option<(bool, String)>,
+    // Vote/Stake 管理提案
+    pub ms_vs_ops: Vec<crate::multisig::MsVoteStakeOp>,
+    pub ms_vs_op_selected: usize,
+    pub ms_vs_target: String,    // 目标 vote/stake 账户地址
+    pub ms_vs_param: String,     // 参数（new authority / vote account / to address）
+    pub ms_vs_amount: String,    // 金额（仅 withdraw）
     // 创建多签流程
     pub ms_create_use_seed: bool,           // 是否使用种子模式
     pub ms_create_seed_input: String,       // 种子私钥输入（base58）
@@ -540,6 +557,11 @@ impl UiState {
             ms_confirm_password: String::new(),
             ms_vote_action: None,
             ms_result: None,
+            ms_vs_ops: Vec::new(),
+            ms_vs_op_selected: 0,
+            ms_vs_target: String::new(),
+            ms_vs_param: String::new(),
+            ms_vs_amount: String::new(),
             ms_create_use_seed: false,
             ms_create_seed_input: String::new(),
             ms_create_sol_addresses: Vec::new(),

@@ -365,6 +365,176 @@ pub fn build_program_upgrade_instructions(
     vec![upgrade_ix, close_ix]
 }
 
+// ========== Vote/Stake 管理指令 ==========
+
+pub fn decode_bs58_pubkey(s: &str) -> Option<[u8; 32]> {
+    bs58::decode(s)
+        .into_vec()
+        .ok()
+        .and_then(|v| v.try_into().ok())
+}
+
+fn decode_bs58_pubkey_or_default(s: &str) -> [u8; 32] {
+    decode_bs58_pubkey(s).unwrap_or([0u8; 32])
+}
+
+const VOTE_PROGRAM: &str = "Vote111111111111111111111111111111111111111";
+const STAKE_PROGRAM: &str = "Stake11111111111111111111111111111111111111";
+const CLOCK_SYSVAR: &str = "SysvarC1ock11111111111111111111111111111111";
+const STAKE_HISTORY_SYSVAR: &str = "SysvarStakeHistory1111111111111111111111111";
+const STAKE_CONFIG: &str = "StakeConfig11111111111111111111111111111111";
+
+/// Vote Authorize: 修改 voter 或 withdrawer 权限
+/// authorize_type: 0=Voter, 1=Withdrawer
+pub fn build_vote_authorize_instruction(
+    vote_account: &[u8; 32],
+    vault_pubkey: &[u8; 32], // 当前权限持有者
+    new_authority: &[u8; 32],
+    authorize_type: u32,
+) -> VaultInstruction {
+    let vote_program = decode_bs58_pubkey_or_default(VOTE_PROGRAM);
+    let clock_sysvar = decode_bs58_pubkey_or_default(CLOCK_SYSVAR);
+
+    // data: [1,0,0,0] + new_authority(32) + authorize_type(4)
+    let mut data = vec![1, 0, 0, 0];
+    data.extend_from_slice(new_authority);
+    data.extend_from_slice(&authorize_type.to_le_bytes());
+
+    VaultInstruction {
+        program_id: vote_program,
+        accounts: vec![
+            VaultAccountMeta { pubkey: *vote_account, is_signer: false, is_writable: true },
+            VaultAccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: *vault_pubkey, is_signer: true, is_writable: false },
+        ],
+        data,
+    }
+}
+
+/// Vote Withdraw: 从 Vote 账户提取
+pub fn build_vote_withdraw_instruction(
+    vote_account: &[u8; 32],
+    to_pubkey: &[u8; 32],
+    vault_pubkey: &[u8; 32], // authorized withdrawer
+    lamports: u64,
+) -> VaultInstruction {
+    let vote_program = decode_bs58_pubkey_or_default(VOTE_PROGRAM);
+
+    // Vote Withdraw (index 3)
+    // data: [3,0,0,0] + lamports(8)
+    let mut data = vec![3, 0, 0, 0];
+    data.extend_from_slice(&lamports.to_le_bytes());
+
+    VaultInstruction {
+        program_id: vote_program,
+        accounts: vec![
+            VaultAccountMeta { pubkey: *vote_account, is_signer: false, is_writable: true },
+            VaultAccountMeta { pubkey: *to_pubkey, is_signer: false, is_writable: true },
+            VaultAccountMeta { pubkey: *vault_pubkey, is_signer: true, is_writable: false },
+        ],
+        data,
+    }
+}
+
+/// Stake Authorize: 修改 staker 或 withdrawer 权限
+/// authorize_type: 0=Staker, 1=Withdrawer
+pub fn build_stake_authorize_instruction(
+    stake_account: &[u8; 32],
+    vault_pubkey: &[u8; 32], // 当前权限持有者
+    new_authority: &[u8; 32],
+    authorize_type: u32,
+) -> VaultInstruction {
+    let stake_program = decode_bs58_pubkey_or_default(STAKE_PROGRAM);
+    let clock_sysvar = decode_bs58_pubkey_or_default(CLOCK_SYSVAR);
+
+    // data: [1,0,0,0] + new_authority(32) + stake_authorize_type(4)
+    let mut data = vec![1, 0, 0, 0];
+    data.extend_from_slice(new_authority);
+    data.extend_from_slice(&authorize_type.to_le_bytes());
+
+    VaultInstruction {
+        program_id: stake_program,
+        accounts: vec![
+            VaultAccountMeta { pubkey: *stake_account, is_signer: false, is_writable: true },
+            VaultAccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: *vault_pubkey, is_signer: true, is_writable: false },
+        ],
+        data,
+    }
+}
+
+/// Stake Delegate: 委托 stake 账户到 vote 账户
+pub fn build_stake_delegate_instruction(
+    stake_account: &[u8; 32],
+    vote_account: &[u8; 32],
+    vault_pubkey: &[u8; 32], // staker 权限
+) -> VaultInstruction {
+    let stake_program = decode_bs58_pubkey_or_default(STAKE_PROGRAM);
+    let clock_sysvar = decode_bs58_pubkey_or_default(CLOCK_SYSVAR);
+    let stake_history = decode_bs58_pubkey_or_default(STAKE_HISTORY_SYSVAR);
+    let stake_config = decode_bs58_pubkey_or_default(STAKE_CONFIG);
+
+    VaultInstruction {
+        program_id: stake_program,
+        accounts: vec![
+            VaultAccountMeta { pubkey: *stake_account, is_signer: false, is_writable: true },
+            VaultAccountMeta { pubkey: *vote_account, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: stake_history, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: stake_config, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: *vault_pubkey, is_signer: true, is_writable: false },
+        ],
+        data: vec![2, 0, 0, 0], // Delegate instruction index
+    }
+}
+
+/// Stake Deactivate: 取消质押
+pub fn build_stake_deactivate_instruction(
+    stake_account: &[u8; 32],
+    vault_pubkey: &[u8; 32], // staker 权限
+) -> VaultInstruction {
+    let stake_program = decode_bs58_pubkey_or_default(STAKE_PROGRAM);
+    let clock_sysvar = decode_bs58_pubkey_or_default(CLOCK_SYSVAR);
+
+    VaultInstruction {
+        program_id: stake_program,
+        accounts: vec![
+            VaultAccountMeta { pubkey: *stake_account, is_signer: false, is_writable: true },
+            VaultAccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: *vault_pubkey, is_signer: true, is_writable: false },
+        ],
+        data: vec![5, 0, 0, 0], // Deactivate instruction index
+    }
+}
+
+/// Stake Withdraw: 从 stake 账户提取
+pub fn build_stake_withdraw_instruction(
+    stake_account: &[u8; 32],
+    to_pubkey: &[u8; 32],
+    vault_pubkey: &[u8; 32], // withdrawer 权限
+    lamports: u64,
+) -> VaultInstruction {
+    let stake_program = decode_bs58_pubkey_or_default(STAKE_PROGRAM);
+    let clock_sysvar = decode_bs58_pubkey_or_default(CLOCK_SYSVAR);
+    let stake_history = decode_bs58_pubkey_or_default(STAKE_HISTORY_SYSVAR);
+
+    // data: [4,0,0,0] + lamports(8)
+    let mut data = vec![4, 0, 0, 0];
+    data.extend_from_slice(&lamports.to_le_bytes());
+
+    VaultInstruction {
+        program_id: stake_program,
+        accounts: vec![
+            VaultAccountMeta { pubkey: *stake_account, is_signer: false, is_writable: true },
+            VaultAccountMeta { pubkey: *to_pubkey, is_signer: false, is_writable: true },
+            VaultAccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: stake_history, is_signer: false, is_writable: false },
+            VaultAccountMeta { pubkey: *vault_pubkey, is_signer: true, is_writable: false },
+        ],
+        data,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

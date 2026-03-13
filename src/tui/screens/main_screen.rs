@@ -255,8 +255,8 @@ fn append_balance_spans<'a>(
             && let Some(owner_chain) = &portfolio.account_owner_chain_id
                 && *owner_chain == chain_bal.chain_id {
                     match owner.as_str() {
-                        VOTE_PROGRAM => spans.push(Span::styled("[Vote]", Style::default().fg(Color::Cyan))),
-                        STAKE_PROGRAM => spans.push(Span::styled("[Stake]", Style::default().fg(Color::Green))),
+                        VOTE_PROGRAM => spans.push(Span::styled("[Vote]", Style::default().fg(Color::Indexed(208)))),
+                        STAKE_PROGRAM => spans.push(Span::styled("[Stake]", Style::default().fg(Color::Indexed(208)))),
                         _ => {}
                     }
                 }

@@ -2079,6 +2079,10 @@ impl App {
             MultisigStep::SelectProgram => self.handle_ms_select_program_key(key),
             MultisigStep::SelectProgramInstruction => self.handle_ms_select_program_instruction_key(key),
             MultisigStep::InputProgramArgs => self.handle_ms_input_program_args_key(key),
+            MultisigStep::SelectVoteStakeOp => self.handle_ms_select_vote_stake_op_key(key),
+            MultisigStep::InputVoteStakeTarget => self.handle_ms_text_input_key(key, MsInputField::VsTarget),
+            MultisigStep::InputVoteStakeParam => self.handle_ms_text_input_key(key, MsInputField::VsParam),
+            MultisigStep::InputVoteStakeAmount => self.handle_ms_text_input_key(key, MsInputField::VsAmount),
             MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => {
                 self.handle_ms_confirm_key(key);
             }
@@ -2325,6 +2329,22 @@ impl App {
                         self.ui.ms_preset_program_selected = 0;
                         self.ui.ms_step = MultisigStep::SelectProgram;
                     }
+                    Some(ProposalType::VoteManage) => {
+                        self.ui.ms_vs_ops = multisig::MsVoteStakeOp::vote_ops();
+                        self.ui.ms_vs_op_selected = 0;
+                        self.ui.ms_vs_target.clear();
+                        self.ui.ms_vs_param.clear();
+                        self.ui.ms_vs_amount.clear();
+                        self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
+                    }
+                    Some(ProposalType::StakeManage) => {
+                        self.ui.ms_vs_ops = multisig::MsVoteStakeOp::stake_ops();
+                        self.ui.ms_vs_op_selected = 0;
+                        self.ui.ms_vs_target.clear();
+                        self.ui.ms_vs_param.clear();
+                        self.ui.ms_vs_amount.clear();
+                        self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
+                    }
                     _ => {
                         self.ui.ms_transfer_to.clear();
                         self.ui.ms_transfer_amount.clear();
@@ -2336,6 +2356,34 @@ impl App {
             }
             KeyCode::Esc => {
                 self.ui.ms_step = MultisigStep::ViewDetail;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_select_vote_stake_op_key(&mut self, key: KeyEvent) {
+        let ops_len = self.ui.ms_vs_ops.len();
+        match key.code {
+            KeyCode::Up => {
+                if self.ui.ms_vs_op_selected > 0 {
+                    self.ui.ms_vs_op_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.ui.ms_vs_op_selected + 1 < ops_len {
+                    self.ui.ms_vs_op_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                self.ui.ms_vs_target.clear();
+                self.ui.ms_vs_param.clear();
+                self.ui.ms_vs_amount.clear();
+                self.ui.ms_step = MultisigStep::InputVoteStakeTarget;
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::SelectProposalType;
                 self.ui.clear_status();
             }
             _ => {}
@@ -2542,6 +2590,9 @@ impl App {
                     MsInputField::TransferAmount => self.ui.ms_transfer_amount.push(c),
                     MsInputField::UpgradeProgram => self.ui.ms_upgrade_program.push(c),
                     MsInputField::UpgradeBuffer => self.ui.ms_upgrade_buffer.push(c),
+                    MsInputField::VsTarget => self.ui.ms_vs_target.push(c),
+                    MsInputField::VsParam => self.ui.ms_vs_param.push(c),
+                    MsInputField::VsAmount => self.ui.ms_vs_amount.push(c),
                 }
             }
             KeyCode::Backspace => {
@@ -2551,6 +2602,9 @@ impl App {
                     MsInputField::TransferAmount => { self.ui.ms_transfer_amount.pop(); }
                     MsInputField::UpgradeProgram => { self.ui.ms_upgrade_program.pop(); }
                     MsInputField::UpgradeBuffer => { self.ui.ms_upgrade_buffer.pop(); }
+                    MsInputField::VsTarget => { self.ui.ms_vs_target.pop(); }
+                    MsInputField::VsParam => { self.ui.ms_vs_param.pop(); }
+                    MsInputField::VsAmount => { self.ui.ms_vs_amount.pop(); }
                 }
             }
             KeyCode::Enter => {
@@ -2614,6 +2668,70 @@ impl App {
                         self.ui.ms_step = MultisigStep::ConfirmCreate;
                         self.ui.clear_status();
                     }
+                    MsInputField::VsTarget => {
+                        if self.ui.ms_vs_target.is_empty() {
+                            self.ui.set_status("地址不能为空");
+                            return;
+                        }
+                        if bs58::decode(&self.ui.ms_vs_target)
+                            .into_vec()
+                            .map(|v| v.len() != 32)
+                            .unwrap_or(true)
+                        {
+                            self.ui.set_status("无效的 Solana 地址");
+                            return;
+                        }
+                        let op = self.ui.ms_vs_ops.get(self.ui.ms_vs_op_selected).cloned();
+                        match op {
+                            Some(ref o) if o.needs_param() => {
+                                self.ui.ms_step = MultisigStep::InputVoteStakeParam;
+                            }
+                            Some(ref o) if o.needs_amount() => {
+                                self.ui.ms_step = MultisigStep::InputVoteStakeAmount;
+                            }
+                            _ => {
+                                // StakeDeactivate: 只需 target，直接确认
+                                self.ui.ms_confirm_password.clear();
+                                self.ui.ms_step = MultisigStep::ConfirmCreate;
+                            }
+                        }
+                        self.ui.clear_status();
+                    }
+                    MsInputField::VsParam => {
+                        if self.ui.ms_vs_param.is_empty() {
+                            self.ui.set_status("参数不能为空");
+                            return;
+                        }
+                        if bs58::decode(&self.ui.ms_vs_param)
+                            .into_vec()
+                            .map(|v| v.len() != 32)
+                            .unwrap_or(true)
+                        {
+                            self.ui.set_status("无效的 Solana 地址");
+                            return;
+                        }
+                        let op = self.ui.ms_vs_ops.get(self.ui.ms_vs_op_selected).cloned();
+                        if op.as_ref().is_some_and(|o| o.needs_amount()) {
+                            self.ui.ms_step = MultisigStep::InputVoteStakeAmount;
+                        } else {
+                            self.ui.ms_confirm_password.clear();
+                            self.ui.ms_step = MultisigStep::ConfirmCreate;
+                        }
+                        self.ui.clear_status();
+                    }
+                    MsInputField::VsAmount => {
+                        if self.ui.ms_vs_amount.is_empty() {
+                            self.ui.set_status("数量不能为空");
+                            return;
+                        }
+                        if let Err(e) = crate::transfer::parse_amount(&self.ui.ms_vs_amount, 9) {
+                            self.ui.set_status(e);
+                            return;
+                        }
+                        self.ui.ms_confirm_password.clear();
+                        self.ui.ms_step = MultisigStep::ConfirmCreate;
+                        self.ui.clear_status();
+                    }
                 }
             }
             KeyCode::Esc => {
@@ -2630,6 +2748,15 @@ impl App {
                     }
                     MsInputField::UpgradeBuffer => {
                         self.ui.ms_step = MultisigStep::InputUpgradeProgram;
+                    }
+                    MsInputField::VsTarget => {
+                        self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
+                    }
+                    MsInputField::VsParam => {
+                        self.ui.ms_step = MultisigStep::InputVoteStakeTarget;
+                    }
+                    MsInputField::VsAmount => {
+                        self.ui.ms_step = MultisigStep::InputVoteStakeParam;
                     }
                 }
             }
@@ -2927,6 +3054,10 @@ impl App {
         let chain_id = self.ui.ms_selected_chain_id.clone();
         let vault_index = self.ui.ms_current_vault_index;
         let rpc_url = self.get_current_ms_rpc_url();
+        let vs_op = self.ui.ms_vs_ops.get(self.ui.ms_vs_op_selected).cloned();
+        let vs_target = self.ui.ms_vs_target.clone();
+        let vs_param = self.ui.ms_vs_param.clone();
+        let vs_amount = self.ui.ms_vs_amount.clone();
 
         // 切换到提交中
         self.ui.ms_step = MultisigStep::Submitting;
@@ -2948,6 +3079,10 @@ impl App {
                 &preset_args,
                 &chain_id,
                 vault_index,
+                vs_op.as_ref(),
+                &vs_target,
+                &vs_param,
+                &vs_amount,
             )
             .await;
 
@@ -3738,6 +3873,9 @@ enum MsInputField {
     TransferAmount,
     UpgradeProgram,
     UpgradeBuffer,
+    VsTarget,
+    VsParam,
+    VsAmount,
 }
 
 /// 后台执行转账
@@ -3831,6 +3969,10 @@ async fn execute_create_proposal_async(
     preset_args: &[String],
     chain_id: &str,
     vault_index: u8,
+    vs_op: Option<&multisig::MsVoteStakeOp>,
+    vs_target: &str,
+    vs_param: &str,
+    vs_amount: &str,
 ) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -3910,6 +4052,76 @@ async fn execute_create_proposal_async(
                 &vault_pda.to_bytes(), // spill = vault
                 &vault_pda.to_bytes(), // authority = vault
             )
+        }
+        ProposalType::VoteManage | ProposalType::StakeManage => {
+            let op = vs_op.ok_or("未选择操作类型")?;
+            let target_bytes: [u8; 32] = multisig::proposals::decode_bs58_pubkey(vs_target)
+                .ok_or_else(|| format!("无效的目标地址: {vs_target}"))?;
+            let vault_bytes = vault_pda.to_bytes();
+
+            use multisig::MsVoteStakeOp;
+            match op {
+                MsVoteStakeOp::VoteAuthorizeVoter => {
+                    let new_auth = multisig::proposals::decode_bs58_pubkey(vs_param)
+                        .ok_or("无效的新权限地址")?;
+                    vec![multisig::proposals::build_vote_authorize_instruction(
+                        &target_bytes, &vault_bytes, &new_auth, 0,
+                    )]
+                }
+                MsVoteStakeOp::VoteAuthorizeWithdrawer => {
+                    let new_auth = multisig::proposals::decode_bs58_pubkey(vs_param)
+                        .ok_or("无效的新权限地址")?;
+                    vec![multisig::proposals::build_vote_authorize_instruction(
+                        &target_bytes, &vault_bytes, &new_auth, 1,
+                    )]
+                }
+                MsVoteStakeOp::VoteWithdraw => {
+                    let to_bytes = multisig::proposals::decode_bs58_pubkey(vs_param)
+                        .ok_or("无效的提取目标地址")?;
+                    let lamports: u64 = crate::transfer::parse_amount(vs_amount, 9)?
+                        .try_into()
+                        .map_err(|_| "SOL 数量超出范围".to_string())?;
+                    vec![multisig::proposals::build_vote_withdraw_instruction(
+                        &target_bytes, &to_bytes, &vault_bytes, lamports,
+                    )]
+                }
+                MsVoteStakeOp::StakeAuthorizeStaker => {
+                    let new_auth = multisig::proposals::decode_bs58_pubkey(vs_param)
+                        .ok_or("无效的新权限地址")?;
+                    vec![multisig::proposals::build_stake_authorize_instruction(
+                        &target_bytes, &vault_bytes, &new_auth, 0,
+                    )]
+                }
+                MsVoteStakeOp::StakeAuthorizeWithdrawer => {
+                    let new_auth = multisig::proposals::decode_bs58_pubkey(vs_param)
+                        .ok_or("无效的新权限地址")?;
+                    vec![multisig::proposals::build_stake_authorize_instruction(
+                        &target_bytes, &vault_bytes, &new_auth, 1,
+                    )]
+                }
+                MsVoteStakeOp::StakeDelegate => {
+                    let vote_account = multisig::proposals::decode_bs58_pubkey(vs_param)
+                        .ok_or("无效的 Vote 账户地址")?;
+                    vec![multisig::proposals::build_stake_delegate_instruction(
+                        &target_bytes, &vote_account, &vault_bytes,
+                    )]
+                }
+                MsVoteStakeOp::StakeDeactivate => {
+                    vec![multisig::proposals::build_stake_deactivate_instruction(
+                        &target_bytes, &vault_bytes,
+                    )]
+                }
+                MsVoteStakeOp::StakeWithdraw => {
+                    let to_bytes = multisig::proposals::decode_bs58_pubkey(vs_param)
+                        .ok_or("无效的提取目标地址")?;
+                    let lamports: u64 = crate::transfer::parse_amount(vs_amount, 9)?
+                        .try_into()
+                        .map_err(|_| "SOL 数量超出范围".to_string())?;
+                    vec![multisig::proposals::build_stake_withdraw_instruction(
+                        &target_bytes, &to_bytes, &vault_bytes, lamports,
+                    )]
+                }
+            }
         }
     };
 
@@ -4453,7 +4665,7 @@ impl App {
             StakingStep::StakeDeactivateConfirm | StakingStep::Confirm => {
                 self.handle_stk_confirm(key);
             }
-            StakingStep::StakeWithdrawInput => {
+            StakingStep::VoteWithdrawInput | StakingStep::StakeWithdrawInput => {
                 self.handle_stk_text_input(key, StakingTextField::WithdrawAmount);
             }
             StakingStep::Submitting => {} // 等待后台
@@ -4522,7 +4734,7 @@ impl App {
     }
 
     fn handle_vote_detail_key(&mut self, key: KeyEvent) {
-        let menu_count: usize = 3; // 修改Voter, 修改Withdrawer, 修改备注
+        let menu_count: usize = 4; // 修改Voter, 修改Withdrawer, 提取, 修改备注
         match key.code {
             KeyCode::Esc => self.ui.back_to_main(),
             KeyCode::Char('r') => {
@@ -4553,7 +4765,12 @@ impl App {
                         self.ui.stk_new_authority_input.clear();
                         self.ui.stk_step = StakingStep::VoteAuthorize;
                     }
-                    2 => self.enter_staking_edit_label(),
+                    2 => {
+                        self.ui.stk_target_address = self.ui.stk_from_address.clone();
+                        self.ui.stk_amount_input.clear();
+                        self.ui.stk_step = StakingStep::VoteWithdrawInput;
+                    }
+                    3 => self.enter_staking_edit_label(),
                     _ => {}
                 }
             }
@@ -4651,7 +4868,11 @@ impl App {
                         self.ui.stk_step = StakingStep::StakeDetail;
                     }
                     StakingTextField::WithdrawAmount => {
-                        self.ui.stk_step = StakingStep::StakeDetail;
+                        if self.ui.stk_step == StakingStep::VoteWithdrawInput {
+                            self.ui.stk_step = StakingStep::VoteDetail;
+                        } else {
+                            self.ui.stk_step = StakingStep::StakeDetail;
+                        }
                     }
                 }
             }
@@ -4713,7 +4934,11 @@ impl App {
                             return;
                         }
                         self.ui.stk_confirm_password.clear();
-                        self.ui.stk_confirm_op = StakingOp::StakeWithdraw;
+                        self.ui.stk_confirm_op = if self.ui.stk_step == StakingStep::VoteWithdrawInput {
+                            StakingOp::VoteWithdraw
+                        } else {
+                            StakingOp::StakeWithdraw
+                        };
                         self.ui.stk_step = StakingStep::Confirm;
                         self.ui.clear_status();
                     }
@@ -4864,6 +5089,16 @@ impl App {
                                     &private_key,
                                     &new_authority_input,
                                     authorize_type,
+                                )
+                                .await
+                            }
+                            StakingOp::VoteWithdraw => {
+                                crate::staking::sol_staking::vote_withdraw(
+                                    &client,
+                                    &rpc_url,
+                                    &private_key,
+                                    &target_address,
+                                    &amount_input,
                                 )
                                 .await
                             }
