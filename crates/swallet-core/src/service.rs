@@ -499,6 +499,245 @@ impl WalletService {
         Ok(())
     }
 
+    // ========== 钱包创建 ==========
+
+    /// 创建助记词钱包（加密助记词 + 派生 ETH/SOL 地址）
+    pub fn create_mnemonic_wallet(&mut self, name: &str, phrase: &str) -> Result<(), String> {
+        let mut seed = mnemonic::mnemonic_to_seed(phrase, "")
+            .map_err(|e| format!("种子生成失败: {e}"))?;
+        let eth_addr = eth_keys::derive_eth_address(&seed, 0)
+            .map_err(|e| format!("ETH 地址派生失败: {e}"))?;
+        let sol_addr = sol_keys::derive_sol_address(&seed, 0)
+            .map_err(|e| format!("SOL 地址派生失败: {e}"))?;
+        seed.clear_sensitive();
+
+        let pw = self.password.as_ref().ok_or("密码未设置")?;
+        let (salt, nonce, ct) = crate::crypto::encryption::encrypt(phrase.as_bytes(), pw)
+            .map_err(|e| format!("加密失败: {e}"))?;
+        let encrypted_mnemonic = format!("{}:{}:{}", hex::encode(&salt), hex::encode(&nonce), hex::encode(&ct));
+
+        let wallet = Wallet {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            wallet_type: WalletType::Mnemonic {
+                encrypted_mnemonic,
+                eth_accounts: vec![crate::storage::data::DerivedAccount {
+                    derivation_index: 0, address: eth_addr, label: None, hidden: false,
+                }],
+                sol_accounts: vec![crate::storage::data::DerivedAccount {
+                    derivation_index: 0, address: sol_addr, label: None, hidden: false,
+                }],
+                next_eth_index: 1,
+                next_sol_index: 1,
+            },
+            sort_order: self.next_sort_order(),
+            hidden: false,
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        self.add_wallet(wallet)
+    }
+
+    /// 导入私钥钱包
+    pub fn import_private_key_wallet(&mut self, name: &str, pk: &str, chain_type: ChainType) -> Result<(), String> {
+        let address = match &chain_type {
+            ChainType::Ethereum => eth_keys::hex_private_key_to_address(pk)
+                .map_err(|e| format!("无效的 ETH 私钥: {e}"))?,
+            ChainType::Solana => sol_keys::bs58_private_key_to_address(pk)
+                .map_err(|e| format!("无效的 SOL 私钥: {e}"))?,
+        };
+        let pw = self.password.as_ref().ok_or("密码未设置")?;
+        let (salt, nonce, ct) = crate::crypto::encryption::encrypt(pk.as_bytes(), pw)
+            .map_err(|e| format!("加密失败: {e}"))?;
+        let encrypted_pk = format!("{}:{}:{}", hex::encode(&salt), hex::encode(&nonce), hex::encode(&ct));
+
+        let wallet = Wallet {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            wallet_type: WalletType::PrivateKey {
+                chain_type, encrypted_private_key: encrypted_pk, address, label: None, hidden: false,
+            },
+            sort_order: self.next_sort_order(),
+            hidden: false,
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        self.add_wallet(wallet)
+    }
+
+    /// 导入观察钱包
+    pub fn import_watch_wallet(&mut self, name: &str, address: &str, chain_type: ChainType) -> Result<(), String> {
+        // 地址格式验证
+        match &chain_type {
+            ChainType::Ethereum => {
+                if !address.starts_with("0x") || address.len() != 42
+                    || !address[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err("无效的 ETH 地址".to_string());
+                }
+            }
+            ChainType::Solana => {
+                if bs58::decode(address).into_vec().is_err() {
+                    return Err("无效的 SOL 地址".to_string());
+                }
+            }
+        }
+        let wallet = Wallet {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            wallet_type: WalletType::WatchOnly {
+                chain_type, address: address.to_string(), label: None,
+                source: crate::storage::data::WatchOnlySource::Manual,
+            },
+            sort_order: self.next_sort_order(),
+            hidden: false,
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        self.add_wallet(wallet)
+    }
+
+    /// 添加派生地址
+    pub fn add_derived_address(&mut self, wallet_index: usize, chain_type: ChainType) -> Result<String, String> {
+        let (encrypted_mnemonic, eth_idx, sol_idx) = {
+            let store = self.store.as_ref().ok_or("钱包未初始化")?;
+            let wallet = store.wallets.get(wallet_index).ok_or("无效的钱包索引")?;
+            match &wallet.wallet_type {
+                WalletType::Mnemonic { encrypted_mnemonic, next_eth_index, next_sol_index, .. } => {
+                    (encrypted_mnemonic.clone(), *next_eth_index, *next_sol_index)
+                }
+                _ => return Err("不是助记词钱包".to_string()),
+            }
+        };
+
+        let phrase = self.decrypt_inner_secret(&encrypted_mnemonic).ok_or("解密助记词失败")?;
+        let mut seed = mnemonic::mnemonic_to_seed(&phrase, "").map_err(|e| format!("种子生成失败: {e}"))?;
+
+        let new_address = match chain_type {
+            ChainType::Ethereum => {
+                let addr = eth_keys::derive_eth_address(&seed, eth_idx).map_err(|e| format!("派生失败: {e}"))?;
+                seed.clear_sensitive();
+                if let Some(ref mut store) = self.store
+                    && let Some(wallet) = store.wallets.get_mut(wallet_index)
+                    && let WalletType::Mnemonic { ref mut eth_accounts, ref mut next_eth_index, .. } = wallet.wallet_type
+                {
+                    eth_accounts.push(crate::storage::data::DerivedAccount {
+                        derivation_index: eth_idx, address: addr.clone(), label: None, hidden: false,
+                    });
+                    *next_eth_index = eth_idx + 1;
+                }
+                addr
+            }
+            ChainType::Solana => {
+                let addr = sol_keys::derive_sol_address(&seed, sol_idx).map_err(|e| format!("派生失败: {e}"))?;
+                seed.clear_sensitive();
+                if let Some(ref mut store) = self.store
+                    && let Some(wallet) = store.wallets.get_mut(wallet_index)
+                    && let WalletType::Mnemonic { ref mut sol_accounts, ref mut next_sol_index, .. } = wallet.wallet_type
+                {
+                    sol_accounts.push(crate::storage::data::DerivedAccount {
+                        derivation_index: sol_idx, address: addr.clone(), label: None, hidden: false,
+                    });
+                    *next_sol_index = sol_idx + 1;
+                }
+                addr
+            }
+        };
+        self.save_store().map_err(|e| format!("保存失败: {e}"))?;
+        Ok(new_address)
+    }
+
+    // ========== 钱包编辑 ==========
+
+    pub fn edit_wallet_name(&mut self, wallet_index: usize, name: &str) -> Result<(), String> {
+        let store = self.store.as_mut().ok_or("钱包未初始化")?;
+        let wallet = store.wallets.get_mut(wallet_index).ok_or("无效的钱包索引")?;
+        wallet.name = name.to_string();
+        self.save_store().map_err(|e| format!("保存失败: {e}"))
+    }
+
+    pub fn edit_address_label(&mut self, wallet_index: usize, chain_type: &str, account_index: usize, label: &str) -> Result<(), String> {
+        let store = self.store.as_mut().ok_or("钱包未初始化")?;
+        let wallet = store.wallets.get_mut(wallet_index).ok_or("无效的钱包索引")?;
+        match &mut wallet.wallet_type {
+            WalletType::Mnemonic { eth_accounts, sol_accounts, .. } => {
+                let label_val = if label.is_empty() { None } else { Some(label.to_string()) };
+                if chain_type == "ethereum" {
+                    if let Some(acc) = eth_accounts.get_mut(account_index) { acc.label = label_val; }
+                } else if let Some(acc) = sol_accounts.get_mut(account_index) { acc.label = label_val; }
+            }
+            WalletType::PrivateKey { label: existing_label, .. } => {
+                *existing_label = if label.is_empty() { None } else { Some(label.to_string()) };
+            }
+            WalletType::WatchOnly { label: existing_label, .. } => {
+                *existing_label = if label.is_empty() { None } else { Some(label.to_string()) };
+            }
+            WalletType::Multisig { vaults, .. } => {
+                if let Some(v) = vaults.get_mut(account_index) {
+                    v.label = if label.is_empty() { None } else { Some(label.to_string()) };
+                }
+            }
+        }
+        self.save_store().map_err(|e| format!("保存失败: {e}"))
+    }
+
+    pub fn hide_wallet(&mut self, wallet_index: usize) -> Result<(), String> {
+        let store = self.store.as_mut().ok_or("钱包未初始化")?;
+        let wallet = store.wallets.get_mut(wallet_index).ok_or("无效的钱包索引")?;
+        wallet.hidden = true;
+        self.save_store().map_err(|e| format!("保存失败: {e}"))
+    }
+
+    pub fn show_wallet(&mut self, wallet_index: usize) -> Result<(), String> {
+        let store = self.store.as_mut().ok_or("钱包未初始化")?;
+        let wallet = store.wallets.get_mut(wallet_index).ok_or("无效的钱包索引")?;
+        wallet.hidden = false;
+        self.save_store().map_err(|e| format!("保存失败: {e}"))
+    }
+
+    pub fn hide_address(&mut self, wallet_index: usize, chain_type: &str, account_index: usize) -> Result<(), String> {
+        let store = self.store.as_mut().ok_or("钱包未初始化")?;
+        let wallet = store.wallets.get_mut(wallet_index).ok_or("无效的钱包索引")?;
+        match &mut wallet.wallet_type {
+            WalletType::Mnemonic { eth_accounts, sol_accounts, .. } => {
+                if chain_type == "ethereum" {
+                    if let Some(acc) = eth_accounts.get_mut(account_index) { acc.hidden = true; }
+                } else if let Some(acc) = sol_accounts.get_mut(account_index) { acc.hidden = true; }
+            }
+            WalletType::Multisig { vaults, .. } => {
+                if let Some(v) = vaults.get_mut(account_index) { v.hidden = true; }
+            }
+            _ => {}
+        }
+        self.save_store().map_err(|e| format!("保存失败: {e}"))
+    }
+
+    pub fn restore_hidden_wallets(&mut self) -> Result<usize, String> {
+        let store = self.store.as_mut().ok_or("钱包未初始化")?;
+        let mut count = 0;
+        for w in &mut store.wallets {
+            if w.hidden { w.hidden = false; count += 1; }
+        }
+        self.save_store().map_err(|e| format!("保存失败: {e}"))?;
+        Ok(count)
+    }
+
+    pub fn restore_hidden_addresses(&mut self) -> Result<usize, String> {
+        let store = self.store.as_mut().ok_or("钱包未初始化")?;
+        let mut count = 0;
+        for w in &mut store.wallets {
+            match &mut w.wallet_type {
+                WalletType::Mnemonic { eth_accounts, sol_accounts, .. } => {
+                    for a in eth_accounts.iter_mut().chain(sol_accounts.iter_mut()) {
+                        if a.hidden { a.hidden = false; count += 1; }
+                    }
+                }
+                WalletType::Multisig { vaults, .. } => {
+                    for v in vaults { if v.hidden { v.hidden = false; count += 1; } }
+                }
+                _ => {}
+            }
+        }
+        self.save_store().map_err(|e| format!("保存失败: {e}"))?;
+        Ok(count)
+    }
+
     /// 保存多签到 store
     pub fn save_multisig_to_store(
         &mut self,
