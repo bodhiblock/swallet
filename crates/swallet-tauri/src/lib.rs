@@ -7,12 +7,17 @@ use std::sync::Mutex;
 use swallet_core::config::AppConfig;
 use swallet_core::service::WalletService;
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let config = AppConfig::load_or_create(None)
+#[cfg(mobile)]
+#[tauri::mobile_entry_point]
+pub fn mobile_run() {
+    run(None, None);
+}
+
+pub fn run(data_path: Option<std::path::PathBuf>, config_path: Option<std::path::PathBuf>) {
+    let config = AppConfig::load_or_create(config_path.as_deref())
         .unwrap_or_else(|e| panic!("配置加载失败: {e}"));
 
-    let service = WalletService::new(config, None);
+    let service = WalletService::new(config, data_path);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
