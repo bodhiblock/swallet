@@ -214,6 +214,59 @@ pub async fn execute_proposal(
 }
 
 #[tauri::command]
+pub async fn create_proposal(
+    state: tauri::State<'_, AppState>,
+    wallet_index: usize,
+    vault_index: u8,
+    proposal_type_idx: usize,
+    to_address: String,
+    amount: String,
+    upgrade_program: String,
+    upgrade_buffer: String,
+    vs_op_idx: usize,
+    vs_target: String,
+    vs_param: String,
+    vs_amount: String,
+    chain_id: String,
+    password: String,
+    fee_payer_wi: usize,
+    fee_payer_ai: usize,
+) -> CommandResult<String> {
+    let (private_key, fee_payer_key, rpc_url, ms_address) = {
+        let service = state.service.lock().unwrap();
+        if !service.verify_password(password.as_bytes()) { return Err("密码错误".into()); }
+        let (ms_addr, member_addresses) = get_ms_info(&service, wallet_index)?;
+        let mut pk = None;
+        for addr in &member_addresses {
+            if let Some(key) = service.get_sol_private_key(addr) { pk = Some(key); break; }
+        }
+        let pk = pk.ok_or("未找到签名私钥")?;
+        let fp = service.get_sol_private_key_by_index(fee_payer_wi, fee_payer_ai).ok_or("无法获取 Fee Payer 私钥")?;
+        let rpc = service.get_current_ms_rpc_url(wallet_index, 0);
+        (pk, fp, rpc, ms_addr)
+    };
+
+    // Map vs_op_idx to MsVoteStakeOp
+    let vs_ops = [
+        multisig::MsVoteStakeOp::VoteAuthorizeVoter,
+        multisig::MsVoteStakeOp::VoteAuthorizeWithdrawer,
+        multisig::MsVoteStakeOp::VoteWithdraw,
+        multisig::MsVoteStakeOp::StakeAuthorizeStaker,
+        multisig::MsVoteStakeOp::StakeAuthorizeWithdrawer,
+        multisig::MsVoteStakeOp::StakeDelegate,
+        multisig::MsVoteStakeOp::StakeDeactivate,
+        multisig::MsVoteStakeOp::StakeWithdraw,
+    ];
+    let vs_op = vs_ops.get(vs_op_idx);
+
+    swallet_core::service::execute_create_proposal(
+        &rpc_url, &private_key, &fee_payer_key, &ms_address,
+        proposal_type_idx, &to_address, &amount, &upgrade_program, &upgrade_buffer,
+        0, 0, &[], &chain_id, vault_index, vs_op, &vs_target, &vs_param, &vs_amount,
+    ).await.map_err(|e| e.into())
+}
+
+#[tauri::command]
 pub async fn create_multisig(
     state: tauri::State<'_, AppState>,
     chain_id: String,
