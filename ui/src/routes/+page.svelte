@@ -6,7 +6,7 @@
 	import StakingPanel from '$lib/components/StakingPanel.svelte';
 
 	// Screen state
-	let screen: 'loading' | 'unlock' | 'create' | 'confirm' | 'main' | 'add-wallet' | 'show-mnemonic' | 'input-name' | 'transfer-assets' | 'transfer-input' | 'transfer-confirm' | 'transfer-result' | 'multisig' | 'staking' | 'import-multisig' = $state('loading');
+	let screen: string = $state('loading');
 	let password = $state('');
 	let confirmPassword = $state('');
 	let error = $state('');
@@ -47,9 +47,27 @@
 	let txResult = $state<{ success: boolean; message: string } | null>(null);
 
 	// Import multisig
-	let importMsChains: { id: string; name: string }[] = $state([]);
+	let importMsChains: { id: string; name: string; rpc_url: string }[] = $state([]);
 	let importMsChainId = $state('');
 	let importMsAddress = $state('');
+
+	// Create vote/stake
+	let createStakingType: 'vote' | 'stake' = $state('vote');
+	let createStakingChainId = $state('');
+	let createStakingRpcUrl = $state('');
+	let createStakingIdentity = $state('');
+	let createStakingWithdrawer = $state('');
+	let createStakingAmount = $state('');
+	let createStakingLockupDays = $state('0');
+	let createStakingPassword = $state('');
+
+	// Create multisig
+	let createMsMembers: string[] = $state([]);
+	let createMsMemberInput = $state('');
+	let createMsThreshold = $state('2');
+	let createMsPassword = $state('');
+	let createMsSeed = $state('');
+	let createMsUseSeed = $state(false);
 
 	// Multisig/Staking
 	let msWalletIndex = $state(0);
@@ -207,10 +225,41 @@
 					break;
 				}
 				case 'create-vote':
-				case 'create-stake':
-					// TODO: create vote/stake account flow
-					showToast('创建 Vote/Stake 账户功能开发中');
+				case 'create-stake': {
+					createStakingType = action === 'create-vote' ? 'vote' : 'stake';
+					createStakingIdentity = '';
+					createStakingWithdrawer = '';
+					createStakingAmount = '';
+					createStakingLockupDays = '0';
+					createStakingPassword = '';
+					try {
+						const chains = await api.getSolanaChains();
+						importMsChains = chains;
+						createStakingChainId = chains[0]?.id || '';
+						createStakingRpcUrl = chains[0]?.rpc_url || '';
+					} catch (_) {}
+					screen = 'create-staking';
 					break;
+				}
+				case 'create-multisig': {
+					createMsUseSeed = false;
+					createMsSeed = '';
+					createMsMembers = [];
+					createMsMemberInput = '';
+					createMsThreshold = '2';
+					createMsPassword = '';
+					// Auto-add current address as first member
+					const cw = wallets[walletIndex];
+					const ca = cw?.accounts[accountIndex!];
+					if (ca) createMsMembers = [ca.address];
+					try {
+						const chains = await api.getSolanaChains();
+						importMsChains = chains;
+						importMsChainId = chains[0]?.id || '';
+					} catch (_) {}
+					screen = 'create-multisig';
+					break;
+				}
 				case 'import-multisig':
 					try {
 						const chains = await api.getSolanaChains();
@@ -489,6 +538,7 @@
 						{#if menuTarget.chainType === 'solana'}
 							<button onclick={() => menuAction('create-vote')}>创建 Vote 账户</button>
 							<button onclick={() => menuAction('create-stake')}>创建 Stake 账户</button>
+							<button onclick={() => menuAction('create-multisig')}>创建多签</button>
 							<button onclick={() => menuAction('import-multisig')}>导入多签</button>
 						{/if}
 					{/if}
@@ -585,6 +635,95 @@
 			{#if txSending}<p class="dim">提交中...</p>{/if}
 			<button class="btn-primary" onclick={confirmTransfer} disabled={txSending}>确认转账</button>
 			<button class="btn-secondary" onclick={() => { screen = 'transfer-input'; }}>返回</button>
+		</div>
+	</div>
+
+{:else if screen === 'create-staking'}
+	<div class="container center">
+		<div class="card">
+			<h2>{createStakingType === 'vote' ? '创建 Vote 账户' : '创建 Stake 账户'}</h2>
+			{#if importMsChains.length > 1}
+				<div class="chain-select">
+					{#each importMsChains as chain}
+						<button class:active={createStakingChainId === chain.id} onclick={() => { createStakingChainId = chain.id; createStakingRpcUrl = chain.rpc_url; }}>{chain.name}</button>
+					{/each}
+				</div>
+			{/if}
+			{#if createStakingType === 'vote'}
+				<input bind:value={createStakingIdentity} placeholder="Identity 私钥 (可选)" />
+				<input bind:value={createStakingWithdrawer} placeholder="Withdrawer 地址 (可选，默认当前地址)" />
+			{:else}
+				<input bind:value={createStakingAmount} placeholder="质押数量" type="text" inputmode="decimal" />
+				<input bind:value={createStakingLockupDays} placeholder="锁仓天数 (0=不锁仓)" type="text" inputmode="numeric" />
+			{/if}
+			<input type="password" bind:value={createStakingPassword} placeholder="密码确认" />
+			<button class="btn-primary" onclick={async () => {
+				if (!createStakingPassword) { showToast('请输入密码'); return; }
+				if (!menuTarget) { showToast('无效操作'); return; }
+				const fp = (await api.getFeePayers())[0];
+				if (!fp) { showToast('没有可用的 Fee Payer'); return; }
+				try {
+					let sig: string;
+					if (createStakingType === 'vote') {
+						sig = await api.createVoteAccount(menuTarget.walletIndex, menuTarget.accountIndex!, createStakingRpcUrl, fp.wallet_index, fp.account_index, createStakingIdentity, createStakingWithdrawer, createStakingPassword);
+					} else {
+						sig = await api.createStakeAccount(menuTarget.walletIndex, menuTarget.accountIndex!, createStakingRpcUrl, fp.wallet_index, fp.account_index, createStakingAmount, parseInt(createStakingLockupDays) || 0, createStakingPassword);
+					}
+					showToast(`创建成功: ${sig.slice(0,16)}...`);
+					screen = 'main';
+					refreshBalances();
+				} catch (e: any) { showToast(e?.message || '创建失败'); }
+			}}>创建</button>
+			<button class="btn-secondary" onclick={() => { screen = 'main'; }}>取消</button>
+		</div>
+	</div>
+
+{:else if screen === 'create-multisig'}
+	<div class="container center">
+		<div class="card">
+			<h2>创建多签</h2>
+			{#if importMsChains.length > 1}
+				<div class="chain-select">
+					{#each importMsChains as chain}
+						<button class:active={importMsChainId === chain.id} onclick={() => importMsChainId = chain.id}>{chain.name}</button>
+					{/each}
+				</div>
+			{/if}
+			<p class="dim">成员地址 ({createMsMembers.length})</p>
+			{#each createMsMembers as m, i}
+				<div class="member-row">
+					<span class="mono dim">{m.slice(0,8)}...{m.slice(-4)}</span>
+					{#if i > 0}<button class="btn-sm-x" onclick={() => { createMsMembers = createMsMembers.filter((_, j) => j !== i); }}>✕</button>{/if}
+				</div>
+			{/each}
+			<div class="member-input-row">
+				<input bind:value={createMsMemberInput} placeholder="添加成员地址" style="flex:1" />
+				<button class="btn-add-member" onclick={() => {
+					const addr = createMsMemberInput.trim();
+					if (addr && !createMsMembers.includes(addr)) { createMsMembers = [...createMsMembers, addr]; createMsMemberInput = ''; }
+				}}>+</button>
+			</div>
+			<input bind:value={createMsThreshold} placeholder="阈值" type="text" inputmode="numeric" />
+			<label class="dim" style="display:flex;align-items:center;gap:8px">
+				<input type="checkbox" bind:checked={createMsUseSeed} /> 使用种子
+			</label>
+			{#if createMsUseSeed}
+				<input bind:value={createMsSeed} placeholder="种子私钥 (Base58)" />
+			{/if}
+			<input type="password" bind:value={createMsPassword} placeholder="密码确认" />
+			<button class="btn-primary" onclick={async () => {
+				if (createMsMembers.length < 2) { showToast('至少需要2个成员'); return; }
+				const t = parseInt(createMsThreshold);
+				if (!t || t < 1 || t > createMsMembers.length) { showToast('无效的阈值'); return; }
+				if (!createMsPassword) { showToast('请输入密码'); return; }
+				try {
+					const addr = await api.createMultisig(importMsChainId, createMsMembers[0], createMsMembers, t, createMsPassword, createMsUseSeed ? createMsSeed : undefined);
+					showToast(`多签已创建: ${addr.slice(0,12)}...`);
+					await reloadWallets();
+					screen = 'main';
+				} catch (e: any) { showToast(e?.message || '创建失败'); }
+			}}>创建多签</button>
+			<button class="btn-secondary" onclick={() => { screen = 'main'; }}>取消</button>
 		</div>
 	</div>
 
@@ -700,6 +839,11 @@
 	.asset-info { display: flex; align-items: center; gap: 8px; }
 	.confirm-detail { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; width: 100%; font-size: 14px; line-height: 1.8; }
 	.confirm-detail .mono { font-family: monospace; font-size: 13px; }
+
+	.member-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--bg); border-radius: 6px; width: 100%; }
+	.member-input-row { display: flex; gap: 8px; width: 100%; }
+	.btn-add-member { width: 36px; height: 36px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+	.btn-sm-x { color: var(--red); font-size: 14px; }
 
 	.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 8px 20px; border-radius: 8px; font-size: 14px; z-index: 100; }
 </style>

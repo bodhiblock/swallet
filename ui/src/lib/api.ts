@@ -50,6 +50,8 @@ export const api = {
 		invoke<string>('reject_proposal', { walletIndex, txIndex, password, feePayerWi, feePayerAi }),
 	executeProposal: (walletIndex: number, txIndex: number, vaultIndex: number, password: string, feePayerWi: number, feePayerAi: number) =>
 		invoke<string>('execute_proposal', { walletIndex, txIndex, vaultIndex, password, feePayerWi, feePayerAi }),
+	createMultisig: (chainId: string, creatorAddress: string, members: string[], threshold: number, password: string, seed?: string) =>
+		invoke<string>('create_multisig', { chainId, creatorAddress, members, threshold, password, seed }),
 
 	// Staking
 	fetchVoteAccount: (address: string, rpcUrl: string) => invoke<VoteAccountDto>('fetch_vote_account', { address, rpcUrl }),

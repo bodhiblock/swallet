@@ -6833,9 +6833,11 @@ dependencies = [
 name = "swallet-tauri"
 version = "0.1.0"
 dependencies = [
+ "bs58",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "solana-sdk",
  "swallet-core",
  "tauri",
  "tauri-build",

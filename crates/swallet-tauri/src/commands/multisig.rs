@@ -213,6 +213,63 @@ pub async fn execute_proposal(
         .await.map_err(|e| e.into())
 }
 
+#[tauri::command]
+pub async fn create_multisig(
+    state: tauri::State<'_, AppState>,
+    chain_id: String,
+    creator_address: String,
+    members: Vec<String>,
+    threshold: u16,
+    password: String,
+    seed: Option<String>,
+) -> CommandResult<String> {
+    let (private_key, rpc_url, chain_name) = {
+        let service = state.service.lock().unwrap();
+        if !service.verify_password(password.as_bytes()) { return Err("密码错误".into()); }
+        let pk = service.get_sol_private_key(&creator_address).ok_or("无法获取创建者私钥")?;
+        let chain = service.config.chains.solana.iter().find(|c| c.id == chain_id).ok_or("未找到链配置")?;
+        (pk, chain.rpc_url.clone(), chain.name.clone())
+    };
+
+    let member_pubkeys: Vec<solana_sdk::pubkey::Pubkey> = members.iter()
+        .map(|a| a.parse().map_err(|e| format!("无效的成员地址 {a}: {e}")))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::error::CommandError { message: e })?;
+
+    let seed_key = match seed {
+        Some(s) if !s.is_empty() => {
+            let bytes = bs58::decode(&s).into_vec().map_err(|_| "种子私钥无效")?;
+            if bytes.len() != 32 { return Err("种子私钥长度必须为32字节".into()); }
+            Some(bytes)
+        }
+        _ => None,
+    };
+
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
+        .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
+
+    let result = multisig::squads::create_multisig_v2(
+        &client, &rpc_url, &private_key, &member_pubkeys, threshold, seed_key.as_deref(),
+    ).await.map_err(|e| crate::error::CommandError { message: e })?;
+
+    // result format: "multisig_pda|tx_sig"
+    let mut parts = result.splitn(2, '|');
+    let ms_address = parts.next().unwrap_or(&result).to_string();
+    let _tx_sig = parts.next().unwrap_or("").to_string();
+
+    // Auto import
+    {
+        let client2 = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
+            .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
+        if let Ok(info) = multisig::squads::fetch_multisig(&client2, &rpc_url, &ms_address).await {
+            let mut service = state.service.lock().unwrap();
+            service.save_multisig_to_store(&info, &rpc_url, &chain_id, &chain_name);
+        }
+    }
+
+    Ok(ms_address)
+}
+
 fn get_vote_params(
     state: &tauri::State<'_, AppState>,
     wallet_index: usize,

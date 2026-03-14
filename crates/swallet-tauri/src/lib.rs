@@ -51,6 +51,7 @@ pub fn run() {
             commands::multisig::approve_proposal,
             commands::multisig::reject_proposal,
             commands::multisig::execute_proposal,
+            commands::multisig::create_multisig,
             commands::staking::fetch_vote_account,
             commands::staking::fetch_stake_account,
             commands::staking::create_vote_account,
