@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState},
     Frame,
 };
 
@@ -10,6 +10,10 @@ use crate::tui::state::UiState;
 
 pub fn render(frame: &mut Frame, state: &UiState) {
     let area = frame.area();
+
+    // 根据最长菜单项动态计算宽度
+    let max_label_len = state.action_items.iter().map(|item| item.label().chars().count()).max().unwrap_or(10);
+    let width = (max_label_len as u16 + 6).max(30); // 前缀2 + padding
 
     let height = (state.action_items.len() as u16) + 2; // items + border
     let [_, center_v, _] = Layout::vertical([
@@ -20,10 +24,12 @@ pub fn render(frame: &mut Frame, state: &UiState) {
     .areas(area);
     let [_, center, _] = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(30),
+        Constraint::Length(width),
         Constraint::Fill(1),
     ])
     .areas(center_v);
+
+    frame.render_widget(Clear, center);
 
     let items: Vec<ListItem> = state
         .action_items
