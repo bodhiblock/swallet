@@ -495,19 +495,20 @@
 					<span class="wallet-type">{walletTypeLabel(wallet.wallet_type)}</span>
 				</div>
 				{#each wallet.accounts.filter(a => !a.hidden) as account, ai}
-					<div class="account-row">
-						<button class="account-main" onclick={() => copyAddress(account.address)} title="点击复制">
+					<div class="account-row" onclick={() => copyAddress(account.address)} title="点击复制" role="button" tabindex="0">
+						<div class="account-top">
 							<span class="chain-badge">{account.chain_type === 'ethereum' ? 'ETH' : 'SOL'}</span>
+							{#if isVoteOrStake(account.address)}
+								<span class="tag-vote-stake">{getAccountOwner(account.address) === 'Vote111111111111111111111111111111111111111' ? 'Vote' : 'Stake'}</span>
+							{/if}
 							{#if account.label}<span class="label">{account.label}</span>{/if}
-							<span class="address">{account.address.slice(0, 6)}...{account.address.slice(-4)}</span>
-						</button>
-						<div class="account-right">
-							<div class="account-balances">
-								{#each getBalance(account.address) as bal}
-									<span class="balance">{bal.amount} {bal.symbol}</span>
-								{/each}
-							</div>
 							<button class="btn-dots" onclick={(e) => openMenu('account', wi, ai, account.chain_type, wallet.wallet_type, account.address, e)} title="操作">⋮</button>
+						</div>
+						<div class="address">{account.address}</div>
+						<div class="account-balances">
+							{#each getBalance(account.address) as bal}
+								<span class="balance">{bal.amount} {bal.symbol}</span>
+							{/each}
 						</div>
 					</div>
 				{/each}
@@ -799,17 +800,18 @@
 	.wallet-name { font-weight: 600; font-size: 14px; }
 	.wallet-type { color: var(--text-dim); font-size: 12px; }
 
-	.account-row { padding: 8px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+	.account-row { display: flex; flex-direction: column; gap: 4px; padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
 	.account-row:last-child { border-bottom: none; }
-	.account-main { display: flex; align-items: center; gap: 8px; flex: 1; text-align: left; }
-	.account-main:hover { opacity: 0.8; }
-	.account-right { display: flex; align-items: center; gap: 4px; }
+	.account-row:hover { background: var(--bg-hover); }
+	.account-top { display: flex; align-items: center; gap: 6px; }
+	.account-top .btn-dots { margin-left: auto; }
 
-	.chain-badge { background: var(--bg); color: var(--accent); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+	.chain-badge { background: var(--bg); color: var(--accent); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+	.tag-vote-stake { color: var(--accent); font-size: 11px; font-weight: 600; background: rgba(34,211,238,0.15); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
 	.label { color: var(--yellow); font-size: 13px; }
-	.address { color: var(--text-dim); font-size: 13px; font-family: monospace; }
-	.account-balances { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
-	.balance { color: var(--green); font-size: 12px; font-family: monospace; }
+	.address { color: var(--text-dim); font-size: 12px; font-family: monospace; word-break: break-all; line-height: 1.4; }
+	.account-balances { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+	.balance { color: var(--green); font-size: 13px; font-family: monospace; }
 
 	.mnemonic-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 14px; line-height: 1.8; word-spacing: 8px; width: 100%; user-select: text; -webkit-user-select: text; }
 

@@ -14,9 +14,9 @@
 	const proposalKinds: { key: ProposalKind; label: string }[] = [
 		{ key: 'sol-transfer', label: '原生币转账' },
 		{ key: 'program-upgrade', label: '升级程序' },
-		{ key: 'program-call', label: '调用程序' },
 		{ key: 'vote-manage', label: 'Vote 管理' },
 		{ key: 'stake-manage', label: 'Stake 管理' },
+		{ key: 'program-call', label: '调用程序' },
 	];
 	let proposalKind: ProposalKind = $state('sol-transfer');
 
