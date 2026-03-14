@@ -10,6 +10,8 @@
 	let wallets: WalletDto[] = $state([]);
 	let balances: BalanceDto[] = $state([]);
 	let loading = $state(false);
+	let toast = $state('');
+	let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 	onMount(async () => {
 		try {
@@ -30,25 +32,27 @@
 
 	async function loadMain() {
 		screen = 'main';
-		wallets = await api.getWallets();
+		try {
+			wallets = await api.getWallets();
+		} catch (e: any) {
+			showToast(`加载钱包失败: ${e?.message || e}`);
+		}
+		refreshBalances();
+		refreshTimer = setInterval(refreshBalances, 60_000);
+	}
+
+	async function refreshBalances() {
 		loading = true;
 		try {
 			balances = await api.refreshBalances();
-		} catch (e) {
-			console.error('refresh balances failed:', e);
-		}
+		} catch (_) {}
 		loading = false;
-		// 60s auto refresh
-		setInterval(async () => {
-			try {
-				balances = await api.refreshBalances();
-			} catch (_) {}
-		}, 60_000);
 	}
 
 	async function handleCreate() {
+		error = '';
 		if (password.length < 1) { error = '请输入密码'; return; }
-		if (screen === 'create') { screen = 'confirm'; confirmPassword = ''; error = ''; return; }
+		if (screen === 'create') { screen = 'confirm'; confirmPassword = ''; return; }
 		if (password !== confirmPassword) { error = '两次密码不一致'; return; }
 		try {
 			await api.createStore(password);
@@ -59,6 +63,7 @@
 	}
 
 	async function handleUnlock() {
+		error = '';
 		if (password.length < 1) { error = '请输入密码'; return; }
 		try {
 			await api.unlock(password);
@@ -84,6 +89,20 @@
 			}
 		}
 		return result;
+	}
+
+	async function copyAddress(address: string) {
+		try {
+			await navigator.clipboard.writeText(address);
+			showToast('已复制地址');
+		} catch (_) {
+			showToast('复制失败');
+		}
+	}
+
+	function showToast(msg: string) {
+		toast = msg;
+		setTimeout(() => { toast = ''; }, 2000);
 	}
 </script>
 
@@ -132,7 +151,10 @@
 	<div class="container">
 		<header>
 			<h1>swallet</h1>
-			{#if loading}<span class="dim">刷新中...</span>{/if}
+			<div class="header-actions">
+				{#if loading}<span class="dim">刷新中...</span>{/if}
+				<button class="btn-icon" onclick={refreshBalances} title="刷新余额">↻</button>
+			</div>
 		</header>
 
 		{#each wallets.filter(w => !w.hidden) as wallet (wallet.id)}
@@ -142,7 +164,7 @@
 					<span class="wallet-type">{wallet.wallet_type}</span>
 				</div>
 				{#each wallet.accounts.filter(a => !a.hidden) as account}
-					<div class="account-row">
+					<button class="account-row" onclick={() => copyAddress(account.address)} title="点击复制地址">
 						<div class="account-info">
 							<span class="chain-badge">{account.chain_type === 'ethereum' ? 'ETH' : 'SOL'}</span>
 							{#if account.label}<span class="label">{account.label}</span>{/if}
@@ -153,7 +175,7 @@
 								<span class="balance">{bal.amount} {bal.symbol}</span>
 							{/each}
 						</div>
-					</div>
+					</button>
 				{/each}
 			</div>
 		{/each}
@@ -164,6 +186,10 @@
 			</div>
 		{/if}
 	</div>
+{/if}
+
+{#if toast}
+	<div class="toast">{toast}</div>
 {/if}
 
 <style>
@@ -202,6 +228,18 @@
 	}
 	.btn-primary:hover { opacity: 0.9; }
 
+	.btn-icon {
+		width: 32px;
+		height: 32px;
+		border-radius: 6px;
+		font-size: 18px;
+		color: var(--text-dim);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.btn-icon:hover { background: var(--bg-hover); color: var(--text); }
+
 	header {
 		display: flex;
 		align-items: center;
@@ -209,6 +247,7 @@
 		padding: 8px 0 16px;
 	}
 	header h1 { font-size: 20px; color: var(--accent); }
+	.header-actions { display: flex; align-items: center; gap: 8px; }
 
 	.wallet-card {
 		background: var(--bg-card);
@@ -233,8 +272,13 @@
 		justify-content: space-between;
 		align-items: center;
 		border-bottom: 1px solid var(--border);
+		width: 100%;
+		text-align: left;
+		transition: background 0.15s;
 	}
 	.account-row:last-child { border-bottom: none; }
+	.account-row:hover { background: var(--bg-hover); }
+	.account-row:active { background: var(--border); }
 	.account-info { display: flex; align-items: center; gap: 8px; }
 
 	.chain-badge {
@@ -259,5 +303,19 @@
 	.empty {
 		text-align: center;
 		padding: 48px 0;
+	}
+
+	.toast {
+		position: fixed;
+		bottom: 24px;
+		left: 50%;
+		transform: translateX(-50%);
+		background: var(--bg-card);
+		border: 1px solid var(--border);
+		color: var(--text);
+		padding: 8px 20px;
+		border-radius: 8px;
+		font-size: 14px;
+		z-index: 100;
 	}
 </style>
