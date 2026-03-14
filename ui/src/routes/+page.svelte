@@ -301,6 +301,16 @@
 		screen = 'transfer-result';
 	}
 
+	function walletTypeLabel(t: string): string {
+		switch (t) {
+			case 'mnemonic': return '助记词钱包';
+			case 'private_key': return '私钥钱包';
+			case 'watch_only': return '观察钱包';
+			case 'multisig': return '多签钱包';
+			default: return t;
+		}
+	}
+
 	function showToast(msg: string) { toast = msg; setTimeout(() => { toast = ''; }, 2000); }
 </script>
 
@@ -386,7 +396,7 @@
 			<div class="header-actions">
 				{#if loading}<span class="dim">刷新中...</span>{/if}
 				<button class="btn-icon" onclick={refreshBalances} title="刷新">↻</button>
-				<button class="btn-icon" onclick={restoreHidden} title="恢复隐藏">👁</button>
+				<button class="btn-icon" onclick={restoreHidden} title="恢复隐藏项">⊕</button>
 			</div>
 		</header>
 
@@ -394,7 +404,7 @@
 			<div class="wallet-card">
 				<div class="wallet-header" onclick={(e) => openMenu('wallet', wi, undefined, undefined, wallet.wallet_type, e)}>
 					<span class="wallet-name">{wallet.name}</span>
-					<span class="wallet-type">{wallet.wallet_type}</span>
+					<span class="wallet-type">{walletTypeLabel(wallet.wallet_type)}</span>
 				</div>
 				{#each wallet.accounts.filter(a => !a.hidden) as account, ai}
 					<div class="account-row">
