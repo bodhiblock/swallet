@@ -10,10 +10,10 @@ use swallet_core::chain::{registry, BalanceCache};
 use swallet_core::config::AppConfig;
 use swallet_core::crypto::{eth_keys, mnemonic, sol_keys};
 use swallet_core::multisig::{self, ProposalType};
+use swallet_core::service::WalletService;
 use swallet_core::storage::data::{
     ChainType, DerivedAccount, VaultAccount, Wallet, WalletStore, WalletType, WatchOnlySource,
 };
-use swallet_core::storage::encrypted;
 use swallet_core::transfer::{self, AssetKind, TransferableAsset};
 use crate::tui::event;
 use crate::tui::screens::{
@@ -46,14 +46,8 @@ enum BgMessage {
 }
 
 pub struct App {
-    pub config: AppConfig,
-    pub store: Option<WalletStore>,
+    pub service: WalletService,
     pub ui: UiState,
-    pub balance_cache: BalanceCache,
-    /// 解锁后保存密码用于后续数据保存
-    password: Option<Vec<u8>>,
-    /// 数据文件路径
-    data_path: std::path::PathBuf,
     /// tokio 运行时（后台 RPC 查询）
     runtime: tokio::runtime::Runtime,
     /// 后台消息接收端
@@ -71,8 +65,8 @@ const AUTO_REFRESH_SECS: u64 = 60;
 
 impl App {
     pub fn new(config: AppConfig, data_path: Option<std::path::PathBuf>) -> Self {
-        let data_path = data_path.unwrap_or_else(encrypted::default_data_file_path);
-        let has_data = encrypted::data_file_exists(&data_path);
+        let service = WalletService::new(config, data_path);
+        let has_data = service.has_data_file();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -80,12 +74,8 @@ impl App {
             .expect("创建 tokio 运行时失败");
         let (bg_tx, bg_rx) = mpsc::channel();
         Self {
-            config,
-            store: None,
+            service,
             ui: UiState::new(has_data),
-            balance_cache: BalanceCache::default(),
-            password: None,
-            data_path,
             runtime,
             bg_rx,
             bg_tx,
@@ -119,27 +109,27 @@ impl App {
         match self.ui.screen {
             Screen::Unlock => unlock::render(frame, &self.ui),
             Screen::Main => {
-                let store = self.store.as_ref().unwrap_or(&EMPTY_STORE);
-                main_screen::render(frame, &self.ui, store, &self.balance_cache, self.loading_balances);
+                let store = self.service.store.as_ref().unwrap_or(&EMPTY_STORE);
+                main_screen::render(frame, &self.ui, store, &self.service.balance_cache, self.loading_balances);
             }
             Screen::AddWallet | Screen::ShowMnemonic | Screen::TextInput => {
                 add_wallet::render(frame, &self.ui);
             }
             Screen::ActionMenu => {
-                let store = self.store.as_ref().unwrap_or(&EMPTY_STORE);
-                main_screen::render(frame, &self.ui, store, &self.balance_cache, self.loading_balances);
+                let store = self.service.store.as_ref().unwrap_or(&EMPTY_STORE);
+                main_screen::render(frame, &self.ui, store, &self.service.balance_cache, self.loading_balances);
                 action_menu::render(frame, &self.ui);
             }
             Screen::Transfer => {
                 transfer_screen::render(frame, &self.ui);
             }
             Screen::Multisig => {
-                let multisigs = self
+                let multisigs = self.service
                     .store
                     .as_ref()
                     .map(|s| s.multisigs.as_slice())
                     .unwrap_or(&[]);
-                let address_labels = self
+                let address_labels = self.service
                     .store
                     .as_ref()
                     .map(|s| s.address_labels())
@@ -153,8 +143,8 @@ impl App {
                 staking_screen::render(frame, &self.ui);
             }
             Screen::ConfirmDelete => {
-                let store = self.store.as_ref().unwrap_or(&EMPTY_STORE);
-                main_screen::render(frame, &self.ui, store, &self.balance_cache, self.loading_balances);
+                let store = self.service.store.as_ref().unwrap_or(&EMPTY_STORE);
+                main_screen::render(frame, &self.ui, store, &self.service.balance_cache, self.loading_balances);
                 self.render_confirm_delete(frame);
             }
         }
@@ -165,7 +155,7 @@ impl App {
         while let Ok(msg) = self.bg_rx.try_recv() {
             match msg {
                 BgMessage::BalancesUpdated(cache) => {
-                    self.balance_cache = cache;
+                    self.service.balance_cache = cache;
                     self.loading_balances = false;
                     self.last_refresh = Some(Instant::now());
                     self.ui.clear_status();
@@ -254,17 +244,17 @@ impl App {
         if self.loading_balances {
             return;
         }
-        let store = match &self.store {
+        let store = match &self.service.store {
             Some(s) => s.clone(),
             None => return,
         };
 
         // 如果缓存为空，先填充占位数据（所有链显示 -）
-        if self.balance_cache.is_empty() {
-            self.balance_cache = registry::build_placeholder_cache(&self.config, &store);
+        if self.service.balance_cache.is_empty() {
+            self.service.balance_cache = registry::build_placeholder_cache(&self.service.config, &store);
         }
 
-        let config = self.config.clone();
+        let config = self.service.config.clone();
         let tx = self.bg_tx.clone();
         self.loading_balances = true;
 
@@ -276,7 +266,7 @@ impl App {
 
     /// 自动刷新：进入主界面后首次刷新，之后按间隔刷新
     fn auto_refresh_balances(&mut self) {
-        if self.ui.screen != Screen::Main || self.store.is_none() {
+        if self.ui.screen != Screen::Main || self.service.store.is_none() {
             return;
         }
         let should_refresh = match self.last_refresh {
@@ -358,12 +348,9 @@ impl App {
                     self.ui.password_input.clear();
                     return;
                 }
-                let store = WalletStore::new();
                 let pw = self.ui.password_input.as_bytes().to_vec();
-                match encrypted::save(&store, &pw, &self.data_path) {
+                match self.service.create_new_store(&pw) {
                     Ok(()) => {
-                        self.store = Some(store);
-                        self.password = Some(pw);
                         self.ui.password_input.clear();
                         self.ui.password_first = None;
                         self.ui.screen = Screen::Main;
@@ -376,11 +363,12 @@ impl App {
             }
             UnlockMode::Enter => {
                 let pw = self.ui.password_input.as_bytes().to_vec();
-                match encrypted::load(&pw, &self.data_path) {
-                    Ok(mut store) => {
-                        store.migrate();
-                        self.store = Some(store);
-                        self.password = Some(pw);
+                match self.service.unlock(&pw) {
+                    Ok(()) => {
+                        // migrate if needed
+                        if let Some(ref mut store) = self.service.store {
+                            store.migrate();
+                        }
                         let _ = self.save_store();
                         self.ui.password_input.clear();
                         self.ui.screen = Screen::Main;
@@ -426,7 +414,7 @@ impl App {
 
     /// 计算主界面可选行数
     fn count_main_lines(&self) -> usize {
-        let store = match &self.store {
+        let store = match &self.service.store {
             Some(s) => s,
             None => return 2, // 空白行 + 添加钱包
         };
@@ -456,7 +444,7 @@ impl App {
 
     /// 根据当前选中行判断选中了什么
     fn resolve_selection(&self) -> Option<SelectionTarget> {
-        let store = self.store.as_ref()?;
+        let store = self.service.store.as_ref()?;
         let visible: Vec<_> = store.wallets.iter().enumerate().filter(|(_, w)| !w.hidden).collect();
 
         let mut line = 0;
@@ -546,7 +534,7 @@ impl App {
         match target {
             SelectionTarget::Wallet(wi) => {
                 // 多签钱包使用专用的 ActionContext
-                let is_multisig = self
+                let is_multisig = self.service
                     .store
                     .as_ref()
                     .and_then(|s| s.wallets.get(wi))
@@ -569,7 +557,7 @@ impl App {
                 if chain_type == ChainType::Solana
                     && let Some(address) = self.get_sol_address(wallet_index, account_index)
                 {
-                    let owner = self
+                    let owner = self.service
                         .balance_cache
                         .get(&address)
                         .and_then(|p| p.account_owner.as_deref())
@@ -590,7 +578,7 @@ impl App {
                 });
             }
             SelectionTarget::PrivateKeyAddress(wi) => {
-                let ct = self.store.as_ref()
+                let ct = self.service.store.as_ref()
                     .and_then(|s| s.wallets.get(wi))
                     .and_then(|w| match &w.wallet_type {
                         WalletType::PrivateKey { chain_type, .. } => Some(chain_type.clone()),
@@ -600,7 +588,7 @@ impl App {
                 // SOL 私钥钱包检测 Vote/Stake 账户
                 if ct == ChainType::Solana
                     && let Some(address) = self.get_sol_address(wi, 0) {
-                        let owner = self
+                        let owner = self.service
                             .balance_cache
                             .get(&address)
                             .and_then(|p| p.account_owner.as_deref())
@@ -635,7 +623,7 @@ impl App {
 
     /// 从主页进入多签详情（通过 wallet_index 和 vault_pos）
     fn enter_multisig_from_wallet(&mut self, wallet_index: usize, vault_pos: usize) {
-        let store = match &self.store {
+        let store = match &self.service.store {
             Some(s) => s,
             None => return,
         };
@@ -964,7 +952,7 @@ impl App {
         };
 
         // 用主密码加密助记词（双层保护）
-        let encrypted_mnemonic = match &self.password {
+        let encrypted_mnemonic = match self.service.password() {
             Some(pw) => {
                 let (salt, nonce, ct) =
                     match swallet_core::crypto::encryption::encrypt(phrase.as_bytes(), pw) {
@@ -1044,7 +1032,7 @@ impl App {
         };
 
         // 加密私钥
-        let encrypted_pk = match &self.password {
+        let encrypted_pk = match self.service.password() {
             Some(pw) => {
                 let (salt, nonce, ct) =
                     match swallet_core::crypto::encryption::encrypt(pk.as_bytes(), pw) {
@@ -1129,7 +1117,7 @@ impl App {
     }
 
     fn add_wallet(&mut self, wallet: Wallet) {
-        if let Some(ref mut store) = self.store {
+        if let Some(ref mut store) = self.service.store {
             store.wallets.push(wallet);
             if let Err(e) = self.save_store() {
                 self.ui.set_status(format!("保存失败: {e}"));
@@ -1141,7 +1129,7 @@ impl App {
     }
 
     fn next_sort_order(&self) -> u32 {
-        self.store
+        self.service.store
             .as_ref()
             .map(|s| s.wallets.len() as u32)
             .unwrap_or(0)
@@ -1297,7 +1285,7 @@ impl App {
     fn add_derived_address(&mut self, wallet_index: usize, chain_type: ChainType) {
         // 先提取加密助记词和索引（只读借用）
         let (encrypted_mnemonic, eth_idx, sol_idx) = {
-            let store = match &self.store {
+            let store = match &self.service.store {
                 Some(s) => s,
                 None => return,
             };
@@ -1343,7 +1331,7 @@ impl App {
         seed.clear_sensitive();
 
         // 修改 store（可变借用）
-        if let Some(ref mut store) = self.store
+        if let Some(ref mut store) = self.service.store
             && let Some(wallet) = store.wallets.get_mut(wallet_index)
                 && let WalletType::Mnemonic {
                     ref mut eth_accounts,
@@ -1382,7 +1370,7 @@ impl App {
     }
 
     fn toggle_wallet_hidden(&mut self, wallet_index: usize, hidden: bool) {
-        if let Some(ref mut store) = self.store
+        if let Some(ref mut store) = self.service.store
             && let Some(w) = store.wallets.get_mut(wallet_index) {
                 w.hidden = hidden;
                 let _ = self.save_store_inner();
@@ -1397,7 +1385,7 @@ impl App {
         account_index: usize,
         hidden: bool,
     ) {
-        if let Some(ref mut store) = self.store
+        if let Some(ref mut store) = self.service.store
             && let Some(w) = store.wallets.get_mut(wallet_index) {
                 if let WalletType::Mnemonic {
                     ref mut eth_accounts,
@@ -1419,7 +1407,7 @@ impl App {
     }
 
     fn move_wallet(&mut self, wallet_index: usize, up: bool) {
-        if let Some(ref mut store) = self.store {
+        if let Some(ref mut store) = self.service.store {
             let len = store.wallets.len();
             if up && wallet_index > 0 {
                 store.wallets.swap(wallet_index, wallet_index - 1);
@@ -1437,7 +1425,7 @@ impl App {
 
     /// 获取当前 context 对应的备注/名称
     fn get_current_label(&self, context: &Option<ActionContext>) -> Option<String> {
-        let store = self.store.as_ref()?;
+        let store = self.service.store.as_ref()?;
         match context {
             Some(ActionContext::Wallet { wallet_index })
             | Some(ActionContext::PrivateKeyAddress { wallet_index, .. })
@@ -1485,7 +1473,7 @@ impl App {
         let context = self.ui.action_context.clone();
         self.ui.input_purpose = None;
 
-        if let Some(ref mut store) = self.store {
+        if let Some(ref mut store) = self.service.store {
             match context {
                 Some(ActionContext::Wallet { wallet_index }) => {
                     if let Some(w) = store.wallets.get_mut(wallet_index) {
@@ -1556,7 +1544,7 @@ impl App {
         let wi = self.ui.ms_current_wallet_index;
         let vault_idx = self.ui.ms_current_vault_index;
 
-        if let Some(ref mut store) = self.store {
+        if let Some(ref mut store) = self.service.store {
             if let Some(w) = store.wallets.get_mut(wi)
                 && let WalletType::Multisig { ref mut vaults, .. } = w.wallet_type
                 && let Some(v) = vaults.iter_mut().find(|v| v.vault_index == vault_idx)
@@ -1573,7 +1561,7 @@ impl App {
     }
 
     fn delete_wallet(&mut self, wallet_index: usize) {
-        if let Some(ref mut store) = self.store
+        if let Some(ref mut store) = self.service.store
             && wallet_index < store.wallets.len() {
                 store.wallets.remove(wallet_index);
                 let _ = self.save_store_inner();
@@ -1596,7 +1584,7 @@ impl App {
 
         frame.render_widget(Clear, popup_area);
 
-        let wallet_name = self.store.as_ref()
+        let wallet_name = self.service.store.as_ref()
             .and_then(|s| self.ui.pending_delete_wallet.and_then(|i| s.wallets.get(i)))
             .map(|w| w.name.as_str())
             .unwrap_or("未知");
@@ -1646,14 +1634,14 @@ impl App {
                     return;
                 }
                 // 验证密码
-                let pw = match &self.password {
-                    Some(pw) => pw.clone(),
+                let pw = match self.service.password() {
+                    Some(pw) => pw,
                     None => {
                         self.ui.set_status("密码未设置");
                         return;
                     }
                 };
-                if self.ui.delete_confirm_password.as_bytes() != pw.as_slice() {
+                if self.ui.delete_confirm_password.as_bytes() != pw {
                     self.ui.set_status("密码错误");
                     self.ui.delete_confirm_password.clear();
                     return;
@@ -1675,7 +1663,7 @@ impl App {
     }
 
     fn handle_restore_hidden(&mut self, option: &AddWalletOption) {
-        if let Some(ref mut store) = self.store {
+        if let Some(ref mut store) = self.service.store {
             let mut restored = 0;
             match option {
                 AddWalletOption::RestoreHiddenWallet => {
@@ -1736,7 +1724,7 @@ impl App {
                 chain_type,
                 account_index,
             } => {
-                let store = match &self.store {
+                let store = match &self.service.store {
                     Some(s) => s,
                     None => return,
                 };
@@ -1768,7 +1756,7 @@ impl App {
                 (*wallet_index, chain_type.clone(), addr, lbl, Some(*account_index))
             }
             ActionContext::PrivateKeyAddress { wallet_index, .. } => {
-                let store = match &self.store {
+                let store = match &self.service.store {
                     Some(s) => s,
                     None => return,
                 };
@@ -1797,10 +1785,10 @@ impl App {
 
         let assets = match chain_type {
             ChainType::Ethereum => {
-                transfer::build_eth_assets(&self.config, &address, &self.balance_cache)
+                transfer::build_eth_assets(&self.service.config, &address, &self.service.balance_cache)
             }
             ChainType::Solana => {
-                transfer::build_sol_assets(&self.config, &address, &self.balance_cache)
+                transfer::build_sol_assets(&self.service.config, &address, &self.service.balance_cache)
             }
         };
 
@@ -1967,14 +1955,14 @@ impl App {
 
     fn execute_transfer(&mut self) {
         // 验证密码
-        let pw = match &self.password {
-            Some(pw) => pw.clone(),
+        let pw = match self.service.password() {
+            Some(pw) => pw,
             None => {
                 self.ui.set_status("密码未设置");
                 return;
             }
         };
-        if self.ui.transfer_confirm_password.as_bytes() != pw.as_slice() {
+        if self.ui.transfer_confirm_password.as_bytes() != pw {
             self.ui.set_status("密码错误");
             self.ui.transfer_confirm_password.clear();
             return;
@@ -2031,13 +2019,13 @@ impl App {
     }
 
     fn get_transfer_private_key(&mut self) -> Option<Vec<u8>> {
-        // 先提取所需数据，释放 self.store 借用
+        // 先提取所需数据，释放 self.service.store 借用
         enum TransferKeySource {
             Mnemonic { encrypted: String, chain: ChainType, deriv_idx: u32 },
             PrivateKey { encrypted: String, chain: ChainType },
         }
         let source = {
-            let store = self.store.as_ref()?;
+            let store = self.service.store.as_ref()?;
             let wallet = store.wallets.get(self.ui.transfer_wallet_index)?;
             match &wallet.wallet_type {
                 WalletType::Mnemonic {
@@ -2152,7 +2140,7 @@ impl App {
     }
 
     fn handle_ms_list_key(&mut self, key: KeyEvent) {
-        let visible_count = self
+        let visible_count = self.service
             .store
             .as_ref()
             .map(|s| s.multisigs.iter().filter(|m| !m.hidden).count())
@@ -2216,7 +2204,7 @@ impl App {
                     }
                 }
                 // 检查是否已导入
-                if let Some(ref store) = self.store {
+                if let Some(ref store) = self.service.store {
                     let addr = &self.ui.ms_input_address;
                     let exists = store.wallets.iter().any(|w| {
                         matches!(
@@ -2838,7 +2826,7 @@ impl App {
 
     /// 进入链选择步骤
     fn enter_chain_select(&mut self, purpose: MsChainSelectPurpose) {
-        let chains: Vec<(String, String, String)> = self
+        let chains: Vec<(String, String, String)> = self.service
             .config
             .chains
             .solana
@@ -2963,7 +2951,7 @@ impl App {
 
     /// 查看已导入的多签
     fn view_multisig(&mut self, list_index: usize) {
-        let store = match &self.store {
+        let store = match &self.service.store {
             Some(s) => s,
             None => return,
         };
@@ -3097,14 +3085,14 @@ impl App {
 
     fn execute_create_proposal(&mut self) {
         // 验证密码
-        let pw = match &self.password {
-            Some(pw) => pw.clone(),
+        let pw = match self.service.password() {
+            Some(pw) => pw,
             None => {
                 self.ui.set_status("密码未设置");
                 return;
             }
         };
-        if self.ui.ms_confirm_password.as_bytes() != pw.as_slice() {
+        if self.ui.ms_confirm_password.as_bytes() != pw {
             self.ui.set_status("密码错误");
             self.ui.ms_confirm_password.clear();
             return;
@@ -3200,14 +3188,14 @@ impl App {
     /// 执行投票操作
     fn execute_vote(&mut self) {
         // 验证密码
-        let pw = match &self.password {
-            Some(pw) => pw.clone(),
+        let pw = match self.service.password() {
+            Some(pw) => pw,
             None => {
                 self.ui.set_status("密码未设置");
                 return;
             }
         };
-        if self.ui.ms_confirm_password.as_bytes() != pw.as_slice() {
+        if self.ui.ms_confirm_password.as_bytes() != pw {
             self.ui.set_status("密码错误");
             self.ui.ms_confirm_password.clear();
             return;
@@ -3352,7 +3340,7 @@ impl App {
     /// 收集本地钱包中的 SOL 地址
     fn collect_local_sol_addresses(&self) -> Vec<(String, String)> {
         let mut result = Vec::new();
-        let store = match &self.store {
+        let store = match &self.service.store {
             Some(s) => s,
             None => return result,
         };
@@ -3591,14 +3579,14 @@ impl App {
     /// 执行创建多签
     fn execute_create_multisig(&mut self) {
         // 验证密码
-        let pw = match &self.password {
-            Some(pw) => pw.clone(),
+        let pw = match self.service.password() {
+            Some(pw) => pw,
             None => {
                 self.ui.set_status("密码未设置");
                 return;
             }
         };
-        if self.ui.ms_confirm_password.as_bytes() != pw.as_slice() {
+        if self.ui.ms_confirm_password.as_bytes() != pw {
             self.ui.set_status("密码错误");
             self.ui.ms_confirm_password.clear();
             return;
@@ -3715,7 +3703,7 @@ impl App {
             PrivateKey { encrypted: String },
         }
         let source = {
-            let store = self.store.as_ref()?;
+            let store = self.service.store.as_ref()?;
             let mut found = None;
             for wallet in &store.wallets {
                 match &wallet.wallet_type {
@@ -3785,7 +3773,7 @@ impl App {
 
         // 找到匹配的本地地址
         let matched_address = {
-            let store = self.store.as_ref()?;
+            let store = self.service.store.as_ref()?;
             let mut found = None;
             for wallet in &store.wallets {
                 match &wallet.wallet_type {
@@ -3821,7 +3809,7 @@ impl App {
         let info_address_str = info.address.to_string();
 
         // 检查是否已存在（新格式）
-        if let Some(ref store) = self.store {
+        if let Some(ref store) = self.service.store {
             let exists = store.wallets.iter().any(|w| {
                 matches!(
                     &w.wallet_type,
@@ -3844,7 +3832,7 @@ impl App {
         let chain_id = self.ui.ms_selected_chain_id.clone();
         let chain_name = self.ui.ms_selected_chain_name.clone();
 
-        if let Some(ref mut store) = self.store {
+        if let Some(ref mut store) = self.service.store {
             let sort_order = store.wallets.len() as u32;
             let wallet_index = store.wallets.len();
             store.wallets.push(Wallet {
@@ -3875,7 +3863,7 @@ impl App {
 
     /// 隐藏/显示多签 vault
     fn toggle_vault_hidden(&mut self, wallet_index: usize, vault_pos: usize, hidden: bool) {
-        if let Some(ref mut store) = self.store
+        if let Some(ref mut store) = self.service.store
             && let Some(w) = store.wallets.get_mut(wallet_index)
             && let WalletType::Multisig { ref mut vaults, .. } = w.wallet_type
             && let Some(v) = vaults.get_mut(vault_pos)
@@ -3888,7 +3876,7 @@ impl App {
 
     /// 添加 vault 到多签钱包
     fn add_vault_to_multisig(&mut self, wallet_index: usize) {
-        if let Some(ref mut store) = self.store
+        if let Some(ref mut store) = self.service.store
             && let Some(w) = store.wallets.get_mut(wallet_index)
             && let WalletType::Multisig {
                 ref multisig_address,
@@ -3914,7 +3902,7 @@ impl App {
 
     /// 获取 Solana RPC URL（用于多签操作）
     fn get_solana_rpc_url(&self) -> String {
-        self.config
+        self.service.config
             .chains
             .solana
             .first()
@@ -3925,14 +3913,14 @@ impl App {
     /// 获取当前多签的 RPC URL
     fn get_current_ms_rpc_url(&self) -> String {
         // 先尝试新格式（WalletType::Multisig）
-        if let Some(ref store) = self.store
+        if let Some(ref store) = self.service.store
             && let Some(w) = store.wallets.get(self.ui.ms_current_wallet_index)
             && let WalletType::Multisig { ref rpc_url, .. } = w.wallet_type
         {
             return rpc_url.clone();
         }
         // 回退到旧格式（兼容）
-        self.store
+        self.service.store
             .as_ref()
             .and_then(|s| s.multisigs.get(self.ui.ms_current_index))
             .map(|m| m.rpc_url.clone())
@@ -3942,29 +3930,15 @@ impl App {
     // ========== 辅助方法 ==========
 
     fn save_store(&self) -> Result<(), swallet_core::error::StorageError> {
-        if let (Some(store), Some(pw)) = (&self.store, &self.password) {
-            encrypted::save(store, pw, &self.data_path)?;
-        }
-        Ok(())
+        self.service.save_store()
     }
 
     fn save_store_inner(&self) -> Result<(), swallet_core::error::StorageError> {
-        self.save_store()
+        self.service.save_store()
     }
 
-    /// 解密内层加密的秘密（助记词/私钥）
     fn decrypt_inner_secret(&self, encrypted: &str) -> Option<String> {
-        let pw = self.password.as_ref()?;
-        let parts: Vec<&str> = encrypted.split(':').collect();
-        if parts.len() != 3 {
-            return None;
-        }
-        let salt = hex::decode(parts[0]).ok()?;
-        let nonce = hex::decode(parts[1]).ok()?;
-        let ciphertext = hex::decode(parts[2]).ok()?;
-        let plaintext =
-            swallet_core::crypto::encryption::decrypt(&ciphertext, pw, &salt, &nonce).ok()?;
-        String::from_utf8(plaintext).ok()
+        self.service.decrypt_inner_secret(encrypted)
     }
 }
 
@@ -4448,7 +4422,7 @@ async fn verify_program_authority(
 
 impl App {
     fn get_sol_address(&self, wallet_index: usize, account_index: usize) -> Option<String> {
-        let store = self.store.as_ref()?;
+        let store = self.service.store.as_ref()?;
         let wallet = store.wallets.get(wallet_index)?;
         match &wallet.wallet_type {
             WalletType::Mnemonic { sol_accounts, .. } => {
@@ -4511,7 +4485,7 @@ impl App {
             None => return,
         };
 
-        let chains: Vec<(String, String, String, String)> = self
+        let chains: Vec<(String, String, String, String)> = self.service
             .config
             .chains
             .solana
@@ -4551,7 +4525,7 @@ impl App {
         let address = &self.ui.stk_from_address;
 
         // 检查账户 owner —— 必须是空的系统账户
-        let owner = self
+        let owner = self.service
             .balance_cache
             .get(address)
             .and_then(|p| p.account_owner.as_deref())
@@ -4569,7 +4543,7 @@ impl App {
         }
 
         // 检查地址必须无余额（空地址才能创建账户）
-        let has_balance = self
+        let has_balance = self.service
             .balance_cache
             .get(address)
             .map(|p| p.chains.iter().any(|c| c.native_balance > 0))
@@ -4603,7 +4577,7 @@ impl App {
     /// 构建有余额的 SOL 地址列表（用于 fee payer 选择）
     fn build_fee_payer_list(&self) -> Vec<(String, String, u128, usize, usize)> {
         let mut list = Vec::new();
-        let store = match self.store.as_ref() {
+        let store = match self.service.store.as_ref() {
             Some(s) => s,
             None => return list,
         };
@@ -4641,7 +4615,7 @@ impl App {
                     continue;
                 }
                 // 排除 Vote/Stake 账户
-                let is_special_account = self
+                let is_special_account = self.service
                     .balance_cache
                     .get(&addr)
                     .and_then(|p| p.account_owner.as_deref())
@@ -4649,13 +4623,13 @@ impl App {
                 if is_special_account {
                     continue;
                 }
-                let has_balance = self
+                let has_balance = self.service
                     .balance_cache
                     .get(&addr)
                     .map(|p| p.chains.iter().any(|c| c.native_balance > 0))
                     .unwrap_or(false);
                 if has_balance {
-                    let balance_lamports = self
+                    let balance_lamports = self.service
                         .balance_cache
                         .get(&addr)
                         .and_then(|p| p.chains.iter().find(|c| c.native_balance > 0))
@@ -4757,7 +4731,7 @@ impl App {
 
     /// 获取默认 SOL RPC URL（取第一条 Solana 链的配置）
     fn get_sol_rpc_url(&self) -> String {
-        self.config
+        self.service.config
             .chains
             .solana
             .first()
@@ -4768,10 +4742,10 @@ impl App {
     /// 根据地址的 balance_cache 中的 chain_id 找到对应的 RPC URL
     /// 根据 account_owner 所在链找 RPC URL（Vote/Stake 账户只属于一条链）
     fn get_rpc_url_for_address(&self, address: &str) -> String {
-        if let Some(portfolio) = self.balance_cache.get(address) {
+        if let Some(portfolio) = self.service.balance_cache.get(address) {
             // 优先使用 account_owner 来源链
             if let Some(chain_id) = &portfolio.account_owner_chain_id
-                && let Some(cfg) = self.config.chains.solana.iter().find(|c| &c.id == chain_id) {
+                && let Some(cfg) = self.service.config.chains.solana.iter().find(|c| &c.id == chain_id) {
                     return cfg.rpc_url.clone();
                 }
         }
@@ -4780,12 +4754,12 @@ impl App {
 
     /// 根据 account_owner 所在链找 native_symbol
     fn get_native_symbol_for_address(&self, address: &str) -> String {
-        if let Some(portfolio) = self.balance_cache.get(address)
+        if let Some(portfolio) = self.service.balance_cache.get(address)
             && let Some(chain_id) = &portfolio.account_owner_chain_id
                 && let Some(chain_bal) = portfolio.chains.iter().find(|c| c.chain_id == *chain_id) {
                     return chain_bal.native_symbol.clone();
                 }
-        self.config.chains.solana.first().map(|c| c.native_symbol.clone()).unwrap_or_else(|| "SOL".to_string())
+        self.service.config.chains.solana.first().map(|c| c.native_symbol.clone()).unwrap_or_else(|| "SOL".to_string())
     }
 
     /// 获取 fee payer 的 SOL 私钥
@@ -4811,7 +4785,7 @@ impl App {
             PrivateKey { encrypted: String },
         }
         let source = {
-            let store = self.store.as_ref()?;
+            let store = self.service.store.as_ref()?;
             let wallet = store.wallets.get(wallet_index)?;
             match &wallet.wallet_type {
                 WalletType::Mnemonic { encrypted_mnemonic, sol_accounts, .. } => {
@@ -5214,8 +5188,8 @@ impl App {
                     return;
                 }
                 // 验证密码正确性
-                if let Some(saved_pw) = &self.password {
-                    if password.as_bytes() != saved_pw.as_slice() {
+                if let Some(saved_pw) = self.service.password() {
+                    if password.as_bytes() != saved_pw {
                         self.ui.set_status("密码错误");
                         self.ui.stk_confirm_password.clear();
                         return;

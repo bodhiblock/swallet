@@ -613,3 +613,278 @@ pub struct FeePayer {
 pub fn generate_mnemonic() -> Result<String, crate::error::CryptoError> {
     mnemonic::generate_mnemonic()
 }
+
+// ========== 异步业务函数 ==========
+
+/// 执行转账（ETH/ERC20/SOL/SPL）
+pub async fn execute_transfer(
+    private_key: Vec<u8>,
+    asset: crate::transfer::TransferableAsset,
+    to_address: String,
+    amount_raw: u128,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+
+    match (&asset.chain_type, &asset.asset_kind) {
+        (ChainType::Ethereum, crate::transfer::AssetKind::Native) => {
+            let chain_id = asset.evm_chain_id.ok_or("缺少 chain_id")?;
+            crate::transfer::eth_transfer::send_eth_native(
+                &client, &asset.rpc_url, chain_id, &private_key, &to_address, amount_raw,
+            ).await
+        }
+        (ChainType::Ethereum, crate::transfer::AssetKind::Erc20 { contract_address }) => {
+            let chain_id = asset.evm_chain_id.ok_or("缺少 chain_id")?;
+            crate::transfer::eth_transfer::send_erc20(
+                &client, &asset.rpc_url, chain_id, &private_key, contract_address, &to_address, amount_raw,
+            ).await
+        }
+        (ChainType::Solana, crate::transfer::AssetKind::Native) => {
+            let amount_u64: u64 = amount_raw.try_into().map_err(|_| "SOL 转账数量超出范围".to_string())?;
+            crate::transfer::sol_transfer::send_sol_native(
+                &client, &asset.rpc_url, &private_key, &to_address, amount_u64,
+            ).await
+        }
+        (ChainType::Solana, crate::transfer::AssetKind::SplToken { mint_address, is_token_2022 }) => {
+            let amount_u64: u64 = amount_raw.try_into().map_err(|_| "SPL 转账数量超出范围".to_string())?;
+            let token_program = if *is_token_2022 {
+                "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+            } else {
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            };
+            crate::transfer::sol_transfer::send_spl_token(
+                &client, &asset.rpc_url, &private_key, mint_address, &to_address, amount_u64, token_program,
+            ).await
+        }
+        _ => Err("不支持的转账类型".into()),
+    }
+}
+
+/// 执行创建提案
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_create_proposal(
+    rpc_url: &str,
+    private_key: &[u8],
+    fee_payer_key: &[u8],
+    multisig_address: &str,
+    proposal_type_idx: usize,
+    to_address: &str,
+    amount_str: &str,
+    upgrade_program: &str,
+    upgrade_buffer: &str,
+    preset_program_idx: usize,
+    preset_instruction_idx: usize,
+    preset_args: &[String],
+    chain_id: &str,
+    vault_index: u8,
+    vs_op: Option<&crate::multisig::MsVoteStakeOp>,
+    vs_target: &str,
+    vs_param: &str,
+    vs_amount: &str,
+) -> Result<String, String> {
+    use std::str::FromStr;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+
+    let multisig_pubkey = solana_sdk::pubkey::Pubkey::from_str(multisig_address)
+        .map_err(|e| format!("无效的多签地址: {e}"))?;
+
+    let (vault_pda, _) = crate::multisig::derive_vault_pda(&multisig_pubkey, vault_index);
+
+    let proposal_types = crate::multisig::ProposalType::for_chain(chain_id);
+    let proposal_type = proposal_types.get(proposal_type_idx).ok_or("无效的提案类型")?;
+
+    let inner_instructions = match proposal_type {
+        crate::multisig::ProposalType::SolTransfer => {
+            let to_pubkey: [u8; 32] = bs58::decode(to_address)
+                .into_vec().map_err(|e| format!("无效的目标地址: {e}"))?
+                .try_into().map_err(|_| "目标地址长度无效".to_string())?;
+            let amount_raw = crate::transfer::parse_amount(amount_str, 9)?;
+            let lamports: u64 = amount_raw.try_into().map_err(|_| "SOL 数量超出范围".to_string())?;
+            vec![crate::multisig::proposals::build_sol_transfer_instruction(
+                &vault_pda.to_bytes(), &to_pubkey, lamports,
+            )]
+        }
+        crate::multisig::ProposalType::TokenTransfer => {
+            return Err("Token 转账提案暂未实现，请使用 SOL 转账".into());
+        }
+        crate::multisig::ProposalType::ProgramCall => {
+            let programs = crate::multisig::presets::programs_for_chain(chain_id);
+            let program = programs.get(preset_program_idx).ok_or("无效的预制程序")?;
+            let instruction = program.instructions.get(preset_instruction_idx).ok_or("无效的预制指令")?;
+            (instruction.build)(&vault_pda.to_bytes(), &program.program_id, preset_args)?
+        }
+        crate::multisig::ProposalType::ProgramUpgrade => {
+            let program_bytes: [u8; 32] = bs58::decode(upgrade_program)
+                .into_vec().map_err(|e| format!("无效的程序地址: {e}"))?
+                .try_into().map_err(|_| "程序地址长度无效".to_string())?;
+            let buffer_bytes: [u8; 32] = bs58::decode(upgrade_buffer)
+                .into_vec().map_err(|e| format!("无效的 Buffer 地址: {e}"))?
+                .try_into().map_err(|_| "Buffer 地址长度无效".to_string())?;
+            verify_upgrade_authority(&client, rpc_url, &program_bytes, &vault_pda).await?;
+            verify_buffer_exists(&client, rpc_url, upgrade_buffer).await?;
+            crate::multisig::proposals::build_program_upgrade_instructions(
+                &program_bytes, &buffer_bytes, &vault_pda.to_bytes(), &vault_pda.to_bytes(),
+            )
+        }
+        crate::multisig::ProposalType::VoteManage | crate::multisig::ProposalType::StakeManage => {
+            let op = vs_op.ok_or("未选择操作类型")?;
+            let target_bytes: [u8; 32] = crate::multisig::proposals::decode_bs58_pubkey(vs_target)
+                .ok_or_else(|| format!("无效的目标地址: {vs_target}"))?;
+            let vault_bytes = vault_pda.to_bytes();
+
+            use crate::multisig::MsVoteStakeOp;
+            match op {
+                MsVoteStakeOp::VoteAuthorizeVoter => {
+                    let new_auth = crate::multisig::proposals::decode_bs58_pubkey(vs_param).ok_or("无效的新权限地址")?;
+                    vec![crate::multisig::proposals::build_vote_authorize_instruction(&target_bytes, &vault_bytes, &new_auth, 0)]
+                }
+                MsVoteStakeOp::VoteAuthorizeWithdrawer => {
+                    let new_auth = crate::multisig::proposals::decode_bs58_pubkey(vs_param).ok_or("无效的新权限地址")?;
+                    vec![crate::multisig::proposals::build_vote_authorize_instruction(&target_bytes, &vault_bytes, &new_auth, 1)]
+                }
+                MsVoteStakeOp::VoteWithdraw => {
+                    let to_bytes = crate::multisig::proposals::decode_bs58_pubkey(vs_param).ok_or("无效的提取目标地址")?;
+                    let lamports: u64 = crate::transfer::parse_amount(vs_amount, 9)?.try_into().map_err(|_| "SOL 数量超出范围".to_string())?;
+                    vec![crate::multisig::proposals::build_vote_withdraw_instruction(&target_bytes, &to_bytes, &vault_bytes, lamports)]
+                }
+                MsVoteStakeOp::StakeAuthorizeStaker => {
+                    let new_auth = crate::multisig::proposals::decode_bs58_pubkey(vs_param).ok_or("无效的新权限地址")?;
+                    vec![crate::multisig::proposals::build_stake_authorize_instruction(&target_bytes, &vault_bytes, &new_auth, 0)]
+                }
+                MsVoteStakeOp::StakeAuthorizeWithdrawer => {
+                    let new_auth = crate::multisig::proposals::decode_bs58_pubkey(vs_param).ok_or("无效的新权限地址")?;
+                    vec![crate::multisig::proposals::build_stake_authorize_instruction(&target_bytes, &vault_bytes, &new_auth, 1)]
+                }
+                MsVoteStakeOp::StakeDelegate => {
+                    let vote_account = crate::multisig::proposals::decode_bs58_pubkey(vs_param).ok_or("无效的 Vote 账户地址")?;
+                    vec![crate::multisig::proposals::build_stake_delegate_instruction(&target_bytes, &vote_account, &vault_bytes)]
+                }
+                MsVoteStakeOp::StakeDeactivate => {
+                    vec![crate::multisig::proposals::build_stake_deactivate_instruction(&target_bytes, &vault_bytes)]
+                }
+                MsVoteStakeOp::StakeWithdraw => {
+                    let to_bytes = crate::multisig::proposals::decode_bs58_pubkey(vs_param).ok_or("无效的提取目标地址")?;
+                    let lamports: u64 = crate::transfer::parse_amount(vs_amount, 9)?.try_into().map_err(|_| "SOL 数量超出范围".to_string())?;
+                    vec![crate::multisig::proposals::build_stake_withdraw_instruction(&target_bytes, &to_bytes, &vault_bytes, lamports)]
+                }
+            }
+        }
+    };
+
+    crate::multisig::squads::create_proposal_and_approve(
+        &client, rpc_url, private_key, fee_payer_key, multisig_address, vault_index, inner_instructions,
+    ).await
+}
+
+/// 检查程序的 upgrade authority 是否为指定的 vault PDA
+pub async fn verify_upgrade_authority(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    program_bytes: &[u8; 32],
+    vault_pda: &solana_sdk::pubkey::Pubkey,
+) -> Result<(), String> {
+    use solana_sdk::pubkey::Pubkey;
+    use std::str::FromStr;
+
+    let program_pk = Pubkey::new_from_array(*program_bytes);
+    let bpf_loader_id = Pubkey::from_str("BPFLoaderUpgradeab1e11111111111111111111111")
+        .map_err(|e| format!("BPF Loader 地址解析失败: {e}"))?;
+    let (programdata_pda, _) = Pubkey::find_program_address(&[program_pk.as_ref()], &bpf_loader_id);
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "getAccountInfo",
+        "params": [programdata_pda.to_string(), {"encoding": "base64", "commitment": "confirmed"}],
+        "id": 1
+    });
+    let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+
+    let value = resp.get("result").and_then(|r| r.get("value")).ok_or("无法获取 ProgramData 账户")?;
+    if value.is_null() { return Err("ProgramData 账户不存在，请确认程序地址正确".into()); }
+
+    let data_arr = value.get("data").and_then(|d| d.as_array()).ok_or("ProgramData 缺少 data 字段")?;
+    let base64_str = data_arr.first().and_then(|v| v.as_str()).ok_or("ProgramData 数据格式无效")?;
+    let data = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_str)
+        .map_err(|e| format!("ProgramData base64 解码失败: {e}"))?;
+
+    if data.len() < 45 { return Err("ProgramData 账户数据过短".into()); }
+    let variant = u32::from_le_bytes(data[0..4].try_into().unwrap());
+    if variant != 3 { return Err(format!("不是有效的 ProgramData 账户 (variant={})", variant)); }
+    if data[12] == 0 { return Err("程序不可升级（upgrade authority 已撤销）".into()); }
+
+    let authority = Pubkey::try_from(&data[13..45]).map_err(|_| "解析 upgrade authority 失败")?;
+    if authority != *vault_pda {
+        return Err(format!("upgrade authority 不匹配\n当前 vault: {}\n链上 authority: {}", vault_pda, authority));
+    }
+    Ok(())
+}
+
+/// 检查 buffer 账户是否存在
+pub async fn verify_buffer_exists(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    buffer_address: &str,
+) -> Result<(), String> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "getAccountInfo",
+        "params": [buffer_address, {"encoding": "base64", "commitment": "confirmed"}],
+        "id": 1
+    });
+    let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+    let value = resp.get("result").and_then(|r| r.get("value"));
+    if value.is_none() || value.unwrap().is_null() {
+        return Err(format!("Buffer 账户 {} 不存在，请先执行 solana program write-buffer", buffer_address));
+    }
+    Ok(())
+}
+
+/// 验证预制程序的 config PDA 中的 authority 是否为当前 vault
+pub async fn verify_program_authority(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    program_id: &[u8; 32],
+    vault_pda: &solana_sdk::pubkey::Pubkey,
+) -> Result<(), String> {
+    use solana_sdk::pubkey::Pubkey;
+
+    let pid = Pubkey::new_from_array(*program_id);
+    let config_pda = Pubkey::find_program_address(&[b"config"], &pid).0;
+    let quest_config_pda = Pubkey::find_program_address(&[b"quest_config"], &pid).0;
+
+    for config_addr in &[config_pda, quest_config_pda] {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "getAccountInfo",
+            "params": [config_addr.to_string(), {"encoding": "base64", "commitment": "confirmed"}],
+            "id": 1
+        });
+        let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+        let value = resp.get("result").and_then(|r| r.get("value"));
+        if value.is_none() || value.unwrap().is_null() { continue; }
+
+        let data_b64 = value.unwrap().get("data")
+            .and_then(|d| d.as_array()).and_then(|arr| arr.first())
+            .and_then(|v| v.as_str()).ok_or("无法解析 config 账户数据")?;
+
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.decode(data_b64)
+            .map_err(|e| format!("base64 解码失败: {e}"))?;
+
+        if data.len() < 40 { return Err("config 账户数据太短".to_string()); }
+        let authority_bytes: [u8; 32] = data[8..40].try_into().map_err(|_| "无法读取 authority 字段")?;
+        let authority = Pubkey::new_from_array(authority_bytes);
+
+        if authority != *vault_pda {
+            return Err(format!("authority 不匹配\n当前 vault: {}\n链上 authority: {}", vault_pda, authority));
+        }
+        return Ok(());
+    }
+    Err("未找到 config 账户，该程序可能尚未初始化".to_string())
+}
