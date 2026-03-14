@@ -6,9 +6,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::chain::solana::{STAKE_PROGRAM, VOTE_PROGRAM};
-use crate::chain::{format_balance, BalanceCache};
-use crate::storage::data::{WalletStore, WalletType};
+use swallet_core::chain::solana::{STAKE_PROGRAM, VOTE_PROGRAM};
+use swallet_core::chain::{format_balance, BalanceCache};
+use swallet_core::storage::data::{WalletStore, WalletType};
 use crate::tui::state::UiState;
 
 pub fn render(

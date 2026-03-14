@@ -4,17 +4,17 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
-use crate::crypto::SecureClear;
+use swallet_core::crypto::SecureClear;
 
-use crate::chain::{registry, BalanceCache};
-use crate::config::AppConfig;
-use crate::crypto::{eth_keys, mnemonic, sol_keys};
-use crate::multisig::{self, ProposalType};
-use crate::storage::data::{
+use swallet_core::chain::{registry, BalanceCache};
+use swallet_core::config::AppConfig;
+use swallet_core::crypto::{eth_keys, mnemonic, sol_keys};
+use swallet_core::multisig::{self, ProposalType};
+use swallet_core::storage::data::{
     ChainType, DerivedAccount, VaultAccount, Wallet, WalletStore, WalletType, WatchOnlySource,
 };
-use crate::storage::encrypted;
-use crate::transfer::{self, AssetKind, TransferableAsset};
+use swallet_core::storage::encrypted;
+use swallet_core::transfer::{self, AssetKind, TransferableAsset};
 use crate::tui::event;
 use crate::tui::screens::{
     action_menu, add_wallet, dex as dex_screen, main_screen,
@@ -40,8 +40,8 @@ enum BgMessage {
     MultisigOpComplete { success: bool, message: String },
     MultisigCreated { address: String, tx_sig: String },
     StakingOpComplete { success: bool, message: String },
-    VoteAccountFetched(crate::staking::VoteAccountInfo),
-    StakeAccountFetched(crate::staking::StakeAccountInfo),
+    VoteAccountFetched(swallet_core::staking::VoteAccountInfo),
+    StakeAccountFetched(swallet_core::staking::StakeAccountInfo),
     StakingFetchError(String),
 }
 
@@ -574,11 +574,11 @@ impl App {
                         .get(&address)
                         .and_then(|p| p.account_owner.as_deref())
                         .unwrap_or("");
-                    if owner == crate::chain::solana::VOTE_PROGRAM {
+                    if owner == swallet_core::chain::solana::VOTE_PROGRAM {
                         self.enter_vote_detail(wallet_index, account_index, &address);
                         return;
                     }
-                    if owner == crate::chain::solana::STAKE_PROGRAM {
+                    if owner == swallet_core::chain::solana::STAKE_PROGRAM {
                         self.enter_stake_detail(wallet_index, account_index, &address);
                         return;
                     }
@@ -605,11 +605,11 @@ impl App {
                             .get(&address)
                             .and_then(|p| p.account_owner.as_deref())
                             .unwrap_or("");
-                        if owner == crate::chain::solana::VOTE_PROGRAM {
+                        if owner == swallet_core::chain::solana::VOTE_PROGRAM {
                             self.enter_vote_detail(wi, 0, &address);
                             return;
                         }
-                        if owner == crate::chain::solana::STAKE_PROGRAM {
+                        if owner == swallet_core::chain::solana::STAKE_PROGRAM {
                             self.enter_stake_detail(wi, 0, &address);
                             return;
                         }
@@ -967,7 +967,7 @@ impl App {
         let encrypted_mnemonic = match &self.password {
             Some(pw) => {
                 let (salt, nonce, ct) =
-                    match crate::crypto::encryption::encrypt(phrase.as_bytes(), pw) {
+                    match swallet_core::crypto::encryption::encrypt(phrase.as_bytes(), pw) {
                         Ok(v) => v,
                         Err(e) => {
                             self.ui.set_status(format!("加密失败: {e}"));
@@ -1047,7 +1047,7 @@ impl App {
         let encrypted_pk = match &self.password {
             Some(pw) => {
                 let (salt, nonce, ct) =
-                    match crate::crypto::encryption::encrypt(pk.as_bytes(), pw) {
+                    match swallet_core::crypto::encryption::encrypt(pk.as_bytes(), pw) {
                         Ok(v) => v,
                         Err(e) => {
                             self.ui.set_status(format!("加密失败: {e}"));
@@ -2659,7 +2659,7 @@ impl App {
                             return;
                         }
                         // SOL 用 9 位小数
-                        if let Err(e) = crate::transfer::parse_amount(&self.ui.ms_transfer_amount, 9) {
+                        if let Err(e) = swallet_core::transfer::parse_amount(&self.ui.ms_transfer_amount, 9) {
                             self.ui.set_status(e);
                             return;
                         }
@@ -2752,7 +2752,7 @@ impl App {
                             self.ui.set_status("数量不能为空");
                             return;
                         }
-                        if let Err(e) = crate::transfer::parse_amount(&self.ui.ms_vs_amount, 9) {
+                        if let Err(e) = swallet_core::transfer::parse_amount(&self.ui.ms_vs_amount, 9) {
                             self.ui.set_status(e);
                             return;
                         }
@@ -3409,7 +3409,7 @@ impl App {
                         let seed_bytes: [u8; 32] = bytes[..32].try_into().unwrap();
                         let keypair = solana_sdk::signer::keypair::Keypair::new_from_array(seed_bytes);
                         let create_key_pubkey = solana_sdk::signer::Signer::pubkey(&keypair);
-                        let (multisig_pda, _) = crate::multisig::derive_multisig_pda(&create_key_pubkey);
+                        let (multisig_pda, _) = swallet_core::multisig::derive_multisig_pda(&create_key_pubkey);
                         self.ui.set_status(format!("对应多签地址: {multisig_pda}"));
                         // 统一存储前 32 字节私钥的 base58
                         self.ui.ms_create_seed_input = bs58::encode(&bytes[..32]).into_string();
@@ -3941,14 +3941,14 @@ impl App {
 
     // ========== 辅助方法 ==========
 
-    fn save_store(&self) -> Result<(), crate::error::StorageError> {
+    fn save_store(&self) -> Result<(), swallet_core::error::StorageError> {
         if let (Some(store), Some(pw)) = (&self.store, &self.password) {
             encrypted::save(store, pw, &self.data_path)?;
         }
         Ok(())
     }
 
-    fn save_store_inner(&self) -> Result<(), crate::error::StorageError> {
+    fn save_store_inner(&self) -> Result<(), swallet_core::error::StorageError> {
         self.save_store()
     }
 
@@ -3963,7 +3963,7 @@ impl App {
         let nonce = hex::decode(parts[1]).ok()?;
         let ciphertext = hex::decode(parts[2]).ok()?;
         let plaintext =
-            crate::crypto::encryption::decrypt(&ciphertext, pw, &salt, &nonce).ok()?;
+            swallet_core::crypto::encryption::decrypt(&ciphertext, pw, &salt, &nonce).ok()?;
         String::from_utf8(plaintext).ok()
     }
 }
@@ -4123,7 +4123,7 @@ async fn execute_create_proposal_async(
                 .try_into()
                 .map_err(|_| "目标地址长度无效".to_string())?;
 
-            let amount_raw = crate::transfer::parse_amount(amount_str, 9)?;
+            let amount_raw = swallet_core::transfer::parse_amount(amount_str, 9)?;
             let lamports: u64 = amount_raw
                 .try_into()
                 .map_err(|_| "SOL 数量超出范围".to_string())?;
@@ -4204,7 +4204,7 @@ async fn execute_create_proposal_async(
                 MsVoteStakeOp::VoteWithdraw => {
                     let to_bytes = multisig::proposals::decode_bs58_pubkey(vs_param)
                         .ok_or("无效的提取目标地址")?;
-                    let lamports: u64 = crate::transfer::parse_amount(vs_amount, 9)?
+                    let lamports: u64 = swallet_core::transfer::parse_amount(vs_amount, 9)?
                         .try_into()
                         .map_err(|_| "SOL 数量超出范围".to_string())?;
                     vec![multisig::proposals::build_vote_withdraw_instruction(
@@ -4240,7 +4240,7 @@ async fn execute_create_proposal_async(
                 MsVoteStakeOp::StakeWithdraw => {
                     let to_bytes = multisig::proposals::decode_bs58_pubkey(vs_param)
                         .ok_or("无效的提取目标地址")?;
-                    let lamports: u64 = crate::transfer::parse_amount(vs_amount, 9)?
+                    let lamports: u64 = swallet_core::transfer::parse_amount(vs_amount, 9)?
                         .try_into()
                         .map_err(|_| "SOL 数量超出范围".to_string())?;
                     vec![multisig::proposals::build_stake_withdraw_instruction(
@@ -4285,7 +4285,7 @@ async fn verify_upgrade_authority(
         "params": [programdata_pda.to_string(), {"encoding": "base64", "commitment": "confirmed"}],
         "id": 1
     });
-    let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+    let resp = swallet_core::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
 
     let value = resp
         .get("result")
@@ -4353,7 +4353,7 @@ async fn verify_buffer_exists(
         "params": [buffer_address, {"encoding": "base64", "commitment": "confirmed"}],
         "id": 1
     });
-    let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+    let resp = swallet_core::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
 
     let value = resp
         .get("result")
@@ -4397,7 +4397,7 @@ async fn verify_program_authority(
             "params": [config_addr.to_string(), {"encoding": "base64", "commitment": "confirmed"}],
             "id": 1
         });
-        let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+        let resp = swallet_core::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
 
         let value = resp
             .get("result")
@@ -4555,8 +4555,8 @@ impl App {
             .balance_cache
             .get(address)
             .and_then(|p| p.account_owner.as_deref())
-            .unwrap_or(crate::chain::solana::SYSTEM_PROGRAM_STR);
-        if owner != crate::chain::solana::SYSTEM_PROGRAM_STR && !owner.is_empty() {
+            .unwrap_or(swallet_core::chain::solana::SYSTEM_PROGRAM_STR);
+        if owner != swallet_core::chain::solana::SYSTEM_PROGRAM_STR && !owner.is_empty() {
             let type_name = match self.ui.stk_create_type {
                 StakingCreateType::Vote => "Vote",
                 StakingCreateType::Stake => "Stake",
@@ -4645,7 +4645,7 @@ impl App {
                     .balance_cache
                     .get(&addr)
                     .and_then(|p| p.account_owner.as_deref())
-                    .is_some_and(|o| o == crate::chain::solana::VOTE_PROGRAM || o == crate::chain::solana::STAKE_PROGRAM);
+                    .is_some_and(|o| o == swallet_core::chain::solana::VOTE_PROGRAM || o == swallet_core::chain::solana::STAKE_PROGRAM);
                 if is_special_account {
                     continue;
                 }
@@ -4732,7 +4732,7 @@ impl App {
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .unwrap();
-            match crate::staking::sol_staking::fetch_vote_account(&client, &rpc_url, &addr).await {
+            match swallet_core::staking::sol_staking::fetch_vote_account(&client, &rpc_url, &addr).await {
                 Ok(info) => { let _ = tx.send(BgMessage::VoteAccountFetched(info)); }
                 Err(e) => { let _ = tx.send(BgMessage::StakingFetchError(e)); }
             }
@@ -4748,7 +4748,7 @@ impl App {
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .unwrap();
-            match crate::staking::sol_staking::fetch_stake_account(&client, &rpc_url, &addr).await {
+            match swallet_core::staking::sol_staking::fetch_stake_account(&client, &rpc_url, &addr).await {
                 Ok(info) => { let _ = tx.send(BgMessage::StakeAccountFetched(info)); }
                 Err(e) => { let _ = tx.send(BgMessage::StakingFetchError(e)); }
             }
@@ -5046,7 +5046,7 @@ impl App {
         let ai = self.ui.stk_account_index;
         self.ui.action_context = Some(ActionContext::MnemonicAddress {
             wallet_index: wi,
-            chain_type: crate::storage::data::ChainType::Solana,
+            chain_type: swallet_core::storage::data::ChainType::Solana,
             account_index: ai,
         });
         self.ui.input_buffer = self.get_current_label(&self.ui.action_context.clone()).unwrap_or_default();
@@ -5264,7 +5264,7 @@ impl App {
 
                     let result = match current_step {
                         StakingStep::CreateVoteConfirm => {
-                            crate::staking::sol_staking::create_vote_account(
+                            swallet_core::staking::sol_staking::create_vote_account(
                                 &client,
                                 &rpc_url,
                                 &private_key,
@@ -5276,7 +5276,7 @@ impl App {
                         }
                         StakingStep::CreateStakeConfirm => {
                             let lockup_days: u64 = lockup_days_input.trim().parse().unwrap_or(0);
-                            crate::staking::sol_staking::create_stake_account(
+                            swallet_core::staking::sol_staking::create_stake_account(
                                 &client,
                                 &rpc_url,
                                 &private_key,
@@ -5287,7 +5287,7 @@ impl App {
                             .await
                         }
                         StakingStep::StakeDeactivateConfirm => {
-                            crate::staking::sol_staking::stake_deactivate(
+                            swallet_core::staking::sol_staking::stake_deactivate(
                                 &client,
                                 &rpc_url,
                                 &private_key,
@@ -5297,7 +5297,7 @@ impl App {
                         }
                         StakingStep::Confirm => match confirm_op {
                             StakingOp::VoteAuthorize => {
-                                crate::staking::sol_staking::vote_authorize(
+                                swallet_core::staking::sol_staking::vote_authorize(
                                     &client,
                                     &rpc_url,
                                     &private_key,
@@ -5308,7 +5308,7 @@ impl App {
                                 .await
                             }
                             StakingOp::VoteWithdraw => {
-                                crate::staking::sol_staking::vote_withdraw(
+                                swallet_core::staking::sol_staking::vote_withdraw(
                                     &client,
                                     &rpc_url,
                                     &private_key,
@@ -5319,7 +5319,7 @@ impl App {
                                 .await
                             }
                             StakingOp::StakeAuthorize => {
-                                crate::staking::sol_staking::stake_authorize(
+                                swallet_core::staking::sol_staking::stake_authorize(
                                     &client,
                                     &rpc_url,
                                     &private_key,
@@ -5330,7 +5330,7 @@ impl App {
                                 .await
                             }
                             StakingOp::StakeDelegate => {
-                                crate::staking::sol_staking::stake_delegate(
+                                swallet_core::staking::sol_staking::stake_delegate(
                                     &client,
                                     &rpc_url,
                                     &private_key,
@@ -5340,7 +5340,7 @@ impl App {
                                 .await
                             }
                             StakingOp::StakeWithdraw => {
-                                crate::staking::sol_staking::stake_withdraw(
+                                swallet_core::staking::sol_staking::stake_withdraw(
                                     &client,
                                     &rpc_url,
                                     &private_key,

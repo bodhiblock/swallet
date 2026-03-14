@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::chain::format_balance;
+use swallet_core::chain::format_balance;
 use crate::tui::state::{TransferStep, UiState};
 
 pub fn render(frame: &mut Frame, state: &UiState) {
@@ -175,7 +175,7 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
     let decimals = asset.map(|a| a.decimals).unwrap_or(0);
 
     // Format amount for display
-    let amount_display = if let Ok(raw) = crate::transfer::parse_amount(&state.transfer_amount, decimals) {
+    let amount_display = if let Ok(raw) = swallet_core::transfer::parse_amount(&state.transfer_amount, decimals) {
         format!("{} {}", format_balance(raw, decimals), symbol)
     } else {
         format!("{} {}", state.transfer_amount, symbol)

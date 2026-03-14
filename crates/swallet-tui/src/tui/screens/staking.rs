@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::chain::format_balance;
+use swallet_core::chain::format_balance;
 use crate::tui::state::{StakingStep, UiState};
 
 pub fn render(frame: &mut Frame, state: &UiState) {

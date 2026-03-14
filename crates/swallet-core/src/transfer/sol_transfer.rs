@@ -201,13 +201,13 @@ pub async fn send_spl_token(
 
 // ========== Solana 交易构建 ==========
 
-pub(crate) struct AccountMeta {
+pub struct AccountMeta {
     pub pubkey: [u8; 32],
     pub is_signer: bool,
     pub is_writable: bool,
 }
 
-pub(crate) struct Instruction {
+pub struct Instruction {
     pub program_id: [u8; 32],
     pub accounts: Vec<AccountMeta>,
     pub data: Vec<u8>,
@@ -363,7 +363,7 @@ fn serialize_message(msg: &Message) -> Vec<u8> {
     buf
 }
 
-pub(crate) fn build_transaction(signatures: &[[u8; 64]], message_bytes: &[u8]) -> Vec<u8> {
+pub fn build_transaction(signatures: &[[u8; 64]], message_bytes: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
     encode_compact_u16(&mut buf, signatures.len() as u16);
     for sig in signatures {
@@ -374,7 +374,7 @@ pub(crate) fn build_transaction(signatures: &[[u8; 64]], message_bytes: &[u8]) -
 }
 
 /// 构建并序列化 Solana 消息（一步完成，避免暴露 Message 类型）
-pub(crate) fn build_and_serialize_message(
+pub fn build_and_serialize_message(
     fee_payer: &[u8; 32],
     recent_blockhash: &[u8; 32],
     instructions: &[Instruction],
@@ -384,7 +384,7 @@ pub(crate) fn build_and_serialize_message(
 }
 
 /// Solana compact-u16 编码
-pub(crate) fn encode_compact_u16(buf: &mut Vec<u8>, value: u16) {
+pub fn encode_compact_u16(buf: &mut Vec<u8>, value: u16) {
     let mut val = value;
     loop {
         let mut byte = (val & 0x7f) as u8;
@@ -400,7 +400,7 @@ pub(crate) fn encode_compact_u16(buf: &mut Vec<u8>, value: u16) {
 }
 
 /// 计算 Associated Token Address (PDA)
-pub(crate) fn find_associated_token_address(
+pub fn find_associated_token_address(
     wallet: &[u8; 32],
     mint: &[u8; 32],
     token_program: &[u8; 32],
@@ -416,7 +416,7 @@ pub(crate) fn find_associated_token_address(
 
 // ========== RPC 辅助 ==========
 
-pub(crate) async fn get_latest_blockhash(client: &Client, rpc_url: &str) -> Result<[u8; 32], String> {
+pub async fn get_latest_blockhash(client: &Client, rpc_url: &str) -> Result<[u8; 32], String> {
     let body = json!({
         "jsonrpc": "2.0",
         "method": "getLatestBlockhash",
@@ -441,7 +441,7 @@ pub(crate) async fn get_latest_blockhash(client: &Client, rpc_url: &str) -> Resu
         .map_err(|_| "blockhash 长度无效".to_string())
 }
 
-pub(crate) async fn send_transaction(
+pub async fn send_transaction(
     client: &Client,
     rpc_url: &str,
     tx_bytes: &[u8],
@@ -471,7 +471,7 @@ pub(crate) async fn send_transaction(
         .ok_or("未收到交易签名".into())
 }
 
-pub(crate) async fn account_exists(client: &Client, rpc_url: &str, address: &str) -> bool {
+pub async fn account_exists(client: &Client, rpc_url: &str, address: &str) -> bool {
     let body = json!({
         "jsonrpc": "2.0",
         "method": "getAccountInfo",
@@ -488,7 +488,7 @@ pub(crate) async fn account_exists(client: &Client, rpc_url: &str, address: &str
     false
 }
 
-pub(crate) async fn rpc_call(client: &Client, rpc_url: &str, body: &Value) -> Result<Value, String> {
+pub async fn rpc_call(client: &Client, rpc_url: &str, body: &Value) -> Result<Value, String> {
     // 自动注入 commitment: confirmed
     let mut body = body.clone();
     if let Some(params) = body.get_mut("params").and_then(|p| p.as_array_mut()) {

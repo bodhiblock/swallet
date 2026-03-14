@@ -1,6 +1,6 @@
-use crate::multisig::{MultisigInfo, ProposalInfo};
-use crate::storage::data::ChainType;
-use crate::transfer::TransferableAsset;
+use swallet_core::multisig::{MultisigInfo, ProposalInfo};
+use swallet_core::storage::data::ChainType;
+use swallet_core::transfer::TransferableAsset;
 
 /// 当前屏幕
 #[derive(Debug, Clone, PartialEq)]
@@ -431,7 +431,7 @@ pub struct UiState {
     pub ms_vote_action: Option<VoteAction>,
     pub ms_result: Option<(bool, String)>,
     // Vote/Stake 管理提案
-    pub ms_vs_ops: Vec<crate::multisig::MsVoteStakeOp>,
+    pub ms_vs_ops: Vec<swallet_core::multisig::MsVoteStakeOp>,
     pub ms_vs_op_selected: usize,
     pub ms_vs_target: String,    // 目标 vote/stake 账户地址
     pub ms_vs_param: String,     // 参数（new authority / vote account / to address）
@@ -492,8 +492,8 @@ pub struct UiState {
     pub stk_vote_account_input: String,
     pub stk_confirm_password: String,
     pub stk_result: Option<(bool, String)>,
-    pub stk_vote_info: Option<crate::staking::VoteAccountInfo>,
-    pub stk_stake_info: Option<crate::staking::StakeAccountInfo>,
+    pub stk_vote_info: Option<swallet_core::staking::VoteAccountInfo>,
+    pub stk_stake_info: Option<swallet_core::staking::StakeAccountInfo>,
     pub stk_fetch_error: Option<String>,
     pub stk_detail_selected: usize,
     pub stk_target_address: String,

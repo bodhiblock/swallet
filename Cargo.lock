@@ -4490,7 +4490,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "swallet"
+name = "swallet-core"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
@@ -4503,13 +4503,11 @@ dependencies = [
  "bs58",
  "bytemuck",
  "chrono",
- "crossterm",
  "futures",
  "hex",
  "hmac 0.12.1",
  "k256",
  "rand 0.8.5",
- "ratatui",
  "reqwest",
  "serde",
  "serde_json",
@@ -4520,6 +4518,25 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
+ "uuid",
+]
+
+[[package]]
+name = "swallet-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bs58",
+ "chrono",
+ "crossterm",
+ "hex",
+ "ratatui",
+ "reqwest",
+ "serde_json",
+ "solana-sdk",
+ "swallet-core",
+ "tokio",
  "uuid",
 ]
 

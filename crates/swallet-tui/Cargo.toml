@@ -1,0 +1,29 @@
+[package]
+name = "swallet-tui"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "swallet"
+path = "src/main.rs"
+
+[dependencies]
+swallet-core = { path = "../swallet-core" }
+
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# 工具（app.rs 中直接使用的）
+anyhow = "1"
+bs58 = "0.5"
+hex = "0.4"
+solana-sdk = "2"
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }

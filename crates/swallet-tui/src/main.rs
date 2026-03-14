@@ -1,24 +1,10 @@
 mod app;
-mod chain;
-mod config;
-mod crypto;
-mod error;
-mod multisig;
-mod staking;
-mod storage;
-mod transfer;
 mod tui;
 
 use std::path::PathBuf;
 
 use app::App;
-use config::AppConfig;
-
-anchor_lang::declare_program!(squads_multisig_program);
-anchor_lang::declare_program!(nara_quest);
-anchor_lang::declare_program!(nara_agent_registry);
-anchor_lang::declare_program!(nara_skills_hub);
-anchor_lang::declare_program!(nara_zk);
+use swallet_core::config::AppConfig;
 
 /// 解析命令行参数
 fn parse_args() -> anyhow::Result<(Option<PathBuf>, Option<PathBuf>)> {

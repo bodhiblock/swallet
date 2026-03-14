@@ -8,9 +8,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::multisig::ProposalType;
-use crate::multisig::presets;
-use crate::storage::data::MultisigAccount;
+use swallet_core::multisig::ProposalType;
+use swallet_core::multisig::presets;
+use swallet_core::storage::data::MultisigAccount;
 use crate::tui::state::{MultisigStep, UiState, VoteAction};
 
 /// address_labels: 地址→备注映射，用于标注自己的地址
@@ -406,10 +406,10 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
             .iter()
             .map(|p| {
                 let status_color = match p.status {
-                    crate::multisig::ProposalStatus::Active => Color::Yellow,
-                    crate::multisig::ProposalStatus::Approved => Color::Green,
-                    crate::multisig::ProposalStatus::Executed => Color::Cyan,
-                    crate::multisig::ProposalStatus::Rejected | crate::multisig::ProposalStatus::Cancelled => Color::Red,
+                    swallet_core::multisig::ProposalStatus::Active => Color::Yellow,
+                    swallet_core::multisig::ProposalStatus::Approved => Color::Green,
+                    swallet_core::multisig::ProposalStatus::Executed => Color::Cyan,
+                    swallet_core::multisig::ProposalStatus::Rejected | swallet_core::multisig::ProposalStatus::Cancelled => Color::Red,
                     _ => Color::DarkGray,
                 };
                 ListItem::new(Line::from(vec![
@@ -456,8 +456,8 @@ fn render_view_proposal(
 
     if let Some(ref proposal) = state.ms_current_proposal {
         let status_color = match proposal.status {
-            crate::multisig::ProposalStatus::Active => Color::Yellow,
-            crate::multisig::ProposalStatus::Approved => Color::Green,
+            swallet_core::multisig::ProposalStatus::Active => Color::Yellow,
+            swallet_core::multisig::ProposalStatus::Approved => Color::Green,
             _ => Color::DarkGray,
         };
 
@@ -522,10 +522,10 @@ fn render_view_proposal(
 
         // 操作提示
         match proposal.status {
-            crate::multisig::ProposalStatus::Active => {
+            swallet_core::multisig::ProposalStatus::Active => {
                 append_hint(&mut lines, " A审批  R拒绝  Esc返回");
             }
-            crate::multisig::ProposalStatus::Approved => {
+            swallet_core::multisig::ProposalStatus::Approved => {
                 append_hint(&mut lines, " E执行  Esc返回");
             }
             _ => {
@@ -1417,7 +1417,7 @@ fn render_select_vote_stake_op(
     let vault_label = format_vault_label(state);
     let is_vote = state.ms_vs_ops.first().is_some_and(|o| matches!(
         o,
-        crate::multisig::MsVoteStakeOp::VoteAuthorizeVoter | crate::multisig::MsVoteStakeOp::VoteAuthorizeWithdrawer
+        swallet_core::multisig::MsVoteStakeOp::VoteAuthorizeVoter | swallet_core::multisig::MsVoteStakeOp::VoteAuthorizeWithdrawer
     ));
     let title = if is_vote { " Vote 账户管理 " } else { " Stake 账户管理 " };
 
@@ -1545,7 +1545,7 @@ fn render_select_ms_fee_payer(frame: &mut Frame, area: ratatui::layout::Rect, st
         .ms_fee_payer_list
         .iter()
         .map(|(addr, label, lamports, _wi, _ai)| {
-            let bal_str = crate::chain::format_balance(*lamports, 9);
+            let bal_str = swallet_core::chain::format_balance(*lamports, 9);
             ListItem::new(Line::from(vec![
                 Span::styled(format!("  {addr}"), Style::default().fg(Color::White)),
                 Span::styled(format!("  {label}"), Style::default().fg(Color::DarkGray)),
