@@ -41,6 +41,8 @@ pub fn run() {
             commands::wallet::restore_hidden_addresses,
             commands::balance::get_cached_balances,
             commands::balance::refresh_balances,
+            commands::transfer::build_transfer_assets,
+            commands::transfer::execute_transfer,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

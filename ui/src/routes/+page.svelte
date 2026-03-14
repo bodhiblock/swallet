@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { WalletDto, BalanceDto } from '$lib/types';
+	import type { WalletDto, BalanceDto, AssetDto } from '$lib/types';
 
 	// Screen state
-	let screen: 'loading' | 'unlock' | 'create' | 'confirm' | 'main' | 'add-wallet' | 'show-mnemonic' | 'input-name' = $state('loading');
+	let screen: 'loading' | 'unlock' | 'create' | 'confirm' | 'main' | 'add-wallet' | 'show-mnemonic' | 'input-name' | 'transfer-assets' | 'transfer-input' | 'transfer-confirm' | 'transfer-result' = $state('loading');
 	let password = $state('');
 	let confirmPassword = $state('');
 	let error = $state('');
@@ -29,6 +29,19 @@
 	let dialogType: 'rename' | 'relabel' | 'delete' | 'add-address' | null = $state(null);
 	let dialogInput = $state('');
 	let dialogPassword = $state('');
+
+	// Transfer
+	let txWalletIndex = $state(0);
+	let txAccountIndex = $state(0);
+	let txChainType = $state('');
+	let txAddress = $state('');
+	let txAssets: AssetDto[] = $state([]);
+	let txSelectedAsset = $state(0);
+	let txToAddress = $state('');
+	let txAmount = $state('');
+	let txPassword = $state('');
+	let txSending = $state(false);
+	let txResult = $state<{ success: boolean; message: string } | null>(null);
 
 	onMount(async () => {
 		try {
@@ -156,6 +169,9 @@
 		closeMenu();
 		try {
 			switch (action) {
+				case 'transfer':
+					await startTransfer(walletIndex, accountIndex!, chainType!);
+					break;
 				case 'rename':
 					dialogType = 'rename';
 					dialogInput = wallets[walletIndex]?.name || '';
@@ -208,6 +224,52 @@
 			await reloadWallets();
 			showToast(`恢复了 ${w} 个钱包, ${a} 个地址`);
 		} catch (e: any) { showToast(e?.message || '恢复失败'); }
+	}
+
+	// Transfer flow
+	async function startTransfer(walletIndex: number, accountIndex: number, chainType: string) {
+		txWalletIndex = walletIndex;
+		txChainType = chainType;
+		// accountIndex is the position in the combined accounts array
+		// Need to compute the chain-specific index
+		const wallet = wallets[walletIndex];
+		const allAccs = wallet?.accounts || [];
+		const acc = allAccs[accountIndex];
+		if (!acc) { showToast('无效的地址'); return; }
+		txAddress = acc.address;
+		// Compute chain-specific index
+		const chainAccs = allAccs.filter(a => a.chain_type === chainType);
+		txAccountIndex = chainAccs.findIndex(a => a.address === acc.address);
+		if (txAccountIndex < 0) txAccountIndex = 0;
+		txToAddress = '';
+		txAmount = '';
+		txPassword = '';
+		txResult = null;
+		try {
+			txAssets = await api.buildTransferAssets(txAddress, chainType);
+			txSelectedAsset = 0;
+			screen = 'transfer-assets';
+		} catch (e: any) { showToast(e?.message || '加载资产失败'); }
+	}
+
+	async function submitTransfer() {
+		if (!txToAddress.trim()) { showToast('请输入目标地址'); return; }
+		if (!txAmount.trim()) { showToast('请输入金额'); return; }
+		screen = 'transfer-confirm';
+		txPassword = '';
+	}
+
+	async function confirmTransfer() {
+		if (!txPassword) { showToast('请输入密码'); return; }
+		txSending = true;
+		try {
+			const sig = await api.executeTransfer(txPassword, txWalletIndex, txAccountIndex, txChainType, txSelectedAsset, txToAddress, txAmount);
+			txResult = { success: true, message: sig };
+		} catch (e: any) {
+			txResult = { success: false, message: e?.message || '转账失败' };
+		}
+		txSending = false;
+		screen = 'transfer-result';
 	}
 
 	function showToast(msg: string) { toast = msg; setTimeout(() => { toast = ''; }, 2000); }
@@ -353,6 +415,7 @@
 					<button onclick={() => menuAction('hide-wallet')}>隐藏</button>
 					<button class="danger" onclick={() => menuAction('delete')}>删除</button>
 				{:else}
+					<button onclick={() => menuAction('transfer')}>转账</button>
 					<button onclick={() => menuAction('relabel')}>修改标签</button>
 					<button onclick={() => menuAction('hide-address')}>隐藏</button>
 				{/if}
@@ -383,6 +446,70 @@
 			</div>
 		</div>
 	{/if}
+
+{:else if screen === 'transfer-assets'}
+	<div class="container">
+		<header>
+			<button class="btn-back" onclick={() => { screen = 'main'; }}>← 返回</button>
+			<h1>选择资产</h1>
+			<div></div>
+		</header>
+		<p class="dim" style="margin-bottom:12px">从 {txAddress.slice(0,6)}...{txAddress.slice(-4)}</p>
+		{#each txAssets as asset}
+			<button class="asset-row" class:selected={txSelectedAsset === asset.index}
+				onclick={() => { txSelectedAsset = asset.index; screen = 'transfer-input'; }}>
+				<span class="asset-info">
+					<span class="chain-badge">{asset.chain_name}</span>
+					<span>{asset.symbol}</span>
+				</span>
+				<span class="balance">{asset.balance} {asset.symbol}</span>
+			</button>
+		{/each}
+		{#if txAssets.length === 0}<p class="dim" style="text-align:center;padding:24px">无可用资产</p>{/if}
+	</div>
+
+{:else if screen === 'transfer-input'}
+	<div class="container center">
+		<div class="card">
+			<h2>转账 {txAssets[txSelectedAsset]?.symbol}</h2>
+			<p class="dim">{txAssets[txSelectedAsset]?.chain_name} · 余额: {txAssets[txSelectedAsset]?.balance}</p>
+			<input bind:value={txToAddress} placeholder="目标地址" />
+			<input bind:value={txAmount} placeholder="金额" type="text" inputmode="decimal" />
+			<button class="btn-primary" onclick={submitTransfer}>下一步</button>
+			<button class="btn-secondary" onclick={() => { screen = 'transfer-assets'; }}>返回</button>
+		</div>
+	</div>
+
+{:else if screen === 'transfer-confirm'}
+	<div class="container center">
+		<div class="card">
+			<h2>确认转账</h2>
+			<div class="confirm-detail">
+				<p><span class="dim">资产:</span> {txAssets[txSelectedAsset]?.symbol} ({txAssets[txSelectedAsset]?.chain_name})</p>
+				<p><span class="dim">目标:</span> <span class="mono">{txToAddress.slice(0,10)}...{txToAddress.slice(-6)}</span></p>
+				<p><span class="dim">金额:</span> {txAmount} {txAssets[txSelectedAsset]?.symbol}</p>
+			</div>
+			<input type="password" bind:value={txPassword} placeholder="输入密码确认" autofocus
+				onkeydown={(e) => e.key === 'Enter' && confirmTransfer()} />
+			{#if txSending}<p class="dim">提交中...</p>{/if}
+			<button class="btn-primary" onclick={confirmTransfer} disabled={txSending}>确认转账</button>
+			<button class="btn-secondary" onclick={() => { screen = 'transfer-input'; }}>返回</button>
+		</div>
+	</div>
+
+{:else if screen === 'transfer-result'}
+	<div class="container center">
+		<div class="card">
+			{#if txResult?.success}
+				<h2 style="color:var(--green)">转账成功</h2>
+				<p class="dim" style="word-break:break-all;font-family:monospace;font-size:12px">{txResult.message}</p>
+			{:else}
+				<h2 style="color:var(--red)">转账失败</h2>
+				<p class="error">{txResult?.message}</p>
+			{/if}
+			<button class="btn-primary" onclick={() => { screen = 'main'; refreshBalances(); }}>返回</button>
+		</div>
+	</div>
 {/if}
 
 {#if toast}<div class="toast">{toast}</div>{/if}
@@ -451,6 +578,14 @@
 	.dialog { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 90%; max-width: 360px; margin: auto; display: flex; flex-direction: column; gap: 12px; }
 	.dialog-actions { display: flex; gap: 8px; }
 	.dialog-actions button { flex: 1; }
+
+	.btn-back { color: var(--accent); font-size: 14px; }
+	.asset-row { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 12px 16px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; text-align: left; transition: border-color 0.15s; }
+	.asset-row:hover { border-color: var(--accent); }
+	.asset-row.selected { border-color: var(--accent); background: rgba(34,211,238,0.05); }
+	.asset-info { display: flex; align-items: center; gap: 8px; }
+	.confirm-detail { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; width: 100%; font-size: 14px; line-height: 1.8; }
+	.confirm-detail .mono { font-family: monospace; font-size: 13px; }
 
 	.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 8px 20px; border-radius: 8px; font-size: 14px; z-index: 100; }
 </style>

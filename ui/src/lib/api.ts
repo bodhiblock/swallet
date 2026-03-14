@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { WalletDto, BalanceDto } from './types';
+import type { WalletDto, BalanceDto, AssetDto } from './types';
 
 export const api = {
 	// Auth
@@ -32,4 +32,9 @@ export const api = {
 	// Balance
 	getCachedBalances: () => invoke<BalanceDto[]>('get_cached_balances'),
 	refreshBalances: () => invoke<BalanceDto[]>('refresh_balances'),
+
+	// Transfer
+	buildTransferAssets: (address: string, chainType: string) => invoke<AssetDto[]>('build_transfer_assets', { address, chainType }),
+	executeTransfer: (password: string, walletIndex: number, accountIndex: number, chainType: string, assetIndex: number, toAddress: string, amount: string) =>
+		invoke<string>('execute_transfer', { password, walletIndex, accountIndex, chainType, assetIndex, toAddress, amount }),
 };

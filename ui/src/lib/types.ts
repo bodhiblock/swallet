@@ -37,3 +37,13 @@ export interface TokenBalanceDto {
 	balance_raw: string;
 	decimals: number;
 }
+
+export interface AssetDto {
+	index: number;
+	chain_name: string;
+	symbol: string;
+	decimals: number;
+	balance: string;
+	balance_raw: string;
+	asset_type: string;
+}
