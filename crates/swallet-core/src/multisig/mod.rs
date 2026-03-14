@@ -34,6 +34,13 @@ pub struct MultisigMember {
 }
 
 impl MultisigMember {
+    pub fn from_address(addr: &str) -> Self {
+        Self {
+            key: addr.parse().unwrap_or_default(),
+            permissions: 7, // all permissions
+        }
+    }
+
     pub fn can_initiate(&self) -> bool {
         self.permissions & 1 != 0
     }

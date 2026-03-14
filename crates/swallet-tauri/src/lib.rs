@@ -43,6 +43,21 @@ pub fn run() {
             commands::balance::refresh_balances,
             commands::transfer::build_transfer_assets,
             commands::transfer::execute_transfer,
+            commands::multisig::get_solana_chains,
+            commands::multisig::get_fee_payers,
+            commands::multisig::import_multisig,
+            commands::multisig::fetch_proposals,
+            commands::multisig::create_sol_transfer_proposal,
+            commands::multisig::approve_proposal,
+            commands::multisig::reject_proposal,
+            commands::multisig::execute_proposal,
+            commands::staking::fetch_vote_account,
+            commands::staking::fetch_stake_account,
+            commands::staking::create_vote_account,
+            commands::staking::create_stake_account,
+            commands::staking::stake_delegate,
+            commands::staking::stake_deactivate,
+            commands::staking::stake_withdraw,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");
