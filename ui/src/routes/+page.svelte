@@ -25,7 +25,7 @@
 	let selectedChain: 'ethereum' | 'solana' = $state('solana');
 
 	// Context menu
-	let menuTarget: { type: 'wallet' | 'account'; walletIndex: number; accountIndex?: number; chainType?: string; walletType?: string } | null = $state(null);
+	let menuTarget: { type: 'wallet' | 'account'; walletIndex: number; accountIndex?: number; chainType?: string; walletType?: string; address?: string } | null = $state(null);
 	let showMainMenu = $state(false);
 
 	// Dialog
@@ -167,9 +167,9 @@
 	}
 
 	// Context menu actions
-	function openMenu(type: 'wallet' | 'account', walletIndex: number, accountIndex?: number, chainType?: string, walletType?: string, e?: MouseEvent) {
+	function openMenu(type: 'wallet' | 'account', walletIndex: number, accountIndex?: number, chainType?: string, walletType?: string, address?: string, e?: MouseEvent) {
 		e?.stopPropagation();
-		menuTarget = { type, walletIndex, accountIndex, chainType, walletType };
+		menuTarget = { type, walletIndex, accountIndex, chainType, walletType, address };
 	}
 
 	function closeMenu() { menuTarget = null; }
@@ -302,6 +302,15 @@
 		screen = 'transfer-result';
 	}
 
+	function getAccountOwner(address: string): string | null {
+		return balances.find(b => b.address === address)?.account_owner || null;
+	}
+
+	function isVoteOrStake(address: string): boolean {
+		const owner = getAccountOwner(address);
+		return owner === 'Vote111111111111111111111111111111111111111' || owner === 'Stake11111111111111111111111111111111111111';
+	}
+
 	function walletTypeLabel(t: string): string {
 		switch (t) {
 			case 'mnemonic': return '助记词钱包';
@@ -403,7 +412,7 @@
 
 		{#each wallets.filter(w => !w.hidden) as wallet, wi (wallet.id)}
 			<div class="wallet-card">
-				<div class="wallet-header" onclick={(e) => openMenu('wallet', wi, undefined, undefined, wallet.wallet_type, e)}>
+				<div class="wallet-header" onclick={(e) => openMenu('wallet', wi, undefined, undefined, wallet.wallet_type, undefined, e)}>
 					<span class="wallet-name">{wallet.name}</span>
 					<span class="wallet-type">{walletTypeLabel(wallet.wallet_type)}</span>
 				</div>
@@ -420,7 +429,7 @@
 									<span class="balance">{bal.amount} {bal.symbol}</span>
 								{/each}
 							</div>
-							<button class="btn-dots" onclick={(e) => openMenu('account', wi, ai, account.chain_type, wallet.wallet_type, e)} title="操作">⋮</button>
+							<button class="btn-dots" onclick={(e) => openMenu('account', wi, ai, account.chain_type, wallet.wallet_type, account.address, e)} title="操作">⋮</button>
 						</div>
 					</div>
 				{/each}
@@ -455,9 +464,10 @@
 				{:else}
 					{#if menuTarget.walletType === 'multisig'}
 						<button onclick={() => menuAction('multisig')}>多签管理</button>
+					{:else if menuTarget.address && isVoteOrStake(menuTarget.address)}
+						<button onclick={() => menuAction('staking')}>账户详情</button>
 					{:else}
 						<button onclick={() => menuAction('transfer')}>转账</button>
-						<button onclick={() => menuAction('staking')}>详情</button>
 					{/if}
 					<button onclick={() => menuAction('relabel')}>修改标签</button>
 					<button onclick={() => menuAction('hide-address')}>隐藏</button>
