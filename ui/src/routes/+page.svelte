@@ -539,8 +539,8 @@
 						{#if menuTarget.chainType === 'solana'}
 							<button onclick={() => menuAction('create-vote')}>创建 Vote 账户</button>
 							<button onclick={() => menuAction('create-stake')}>创建 Stake 账户</button>
-							<button onclick={() => menuAction('create-multisig')}>创建多签（随机）</button>
-							<button onclick={() => menuAction('create-multisig-seed')}>创建多签（指定种子）</button>
+							<button onclick={() => menuAction('create-multisig')}>创建多签地址（随机）</button>
+							<button onclick={() => menuAction('create-multisig-seed')}>创建多签地址（指定种子）</button>
 						{/if}
 					{/if}
 					<button onclick={() => menuAction('relabel')}>修改标签</button>
@@ -559,7 +559,7 @@
 				<button onclick={() => { showMainMenu = false; startAddWallet('import-mnemonic'); }}>导入助记词</button>
 				<button onclick={() => { showMainMenu = false; startAddWallet('private-key'); }}>导入私钥</button>
 				<button onclick={() => { showMainMenu = false; startAddWallet('watch'); }}>添加观察钱包</button>
-				<button onclick={async () => { showMainMenu = false; try { const chains = await api.getSolanaChains(); importMsChains = chains; importMsChainId = chains[0]?.id || ''; importMsAddress = ''; screen = 'import-multisig'; } catch(_) { showToast('加载链配置失败'); } }}>导入多签</button>
+				<button onclick={async () => { showMainMenu = false; try { const chains = await api.getSolanaChains(); importMsChains = chains; importMsChainId = chains[0]?.id || ''; importMsAddress = ''; screen = 'import-multisig'; } catch(_) { showToast('加载链配置失败'); } }}>导入多签地址</button>
 				<button onclick={() => { showMainMenu = false; restoreHidden(); }}>恢复隐藏项</button>
 				<button onclick={() => { showMainMenu = false; }}>取消</button>
 			</div>
@@ -682,7 +682,7 @@
 {:else if screen === 'create-multisig'}
 	<div class="container center">
 		<div class="card">
-			<h2>创建多签</h2>
+			<h2>创建多签地址</h2>
 			{#if importMsChains.length > 1}
 				<div class="chain-select">
 					{#each importMsChains as chain}
@@ -723,7 +723,7 @@
 					await reloadWallets();
 					screen = 'main';
 				} catch (e: any) { showToast(e?.message || '创建失败'); }
-			}}>创建多签</button>
+			}}>创建多签地址</button>
 			<button class="btn-secondary" onclick={() => { screen = 'main'; }}>取消</button>
 		</div>
 	</div>
@@ -731,7 +731,7 @@
 {:else if screen === 'import-multisig'}
 	<div class="container center">
 		<div class="card">
-			<h2>导入多签</h2>
+			<h2>导入多签地址</h2>
 			{#if importMsChains.length > 1}
 				<div class="chain-select">
 					{#each importMsChains as chain}
