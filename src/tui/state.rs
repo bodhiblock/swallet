@@ -436,6 +436,7 @@ pub struct UiState {
     pub ms_vs_amount: String,    // 金额（仅 withdraw）
     // 创建多签流程
     pub ms_create_use_seed: bool,           // 是否使用种子模式
+    pub ms_create_preset_creator: Option<String>, // 从地址菜单预设的创建者地址
     pub ms_create_seed_input: String,       // 种子私钥输入（base58）
     pub ms_create_sol_addresses: Vec<(String, String)>, // (address, label)
     pub ms_create_creator_selected: usize,
@@ -576,6 +577,7 @@ impl UiState {
             ms_vs_param: String::new(),
             ms_vs_amount: String::new(),
             ms_create_use_seed: false,
+            ms_create_preset_creator: None,
             ms_create_seed_input: String::new(),
             ms_create_sol_addresses: Vec::new(),
             ms_create_creator_selected: 0,

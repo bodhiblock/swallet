@@ -737,10 +737,12 @@ impl App {
                     }
                     AddWalletOption::CreateMultisig => {
                         self.ui.ms_create_use_seed = false;
+                        self.ui.ms_create_preset_creator = None;
                         self.enter_chain_select(MsChainSelectPurpose::Create);
                     }
                     AddWalletOption::CreateMultisigWithSeed => {
                         self.ui.ms_create_use_seed = true;
+                        self.ui.ms_create_preset_creator = None;
                         self.enter_chain_select(MsChainSelectPurpose::Create);
                     }
                     AddWalletOption::ImportMultisig => {
@@ -1239,12 +1241,19 @@ impl App {
                 };
                 self.move_wallet(wi, action == ActionItem::MoveUp);
             }
-            ActionItem::CreateMultisig => {
-                self.ui.ms_create_use_seed = false;
-                self.enter_chain_select(MsChainSelectPurpose::Create);
-            }
-            ActionItem::CreateMultisigWithSeed => {
-                self.ui.ms_create_use_seed = true;
+            ActionItem::CreateMultisig | ActionItem::CreateMultisigWithSeed => {
+                self.ui.ms_create_use_seed = matches!(action, ActionItem::CreateMultisigWithSeed);
+                // 从地址菜单触发时，记住当前地址作为创建者
+                let creator_addr = match &context {
+                    ActionContext::MnemonicAddress { wallet_index, account_index, .. } => {
+                        self.get_sol_address(*wallet_index, *account_index)
+                    }
+                    ActionContext::PrivateKeyAddress { wallet_index, .. } => {
+                        self.get_sol_address(*wallet_index, 0)
+                    }
+                    _ => None,
+                };
+                self.ui.ms_create_preset_creator = creator_addr;
                 self.enter_chain_select(MsChainSelectPurpose::Create);
             }
             ActionItem::AddVault => {
@@ -3255,6 +3264,23 @@ impl App {
         self.ui.ms_create_threshold_input.clear();
         self.ui.ms_create_seed_input.clear();
         self.ui.ms_confirm_password.clear();
+
+        // 如果有预设创建者地址，跳过创建者选择
+        if let Some(ref preset) = self.ui.ms_create_preset_creator
+            && let Some(idx) = self.ui.ms_create_sol_addresses.iter().position(|(addr, _)| addr == preset) {
+                self.ui.ms_create_creator_selected = idx;
+                let creator_addr = preset.clone();
+                self.ui.ms_create_members = vec![creator_addr];
+                self.ui.ms_create_preset_creator = None;
+                if self.ui.ms_create_use_seed {
+                    self.ui.ms_step = MultisigStep::CreateInputSeed;
+                } else {
+                    self.ui.ms_step = MultisigStep::CreateInputMembers;
+                }
+                self.ui.clear_status();
+                return;
+            }
+
         if self.ui.ms_create_use_seed {
             self.ui.ms_step = MultisigStep::CreateInputSeed;
         } else {
@@ -3327,6 +3353,15 @@ impl App {
                         self.ui.set_status(format!("对应多签地址: {multisig_pda}"));
                         // 统一存储前 32 字节私钥的 base58
                         self.ui.ms_create_seed_input = bs58::encode(&bytes[..32]).into_string();
+                        // 有预设创建者时跳过选择
+                        if let Some(ref preset) = self.ui.ms_create_preset_creator
+                            && let Some(idx) = self.ui.ms_create_sol_addresses.iter().position(|(addr, _)| addr == preset) {
+                                self.ui.ms_create_creator_selected = idx;
+                                self.ui.ms_create_members = vec![preset.clone()];
+                                self.ui.ms_create_preset_creator = None;
+                                self.ui.ms_step = MultisigStep::CreateInputMembers;
+                                return;
+                            }
                         self.ui.ms_step = MultisigStep::CreateSelectCreator;
                     }
                     Ok(bytes) => {
