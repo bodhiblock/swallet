@@ -85,12 +85,12 @@
 		<p class="dim center-text">加载中...</p>
 	{:else if isVote && voteInfo}
 		<div class="info-card">
-			<div class="info-row-v"><span class="dim">地址</span><button class="addr-copy" onclick={() => copyAddr(address)}>{address}</button></div>
-			<div class="info-row-v"><span class="dim">Identity</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.validator_identity)}>{voteInfo.validator_identity}</button></div>
-			<div class="info-row-v"><span class="dim">Voter</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_voter)}>{voteInfo.authorized_voter}</button></div>
-			<div class="info-row-v"><span class="dim">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_withdrawer)}>{voteInfo.authorized_withdrawer}</button></div>
-			<div class="info-row"><span class="dim">Commission</span><span>{voteInfo.commission}%</span></div>
-			{#if voteInfo.credits}<div class="info-row"><span class="dim">Credits</span><span>{voteInfo.credits}</span></div>{/if}
+			<div class="info-item"><span class="info-label">地址</span><button class="addr-copy" onclick={() => copyAddr(address)}>{address}</button></div>
+			<div class="info-item"><span class="info-label">Identity</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.validator_identity)}>{voteInfo.validator_identity}</button></div>
+			<div class="info-item"><span class="info-label">Voter</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_voter)}>{voteInfo.authorized_voter}</button></div>
+			<div class="info-item"><span class="info-label">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_withdrawer)}>{voteInfo.authorized_withdrawer}</button></div>
+			<div class="info-item"><span class="info-label">Commission</span><span class="info-value">{voteInfo.commission}%</span></div>
+			{#if voteInfo.credits}<div class="info-item"><span class="info-label">Credits</span><span class="info-value">{voteInfo.credits}</span></div>{/if}
 		</div>
 
 		<div class="actions">
@@ -98,14 +98,14 @@
 		</div>
 	{:else if isStake && stakeInfo}
 		<div class="info-card">
-			<div class="info-row-v"><span class="dim">地址</span><button class="addr-copy" onclick={() => copyAddr(address)}>{address}</button></div>
-			<div class="info-row"><span class="dim">状态</span><span>{stakeInfo.state}</span></div>
-			<div class="info-row"><span class="dim">质押数量</span><span class="green">{stakeInfo.stake_lamports}</span></div>
+			<div class="info-item"><span class="info-label">地址</span><button class="addr-copy" onclick={() => copyAddr(address)}>{address}</button></div>
+			<div class="info-item"><span class="info-label">状态</span><span class="info-value">{stakeInfo.state}</span></div>
+			<div class="info-item"><span class="info-label">质押数量</span><span class="info-value green">{stakeInfo.stake_lamports}</span></div>
 			{#if stakeInfo.delegated_vote_account}
-				<div class="info-row-v"><span class="dim">委托 Vote</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.delegated_vote_account!)}>{stakeInfo.delegated_vote_account}</button></div>
+				<div class="info-item"><span class="info-label">委托 Vote</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.delegated_vote_account!)}>{stakeInfo.delegated_vote_account}</button></div>
 			{/if}
-			<div class="info-row-v"><span class="dim">Staker</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.authorized_staker)}>{stakeInfo.authorized_staker}</button></div>
-			<div class="info-row-v"><span class="dim">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.authorized_withdrawer)}>{stakeInfo.authorized_withdrawer}</button></div>
+			<div class="info-item"><span class="info-label">Staker</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.authorized_staker)}>{stakeInfo.authorized_staker}</button></div>
+			<div class="info-item"><span class="info-label">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.authorized_withdrawer)}>{stakeInfo.authorized_withdrawer}</button></div>
 		</div>
 
 		<div class="actions">
@@ -156,10 +156,10 @@
 	.mono { font-family: monospace; font-size: 13px; }
 
 	.info-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
-	.info-row { display: flex; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
-	.info-row:last-child { border-bottom: none; }
-	.info-row-v { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
-	.info-row-v:last-child { border-bottom: none; }
+	.info-item { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+	.info-item:last-child { border-bottom: none; }
+	.info-label { color: var(--text-dim); font-size: 12px; }
+	.info-value { font-size: 14px; }
 	.addr-copy { font-family: monospace; font-size: 12px; color: var(--text); word-break: break-all; text-align: left; line-height: 1.4; background: none; border: none; cursor: pointer; padding: 0; }
 	.addr-copy:hover { color: var(--accent); }
 
