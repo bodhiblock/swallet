@@ -17,6 +17,7 @@ pub fn render(frame: &mut Frame, state: &UiState) {
         StakingStep::CreateVoteInputWithdrawer => render_create_vote_withdrawer(frame, state),
         StakingStep::CreateVoteConfirm => render_confirm(frame, state, "创建 Vote 账户"),
         StakingStep::CreateStakeInputAmount => render_create_stake_amount(frame, state),
+        StakingStep::CreateStakeInputLockup => render_create_stake_lockup(frame, state),
         StakingStep::CreateStakeConfirm => render_confirm(frame, state, "创建 Stake 账户"),
         StakingStep::VoteDetail => render_vote_detail(frame, state),
         StakingStep::StakeDetail => render_stake_detail(frame, state),
@@ -316,6 +317,54 @@ fn render_create_stake_amount(frame: &mut Frame, state: &UiState) {
     frame.render_widget(
         Paragraph::new(Span::styled(
             format!("输入质押数量 ({})  Enter 确认  Esc 返回", state.stk_native_symbol),
+            Style::default().fg(Color::DarkGray),
+        )),
+        hint_area,
+    );
+}
+
+fn render_create_stake_lockup(frame: &mut Frame, state: &UiState) {
+    let area = centered_rect(60, 10, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" 创建 Stake 账户 - 锁仓设置 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [info_area, _, input_area, _, hint_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("质押数量: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(&state.stk_amount_input, Style::default().fg(Color::White)),
+            Span::styled(format!(" {}", state.stk_native_symbol), Style::default().fg(Color::DarkGray)),
+        ])),
+        info_area,
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("锁仓天数> ", Style::default().fg(Color::Green)),
+            Span::raw(&state.stk_lockup_days_input),
+            Span::styled("_", Style::default().fg(Color::Green)),
+        ])),
+        input_area,
+    );
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "输入锁仓天数 (默认0=不锁仓)  Enter 确认  Esc 返回",
             Style::default().fg(Color::DarkGray),
         )),
         hint_area,

@@ -232,6 +232,7 @@ pub async fn create_stake_account(
     account_key: &[u8],
     fee_payer_key: &[u8],
     amount_sol: &str,
+    lockup_days: u64,
 ) -> Result<String, String> {
     let account_keypair = keypair_from_private_key(account_key)?;
     let fee_payer_keypair = keypair_from_private_key(fee_payer_key)?;
@@ -259,9 +260,19 @@ pub async fn create_stake_account(
     let mut init_data = vec![0u8, 0, 0, 0]; // instruction index 0 = Initialize
     init_data.extend_from_slice(&stake_pubkey); // staker = stake account
     init_data.extend_from_slice(&stake_pubkey); // withdrawer = stake account
-    init_data.extend_from_slice(&0i64.to_le_bytes()); // lockup.unix_timestamp = 0
+    // Lockup
+    let lockup_timestamp = if lockup_days > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        now + (lockup_days as i64) * 86400
+    } else {
+        0i64
+    };
+    init_data.extend_from_slice(&lockup_timestamp.to_le_bytes()); // lockup.unix_timestamp
     init_data.extend_from_slice(&0u64.to_le_bytes()); // lockup.epoch = 0
-    init_data.extend_from_slice(&[0u8; 32]); // lockup.custodian = default (no lockup)
+    init_data.extend_from_slice(&[0u8; 32]); // lockup.custodian = default
 
     let rent_sysvar = decode_pubkey(SYSVAR_RENT)?;
 

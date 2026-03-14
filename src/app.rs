@@ -4537,6 +4537,7 @@ impl App {
             StakingCreateType::Stake => {
                 self.ui.stk_step = StakingStep::CreateStakeInputAmount;
                 self.ui.stk_amount_input.clear();
+                self.ui.stk_lockup_days_input.clear();
                 self.ui.stk_confirm_password.clear();
             }
         }
@@ -4653,6 +4654,7 @@ impl App {
             StakingStep::CreateVoteInputWithdrawer => self.handle_stk_text_input(key, StakingTextField::Withdrawer),
             StakingStep::CreateVoteConfirm => self.handle_stk_confirm(key),
             StakingStep::CreateStakeInputAmount => self.handle_stk_text_input(key, StakingTextField::Amount),
+            StakingStep::CreateStakeInputLockup => self.handle_stk_text_input(key, StakingTextField::LockupDays),
             StakingStep::CreateStakeConfirm => self.handle_stk_confirm(key),
             StakingStep::VoteDetail => self.handle_vote_detail_key(key),
             StakingStep::StakeDetail => self.handle_stake_detail_key(key),
@@ -4856,6 +4858,9 @@ impl App {
                         self.ui.stk_step = StakingStep::CreateVoteInputIdentity;
                     }
                     StakingTextField::Amount => self.ui.back_to_main(),
+                    StakingTextField::LockupDays => {
+                        self.ui.stk_step = StakingStep::CreateStakeInputAmount;
+                    }
                     StakingTextField::NewAuthority => {
                         // 返回对应详情页
                         if self.ui.stk_step == StakingStep::VoteAuthorize {
@@ -4900,6 +4905,12 @@ impl App {
                             self.ui.set_status("请输入质押数量");
                             return;
                         }
+                        self.ui.stk_lockup_days_input.clear();
+                        self.ui.stk_step = StakingStep::CreateStakeInputLockup;
+                        self.ui.clear_status();
+                    }
+                    StakingTextField::LockupDays => {
+                        // 空或0都表示不锁仓，直接进入确认
                         self.ui.stk_confirm_password.clear();
                         self.ui.stk_step = StakingStep::CreateStakeConfirm;
                         self.ui.clear_status();
@@ -4950,6 +4961,7 @@ impl App {
                     StakingTextField::Identity => &mut self.ui.stk_identity_input,
                     StakingTextField::Withdrawer => &mut self.ui.stk_withdrawer_input,
                     StakingTextField::Amount | StakingTextField::WithdrawAmount => &mut self.ui.stk_amount_input,
+                    StakingTextField::LockupDays => &mut self.ui.stk_lockup_days_input,
                     StakingTextField::NewAuthority => &mut self.ui.stk_new_authority_input,
                     StakingTextField::VoteAccount => &mut self.ui.stk_vote_account_input,
                 };
@@ -4960,6 +4972,7 @@ impl App {
                     StakingTextField::Identity => &mut self.ui.stk_identity_input,
                     StakingTextField::Withdrawer => &mut self.ui.stk_withdrawer_input,
                     StakingTextField::Amount | StakingTextField::WithdrawAmount => &mut self.ui.stk_amount_input,
+                    StakingTextField::LockupDays => &mut self.ui.stk_lockup_days_input,
                     StakingTextField::NewAuthority => &mut self.ui.stk_new_authority_input,
                     StakingTextField::VoteAccount => &mut self.ui.stk_vote_account_input,
                 };
@@ -5039,6 +5052,7 @@ impl App {
                 let identity_input = self.ui.stk_identity_input.clone();
                 let withdrawer_input = self.ui.stk_withdrawer_input.clone();
                 let amount_input = self.ui.stk_amount_input.clone();
+                let lockup_days_input = self.ui.stk_lockup_days_input.clone();
                 let new_authority_input = self.ui.stk_new_authority_input.clone();
                 let authorize_type = self.ui.stk_authorize_type;
                 let vote_account_input = self.ui.stk_vote_account_input.clone();
@@ -5064,12 +5078,14 @@ impl App {
                             .await
                         }
                         StakingStep::CreateStakeConfirm => {
+                            let lockup_days: u64 = lockup_days_input.trim().parse().unwrap_or(0);
                             crate::staking::sol_staking::create_stake_account(
                                 &client,
                                 &rpc_url,
                                 &private_key,
                                 fee_payer_key.as_deref().unwrap_or(&private_key),
                                 &amount_input,
+                                lockup_days,
                             )
                             .await
                         }
@@ -5158,6 +5174,7 @@ enum StakingTextField {
     Identity,
     Withdrawer,
     Amount,
+    LockupDays,
     NewAuthority,
     VoteAccount,
     WithdrawAmount,

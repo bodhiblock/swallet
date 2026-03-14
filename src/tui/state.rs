@@ -246,6 +246,7 @@ pub enum StakingStep {
     CreateVoteConfirm,
     // 创建 Stake Account
     CreateStakeInputAmount,
+    CreateStakeInputLockup,
     CreateStakeConfirm,
     // Vote Account 详情
     VoteDetail,
@@ -467,6 +468,7 @@ pub struct UiState {
     pub stk_identity_input: String,
     pub stk_withdrawer_input: String,
     pub stk_amount_input: String,
+    pub stk_lockup_days_input: String,
     pub stk_vote_account_input: String,
     pub stk_confirm_password: String,
     pub stk_result: Option<(bool, String)>,
@@ -599,6 +601,7 @@ impl UiState {
             stk_identity_input: String::new(),
             stk_withdrawer_input: String::new(),
             stk_amount_input: String::new(),
+            stk_lockup_days_input: String::new(),
             stk_vote_account_input: String::new(),
             stk_confirm_password: String::new(),
             stk_result: None,
