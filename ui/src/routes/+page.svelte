@@ -12,13 +12,18 @@
 	let loading = $state(false);
 
 	onMount(async () => {
-		const hasData = await api.hasDataFile();
-		const unlocked = await api.isUnlocked();
-		if (unlocked) {
-			await loadMain();
-		} else if (hasData) {
-			screen = 'unlock';
-		} else {
+		try {
+			const hasData = await api.hasDataFile();
+			const unlocked = await api.isUnlocked();
+			if (unlocked) {
+				await loadMain();
+			} else if (hasData) {
+				screen = 'unlock';
+			} else {
+				screen = 'create';
+			}
+		} catch (e: any) {
+			error = `初始化失败: ${e?.message || e}`;
 			screen = 'create';
 		}
 	});
