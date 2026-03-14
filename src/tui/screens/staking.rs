@@ -805,7 +805,7 @@ fn render_submitting(frame: &mut Frame) {
 // ========== 结果 ==========
 
 fn render_result(frame: &mut Frame, state: &UiState) {
-    let area = centered_rect(60, 8, frame.area());
+    let area = centered_rect(80, 8, frame.area());
     frame.render_widget(Clear, area);
 
     let (success, msg) = state.stk_result.as_ref().map(|(s, m)| (*s, m.as_str())).unwrap_or((false, "未知"));
@@ -829,7 +829,7 @@ fn render_result(frame: &mut Frame, state: &UiState) {
     .areas(inner);
 
     frame.render_widget(
-        Paragraph::new(Span::styled(msg, Style::default().fg(color))),
+        Paragraph::new(msg).style(Style::default().fg(color)).wrap(ratatui::widgets::Wrap { trim: false }),
         msg_area,
     );
 
