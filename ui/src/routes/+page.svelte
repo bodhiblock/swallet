@@ -241,8 +241,9 @@
 					screen = 'create-staking';
 					break;
 				}
-				case 'create-multisig': {
-					createMsUseSeed = false;
+				case 'create-multisig':
+				case 'create-multisig-seed': {
+					createMsUseSeed = action === 'create-multisig-seed';
 					createMsSeed = '';
 					createMsMembers = [];
 					createMsMemberInput = '';
@@ -538,8 +539,8 @@
 						{#if menuTarget.chainType === 'solana'}
 							<button onclick={() => menuAction('create-vote')}>创建 Vote 账户</button>
 							<button onclick={() => menuAction('create-stake')}>创建 Stake 账户</button>
-							<button onclick={() => menuAction('create-multisig')}>创建多签</button>
-							<button onclick={() => menuAction('import-multisig')}>导入多签</button>
+							<button onclick={() => menuAction('create-multisig')}>创建多签（随机）</button>
+							<button onclick={() => menuAction('create-multisig-seed')}>创建多签（指定种子）</button>
 						{/if}
 					{/if}
 					<button onclick={() => menuAction('relabel')}>修改标签</button>
