@@ -289,13 +289,13 @@
 
 <!-- Password Dialog (create proposal or vote) -->
 {#if passwordDialog}
-	<div class="overlay" onclick={() => { passwordDialog = null; }}>
-		<div class="dialog" onclick={(e) => e.stopPropagation()}>
+	<div class="pw-overlay" onclick={() => { passwordDialog = null; }}>
+		<div class="pw-dialog" onclick={(e) => e.stopPropagation()}>
 			<h3>{passwordDialog === 'create' ? '确认创建提案' : voteDialog?.action === 'approve' ? '确认审批' : voteDialog?.action === 'reject' ? '确认拒绝' : '确认执行'}</h3>
 			{#if passwordDialog === 'vote' && voteDialog}
 				<p class="dim">TX #{voteDialog.proposal.transaction_index}</p>
 			{/if}
-			{#if feePayers.length > 0 && passwordDialog === 'vote'}
+			{#if feePayers.length > 0}
 				<label class="dim">Fee Payer</label>
 				<select bind:value={selectedFeePayer}>
 					{#each feePayers as fp, i}<option value={i}>{fp.address.slice(0,8)}... ({fp.balance})</option>{/each}
@@ -303,9 +303,9 @@
 			{/if}
 			<input type="password" bind:value={dialogPassword} placeholder="输入密码" autofocus
 				onkeydown={(e) => e.key === 'Enter' && (passwordDialog === 'create' ? confirmCreateProposal() : confirmVote())} />
-			<div class="dialog-actions">
-				<button class="btn-secondary" onclick={() => { passwordDialog = null; }}>取消</button>
-				<button class="btn-primary" onclick={() => passwordDialog === 'create' ? confirmCreateProposal() : confirmVote()} disabled={submitting}>{submitting ? '处理中...' : '确认'}</button>
+			<div class="pw-actions">
+				<button class="pw-btn cancel" onclick={() => { passwordDialog = null; }}>取消</button>
+				<button class="pw-btn confirm" onclick={() => passwordDialog === 'create' ? confirmCreateProposal() : confirmVote()} disabled={submitting}>{submitting ? '处理中...' : '确认'}</button>
 			</div>
 		</div>
 	</div>
@@ -343,7 +343,11 @@
 	.btn-primary { width: 100%; padding: 12px; background: var(--accent); color: var(--bg); border-radius: 8px; font-size: 16px; font-weight: 600; border: none; cursor: pointer; }
 	.btn-secondary { flex: 1; padding: 10px; color: var(--text-dim); font-size: 14px; background: none; border: none; cursor: pointer; }
 
-	.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
-	.dialog { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 90%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; }
-	.dialog-actions { display: flex; gap: 8px; }
+	.pw-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
+	.pw-dialog { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 90%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; }
+	.pw-dialog h3 { text-align: center; font-size: 18px; }
+	.pw-actions { display: flex; gap: 8px; }
+	.pw-btn { flex: 1; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: 600; border: none; cursor: pointer; }
+	.pw-btn.confirm { background: var(--accent); color: var(--bg); }
+	.pw-btn.cancel { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); }
 </style>

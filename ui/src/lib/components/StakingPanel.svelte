@@ -122,10 +122,11 @@
 					{#each feePayers as fp, i}<option value={i}>{fp.address.slice(0,8)}... ({fp.balance})</option>{/each}
 				</select>
 			{/if}
-			<input type="password" bind:value={actionPassword} placeholder="密码确认" autofocus />
-			<div class="dialog-actions">
-				<button class="btn-secondary" onclick={() => { actionType = null; }}>取消</button>
-				<button class="btn-primary" onclick={handleAction} disabled={submitting}>{submitting ? '处理中...' : '确认'}</button>
+			<input type="password" bind:value={actionPassword} placeholder="输入密码" autofocus
+				onkeydown={(e) => { if (e.key === 'Enter') handleAction(); }} />
+			<div class="pw-actions">
+				<button class="pw-btn cancel" onclick={() => { actionType = null; }}>取消</button>
+				<button class="pw-btn confirm" onclick={handleAction} disabled={submitting}>{submitting ? '处理中...' : '确认'}</button>
 			</div>
 		</div>
 	</div>
@@ -151,10 +152,11 @@
 	.btn-action { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--accent); font-size: 13px; background: none; cursor: pointer; }
 	.btn-action:hover { border-color: var(--accent); }
 
-	select { border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 10px; border-radius: 8px; font-size: 14px; width: 100%; }
 	label { font-size: 12px; }
-	.btn-primary { width: 100%; padding: 12px; background: var(--accent); color: var(--bg); border-radius: 8px; font-size: 16px; font-weight: 600; border: none; cursor: pointer; }
-	.btn-secondary { flex: 1; padding: 10px; color: var(--text-dim); font-size: 14px; background: none; border: none; cursor: pointer; }
+	.pw-actions { display: flex; gap: 8px; }
+	.pw-btn { flex: 1; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: 600; border: none; cursor: pointer; }
+	.pw-btn.confirm { background: var(--accent); color: var(--bg); }
+	.pw-btn.cancel { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); }
 
 	.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
 	.dialog { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 90%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; }
