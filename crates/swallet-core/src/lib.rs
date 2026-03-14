@@ -12,3 +12,4 @@ pub mod chain;
 pub mod transfer;
 pub mod multisig;
 pub mod staking;
+pub mod service;
