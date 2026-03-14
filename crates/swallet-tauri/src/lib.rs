@@ -44,6 +44,7 @@ pub fn run(data_path: Option<std::path::PathBuf>, config_path: Option<std::path:
             commands::wallet::delete_wallet,
             commands::wallet::restore_hidden_wallets,
             commands::wallet::restore_hidden_addresses,
+            commands::balance::get_rpc_url_for_address,
             commands::balance::get_cached_balances,
             commands::balance::refresh_balances,
             commands::transfer::build_transfer_assets,

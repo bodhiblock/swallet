@@ -30,6 +30,7 @@ export const api = {
 	restoreHiddenAddresses: () => invoke<number>('restore_hidden_addresses'),
 
 	// Balance
+	getRpcUrlForAddress: (address: string) => invoke<string>('get_rpc_url_for_address', { address }),
 	getCachedBalances: () => invoke<BalanceDto[]>('get_cached_balances'),
 	refreshBalances: () => invoke<BalanceDto[]>('refresh_balances'),
 

@@ -229,7 +229,7 @@
 						stakingAccountIndex = accountIndex!;
 						const b = balances.find(b => b.address === acc.address);
 						stakingAccountOwner = b?.account_owner || null;
-						try { const chains = await api.getSolanaChains(); stakingRpcUrl = chains[0]?.rpc_url || ''; } catch (_) {}
+						try { stakingRpcUrl = await api.getRpcUrlForAddress(acc.address); } catch (_) {}
 						screen = 'staking';
 					}
 					break;

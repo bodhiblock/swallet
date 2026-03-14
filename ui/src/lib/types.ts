@@ -17,6 +17,7 @@ export interface AccountDto {
 export interface BalanceDto {
 	address: string;
 	account_owner: string | null;
+	account_owner_chain_id: string | null;
 	chains: ChainBalanceDto[];
 }
 

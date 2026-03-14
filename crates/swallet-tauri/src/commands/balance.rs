@@ -8,6 +8,7 @@ use crate::state::AppState;
 pub struct BalanceDto {
     pub address: String,
     pub account_owner: Option<String>,
+    pub account_owner_chain_id: Option<String>,
     pub chains: Vec<ChainBalanceDto>,
 }
 
@@ -36,6 +37,7 @@ fn cache_to_dtos(cache: &chain::BalanceCache) -> Vec<BalanceDto> {
         BalanceDto {
             address: address.clone(),
             account_owner: portfolio.account_owner.clone(),
+            account_owner_chain_id: portfolio.account_owner_chain_id.clone(),
             chains: portfolio.chains.iter().map(|cb| {
                 ChainBalanceDto {
                     chain_id: cb.chain_id.clone(),
@@ -57,6 +59,12 @@ fn cache_to_dtos(cache: &chain::BalanceCache) -> Vec<BalanceDto> {
             }).collect(),
         }
     }).collect()
+}
+
+#[tauri::command]
+pub fn get_rpc_url_for_address(state: tauri::State<'_, AppState>, address: String) -> String {
+    let service = state.service.lock().unwrap();
+    service.get_rpc_url_for_address(&address)
 }
 
 #[tauri::command]
