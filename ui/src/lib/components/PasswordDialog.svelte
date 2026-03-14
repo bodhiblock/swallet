@@ -22,6 +22,7 @@
 	.dialog { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 90%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; }
 	h3 { text-align: center; font-size: 18px; }
 	.dialog-actions { display: flex; gap: 8px; }
-	.btn-primary { flex: 1; padding: 12px; background: var(--accent); color: var(--bg); border-radius: 8px; font-size: 16px; font-weight: 600; border: none; cursor: pointer; }
-	.btn-secondary { flex: 1; padding: 10px; color: var(--text-dim); font-size: 14px; background: none; border: none; cursor: pointer; }
+	.dialog-actions button { flex: 1; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: 600; border: none; cursor: pointer; }
+	.btn-primary { background: var(--accent); color: var(--bg); }
+	.btn-secondary { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border) !important; }
 </style>
