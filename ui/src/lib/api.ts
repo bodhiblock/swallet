@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
 	WalletDto, BalanceDto, AssetDto, MultisigDetailDto,
-	ProposalDto, FeePayerDto, ChainDto, VoteAccountDto, StakeAccountDto
+	ProposalDto, FeePayerDto, ChainDto, VoteAccountDto, StakeAccountDto,
+	PresetProgramDto
 } from './types';
 
 export const api = {
@@ -44,10 +45,14 @@ export const api = {
 	fetchProposals: (walletIndex: number) => invoke<ProposalDto[]>('fetch_proposals', { walletIndex }),
 	createSolTransferProposal: (walletIndex: number, vaultIndex: number, toAddress: string, amount: string, password: string, feePayerWi: number, feePayerAi: number) =>
 		invoke<string>('create_sol_transfer_proposal', { walletIndex, vaultIndex, toAddress, amount, password, feePayerWi, feePayerAi }),
-	createProposal: (walletIndex: number, vaultIndex: number, proposalTypeIdx: number, toAddress: string, amount: string,
-		upgradeProgram: string, upgradeBuffer: string, vsOpIdx: number, vsTarget: string, vsParam: string, vsAmount: string,
-		chainId: string, password: string, feePayerWi: number, feePayerAi: number) =>
-		invoke<string>('create_proposal', { walletIndex, vaultIndex, proposalTypeIdx, toAddress, amount, upgradeProgram, upgradeBuffer, vsOpIdx, vsTarget, vsParam, vsAmount, chainId, password, feePayerWi, feePayerAi }),
+	createProposal: (params: {
+		walletIndex: number; vaultIndex: number; proposalTypeIdx: number;
+		toAddress: string; amount: string; upgradeProgram: string; upgradeBuffer: string;
+		presetProgramIdx: number; presetInstructionIdx: number; presetArgs: string[];
+		vsOpIdx: number; vsTarget: string; vsParam: string; vsAmount: string;
+		chainId: string; password: string; feePayerWi: number; feePayerAi: number;
+	}) => invoke<string>('create_proposal', params),
+	getPresetPrograms: (chainId: string) => invoke<PresetProgramDto[]>('get_preset_programs', { chainId }),
 	approveProposal: (walletIndex: number, txIndex: number, password: string, feePayerWi: number, feePayerAi: number) =>
 		invoke<string>('approve_proposal', { walletIndex, txIndex, password, feePayerWi, feePayerAi }),
 	rejectProposal: (walletIndex: number, txIndex: number, password: string, feePayerWi: number, feePayerAi: number) =>

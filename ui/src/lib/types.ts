@@ -86,6 +86,23 @@ export interface VoteAccountDto {
 	credits: string | null;
 }
 
+export interface PresetProgramDto {
+	name: string;
+	instructions: PresetInstructionDto[];
+}
+
+export interface PresetInstructionDto {
+	name: string;
+	label: string;
+	args: PresetArgDto[];
+}
+
+export interface PresetArgDto {
+	name: string;
+	label: string;
+	arg_type: string;
+}
+
 export interface StakeAccountDto {
 	address: string;
 	state: string;

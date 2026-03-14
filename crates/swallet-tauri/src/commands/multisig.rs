@@ -213,7 +213,44 @@ pub async fn execute_proposal(
         .await.map_err(|e| e.into())
 }
 
+#[derive(Serialize)]
+pub struct PresetProgramDto {
+    pub name: String,
+    pub instructions: Vec<PresetInstructionDto>,
+}
+
+#[derive(Serialize)]
+pub struct PresetInstructionDto {
+    pub name: String,
+    pub label: String,
+    pub args: Vec<PresetArgDto>,
+}
+
+#[derive(Serialize)]
+pub struct PresetArgDto {
+    pub name: String,
+    pub label: String,
+    pub arg_type: String,
+}
+
 #[tauri::command]
+pub fn get_preset_programs(chain_id: String) -> Vec<PresetProgramDto> {
+    multisig::presets::programs_for_chain(&chain_id).into_iter().map(|p| PresetProgramDto {
+        name: p.name.to_string(),
+        instructions: p.instructions.into_iter().map(|ix| PresetInstructionDto {
+            name: ix.name.to_string(),
+            label: ix.label.to_string(),
+            args: ix.args.into_iter().map(|a| PresetArgDto {
+                name: a.name.to_string(),
+                label: a.label.to_string(),
+                arg_type: format!("{:?}", a.arg_type),
+            }).collect(),
+        }).collect(),
+    }).collect()
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_proposal(
     state: tauri::State<'_, AppState>,
     wallet_index: usize,
@@ -223,6 +260,9 @@ pub async fn create_proposal(
     amount: String,
     upgrade_program: String,
     upgrade_buffer: String,
+    preset_program_idx: usize,
+    preset_instruction_idx: usize,
+    preset_args: Vec<String>,
     vs_op_idx: usize,
     vs_target: String,
     vs_param: String,
@@ -262,7 +302,7 @@ pub async fn create_proposal(
     swallet_core::service::execute_create_proposal(
         &rpc_url, &private_key, &fee_payer_key, &ms_address,
         proposal_type_idx, &to_address, &amount, &upgrade_program, &upgrade_buffer,
-        0, 0, &[], &chain_id, vault_index, vs_op, &vs_target, &vs_param, &vs_amount,
+        preset_program_idx, preset_instruction_idx, &preset_args, &chain_id, vault_index, vs_op, &vs_target, &vs_param, &vs_amount,
     ).await.map_err(|e| e.into())
 }
 
