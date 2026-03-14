@@ -817,7 +817,7 @@ fn render_input_program_args(frame: &mut Frame, area: ratatui::layout::Rect, sta
         for (i, arg) in ix.args.iter().enumerate() {
             if i < state.ms_program_args.len() {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("   {}: ", arg.label), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("   {} ({}): ", arg.label, arg.name), Style::default().fg(Color::DarkGray)),
                     Span::styled(&state.ms_program_args[i], Style::default().fg(Color::Green)),
                 ]));
             }
@@ -828,7 +828,7 @@ fn render_input_program_args(frame: &mut Frame, area: ratatui::layout::Rect, sta
             let current_arg = &ix.args[state.ms_program_arg_index];
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                format!(" 请输入 {} ({}/{}):", current_arg.label, state.ms_program_arg_index + 1, ix.args.len()),
+                format!(" 请输入 {} / {} ({}/{}):", current_arg.label, current_arg.name, state.ms_program_arg_index + 1, ix.args.len()),
                 Style::default().fg(Color::White),
             )));
             lines.push(Line::from(Span::styled(
@@ -902,7 +902,7 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
                     for (i, arg) in ix.args.iter().enumerate() {
                         let val = state.ms_program_args.get(i).map(|s| s.as_str()).unwrap_or("-");
                         lines.push(Line::from(vec![
-                            Span::styled(format!("   {}: ", arg.label), Style::default().fg(Color::DarkGray)),
+                            Span::styled(format!("   {} ({}): ", arg.label, arg.name), Style::default().fg(Color::DarkGray)),
                             Span::styled(val, Style::default().fg(Color::White)),
                         ]));
                     }
