@@ -1,4 +1,6 @@
 /target
+*.dat
+squads_seeds.txt
 ui/node_modules
 ui/build
 ui/.svelte-kit
