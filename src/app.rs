@@ -1240,7 +1240,11 @@ impl App {
                 self.move_wallet(wi, action == ActionItem::MoveUp);
             }
             ActionItem::CreateMultisig => {
-                // 从 SOL 地址创建多签，先进入链选择
+                self.ui.ms_create_use_seed = false;
+                self.enter_chain_select(MsChainSelectPurpose::Create);
+            }
+            ActionItem::CreateMultisigWithSeed => {
+                self.ui.ms_create_use_seed = true;
                 self.enter_chain_select(MsChainSelectPurpose::Create);
             }
             ActionItem::AddVault => {

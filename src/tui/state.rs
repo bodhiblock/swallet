@@ -297,6 +297,7 @@ pub enum ActionItem {
     HideAddress,
     DeleteWatchWallet,
     CreateMultisig,
+    CreateMultisigWithSeed,
     CreateVoteAccount,
     CreateStakeAccount,
     AddVault,
@@ -315,7 +316,8 @@ impl ActionItem {
             Self::EditAddressLabel => "修改备注",
             Self::HideAddress => "隐藏地址",
             Self::DeleteWatchWallet => "删除钱包",
-            Self::CreateMultisig => "创建多签地址",
+            Self::CreateMultisig => "创建多签地址（随机）",
+            Self::CreateMultisigWithSeed => "创建多签地址（指定种子）",
             Self::CreateVoteAccount => "创建 Vote 账户",
             Self::CreateStakeAccount => "创建 Stake 账户",
             Self::AddVault => "添加 Vault",
@@ -332,7 +334,7 @@ impl ActionItem {
     }
 
     pub fn for_mnemonic_sol_address() -> Vec<Self> {
-        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditAddressLabel, Self::HideAddress, Self::CreateMultisig]
+        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditAddressLabel, Self::HideAddress, Self::CreateMultisig, Self::CreateMultisigWithSeed]
     }
 
     pub fn for_private_key_address() -> Vec<Self> {
@@ -340,7 +342,7 @@ impl ActionItem {
     }
 
     pub fn for_private_key_sol_address() -> Vec<Self> {
-        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditName, Self::HideWallet, Self::CreateMultisig]
+        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditName, Self::HideWallet, Self::CreateMultisig, Self::CreateMultisigWithSeed]
     }
 
     pub fn for_watch_address() -> Vec<Self> {
