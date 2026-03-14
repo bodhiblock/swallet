@@ -3269,12 +3269,12 @@ impl App {
         if let Some(ref preset) = self.ui.ms_create_preset_creator
             && let Some(idx) = self.ui.ms_create_sol_addresses.iter().position(|(addr, _)| addr == preset) {
                 self.ui.ms_create_creator_selected = idx;
-                let creator_addr = preset.clone();
-                self.ui.ms_create_members = vec![creator_addr];
-                self.ui.ms_create_preset_creator = None;
+                self.ui.ms_create_members = vec![preset.clone()];
                 if self.ui.ms_create_use_seed {
+                    // 种子模式：先输入种子，保留 preset 供种子输入完后跳过选择
                     self.ui.ms_step = MultisigStep::CreateInputSeed;
                 } else {
+                    self.ui.ms_create_preset_creator = None;
                     self.ui.ms_step = MultisigStep::CreateInputMembers;
                 }
                 self.ui.clear_status();
