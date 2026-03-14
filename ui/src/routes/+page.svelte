@@ -2,9 +2,11 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { WalletDto, BalanceDto, AssetDto } from '$lib/types';
+	import MultisigPanel from '$lib/components/MultisigPanel.svelte';
+	import StakingPanel from '$lib/components/StakingPanel.svelte';
 
 	// Screen state
-	let screen: 'loading' | 'unlock' | 'create' | 'confirm' | 'main' | 'add-wallet' | 'show-mnemonic' | 'input-name' | 'transfer-assets' | 'transfer-input' | 'transfer-confirm' | 'transfer-result' = $state('loading');
+	let screen: 'loading' | 'unlock' | 'create' | 'confirm' | 'main' | 'add-wallet' | 'show-mnemonic' | 'input-name' | 'transfer-assets' | 'transfer-input' | 'transfer-confirm' | 'transfer-result' | 'multisig' | 'staking' = $state('loading');
 	let password = $state('');
 	let confirmPassword = $state('');
 	let error = $state('');
@@ -42,6 +44,14 @@
 	let txPassword = $state('');
 	let txSending = $state(false);
 	let txResult = $state<{ success: boolean; message: string } | null>(null);
+
+	// Multisig/Staking
+	let msWalletIndex = $state(0);
+	let stakingAddress = $state('');
+	let stakingRpcUrl = $state('');
+	let stakingWalletIndex = $state(0);
+	let stakingAccountIndex = $state(0);
+	let stakingAccountOwner = $state<string | null>(null);
 
 	onMount(async () => {
 		try {
@@ -172,6 +182,25 @@
 				case 'transfer':
 					await startTransfer(walletIndex, accountIndex!, chainType!);
 					break;
+				case 'multisig':
+					msWalletIndex = walletIndex;
+					screen = 'multisig';
+					break;
+				case 'staking': {
+					const w = wallets[walletIndex];
+					const acc = w?.accounts[accountIndex!];
+					if (acc) {
+						stakingAddress = acc.address;
+						stakingWalletIndex = walletIndex;
+						stakingAccountIndex = accountIndex!;
+						const b = balances.find(b => b.address === acc.address);
+						stakingAccountOwner = b?.account_owner || null;
+						// Get RPC URL from service
+						try { const chains = await api.getSolanaChains(); stakingRpcUrl = chains[0]?.rpc_url || ''; } catch (_) {}
+						screen = 'staking';
+					}
+					break;
+				}
 				case 'rename':
 					dialogType = 'rename';
 					dialogInput = wallets[walletIndex]?.name || '';
@@ -405,6 +434,9 @@
 		<div class="overlay" onclick={closeMenu}>
 			<div class="context-menu" onclick={(e) => e.stopPropagation()}>
 				{#if menuTarget.type === 'wallet'}
+					{#if menuTarget.walletType === 'multisig'}
+						<button onclick={() => menuAction('multisig')}>多签管理</button>
+					{/if}
 					<button onclick={() => menuAction('rename')}>修改名称</button>
 					{#if menuTarget.walletType === 'mnemonic'}
 						<button onclick={() => menuAction('add-eth')}>添加 ETH 地址</button>
@@ -416,6 +448,7 @@
 					<button class="danger" onclick={() => menuAction('delete')}>删除</button>
 				{:else}
 					<button onclick={() => menuAction('transfer')}>转账</button>
+					<button onclick={() => menuAction('staking')}>详情</button>
 					<button onclick={() => menuAction('relabel')}>修改标签</button>
 					<button onclick={() => menuAction('hide-address')}>隐藏</button>
 				{/if}
@@ -496,6 +529,12 @@
 			<button class="btn-secondary" onclick={() => { screen = 'transfer-input'; }}>返回</button>
 		</div>
 	</div>
+
+{:else if screen === 'multisig'}
+	<MultisigPanel walletIndex={msWalletIndex} onClose={() => { screen = 'main'; reloadWallets(); }} onToast={showToast} />
+
+{:else if screen === 'staking'}
+	<StakingPanel address={stakingAddress} rpcUrl={stakingRpcUrl} walletIndex={stakingWalletIndex} accountIndex={stakingAccountIndex} accountOwner={stakingAccountOwner} onClose={() => { screen = 'main'; }} onToast={showToast} />
 
 {:else if screen === 'transfer-result'}
 	<div class="container center">

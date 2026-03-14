@@ -47,3 +47,51 @@ export interface AssetDto {
 	balance_raw: string;
 	asset_type: string;
 }
+
+export interface MultisigDetailDto {
+	address: string;
+	threshold: number;
+	members: { address: string }[];
+	transaction_index: number;
+}
+
+export interface ProposalDto {
+	index: number;
+	transaction_index: number;
+	status: string;
+	approved_count: number;
+	rejected_count: number;
+}
+
+export interface FeePayerDto {
+	address: string;
+	label: string;
+	balance: string;
+	wallet_index: number;
+	account_index: number;
+}
+
+export interface ChainDto {
+	id: string;
+	name: string;
+	rpc_url: string;
+}
+
+export interface VoteAccountDto {
+	address: string;
+	validator_identity: string;
+	authorized_voter: string;
+	authorized_withdrawer: string;
+	commission: number;
+	credits: string | null;
+}
+
+export interface StakeAccountDto {
+	address: string;
+	state: string;
+	delegated_vote_account: string | null;
+	stake_lamports: string;
+	authorized_staker: string;
+	authorized_withdrawer: string;
+	lockup_timestamp: number;
+}
