@@ -4,6 +4,18 @@
 	import type { WalletDto, BalanceDto, AssetDto } from '$lib/types';
 	import MultisigPanel from '$lib/components/MultisigPanel.svelte';
 	import StakingPanel from '$lib/components/StakingPanel.svelte';
+	import PasswordDialog from '$lib/components/PasswordDialog.svelte';
+
+	// Global password dialog
+	let pwDialogTitle = $state('');
+	let pwDialogCallback: ((pw: string) => void) | null = $state(null);
+
+	function requestPassword(title: string, callback: (pw: string) => void) {
+		pwDialogTitle = title;
+		pwDialogCallback = callback;
+	}
+
+	function closePwDialog() { pwDialogCallback = null; }
 
 	// Screen state
 	let screen: string = $state('loading');
@@ -29,9 +41,8 @@
 	let showMainMenu = $state(false);
 
 	// Dialog
-	let dialogType: 'rename' | 'relabel' | 'delete' | 'add-address' | null = $state(null);
+	let dialogType: 'rename' | 'relabel' | null = $state(null);
 	let dialogInput = $state('');
-	let dialogPassword = $state('');
 
 	// Transfer
 	let txWalletIndex = $state(0);
@@ -42,7 +53,6 @@
 	let txSelectedAsset = $state(0);
 	let txToAddress = $state('');
 	let txAmount = $state('');
-	let txPassword = $state('');
 	let txSending = $state(false);
 	let txResult = $state<{ success: boolean; message: string } | null>(null);
 
@@ -289,7 +299,12 @@
 						await api.hideAddress(walletIndex, chainType, accountIndex);
 					await reloadWallets(); showToast('已隐藏'); break;
 				case 'delete':
-					dialogType = 'delete'; dialogPassword = ''; break;
+					requestPassword('确认删除钱包', async (pw) => {
+						closePwDialog();
+						try { await api.deleteWallet(walletIndex, pw); await reloadWallets(); showToast('已删除'); }
+						catch (e: any) { showToast(e?.message || '删除失败'); }
+					});
+					break;
 				case 'add-eth':
 					await api.addDerivedAddress(walletIndex, 'ethereum'); await reloadWallets(); showToast('地址已添加'); break;
 				case 'add-sol':
@@ -305,8 +320,6 @@
 				await api.editWalletName(menuTarget.walletIndex, dialogInput);
 			} else if (dialogType === 'relabel') {
 				await api.editAddressLabel(menuTarget.walletIndex, menuTarget.chainType!, menuTarget.accountIndex!, dialogInput);
-			} else if (dialogType === 'delete') {
-				await api.deleteWallet(menuTarget.walletIndex, dialogPassword);
 			}
 			await reloadWallets();
 			showToast('操作成功');
@@ -353,21 +366,18 @@
 	async function submitTransfer() {
 		if (!txToAddress.trim()) { showToast('请输入目标地址'); return; }
 		if (!txAmount.trim()) { showToast('请输入金额'); return; }
-		screen = 'transfer-confirm';
-		txPassword = '';
-	}
-
-	async function confirmTransfer() {
-		if (!txPassword) { showToast('请输入密码'); return; }
-		txSending = true;
-		try {
-			const sig = await api.executeTransfer(txPassword, txWalletIndex, txAccountIndex, txChainType, txSelectedAsset, txToAddress, txAmount);
-			txResult = { success: true, message: sig };
-		} catch (e: any) {
-			txResult = { success: false, message: e?.message || '转账失败' };
-		}
-		txSending = false;
-		screen = 'transfer-result';
+		requestPassword('确认转账', async (pw) => {
+			closePwDialog();
+			txSending = true;
+			try {
+				const sig = await api.executeTransfer(pw, txWalletIndex, txAccountIndex, txChainType, txSelectedAsset, txToAddress, txAmount);
+				txResult = { success: true, message: sig };
+			} catch (e: any) {
+				txResult = { success: false, message: e?.message || '转账失败' };
+			}
+			txSending = false;
+			screen = 'transfer-result';
+		});
 	}
 
 	function getAccountOwner(address: string): string | null {
@@ -576,10 +586,6 @@
 				{:else if dialogType === 'relabel'}
 					<h3>修改标签</h3>
 					<input bind:value={dialogInput} placeholder="留空清除标签" autofocus />
-				{:else if dialogType === 'delete'}
-					<h3>确认删除</h3>
-					<p class="dim">输入密码确认删除</p>
-					<input type="password" bind:value={dialogPassword} autofocus />
 				{/if}
 				<div class="dialog-actions">
 					<button class="btn-secondary" onclick={() => { dialogType = null; }}>取消</button>
@@ -617,25 +623,8 @@
 			<p class="dim">{txAssets[txSelectedAsset]?.chain_name} · 余额: {txAssets[txSelectedAsset]?.balance}</p>
 			<input bind:value={txToAddress} placeholder="目标地址" />
 			<input bind:value={txAmount} placeholder="金额" type="text" inputmode="decimal" />
-			<button class="btn-primary" onclick={submitTransfer}>下一步</button>
+			<button class="btn-primary" onclick={submitTransfer}>确认转账</button>
 			<button class="btn-secondary" onclick={() => { screen = 'transfer-assets'; }}>返回</button>
-		</div>
-	</div>
-
-{:else if screen === 'transfer-confirm'}
-	<div class="container center">
-		<div class="card">
-			<h2>确认转账</h2>
-			<div class="confirm-detail">
-				<p><span class="dim">资产:</span> {txAssets[txSelectedAsset]?.symbol} ({txAssets[txSelectedAsset]?.chain_name})</p>
-				<p><span class="dim">目标:</span> <span class="mono">{txToAddress.slice(0,10)}...{txToAddress.slice(-6)}</span></p>
-				<p><span class="dim">金额:</span> {txAmount} {txAssets[txSelectedAsset]?.symbol}</p>
-			</div>
-			<input type="password" bind:value={txPassword} placeholder="输入密码确认" autofocus
-				onkeydown={(e) => e.key === 'Enter' && confirmTransfer()} />
-			{#if txSending}<p class="dim">提交中...</p>{/if}
-			<button class="btn-primary" onclick={confirmTransfer} disabled={txSending}>确认转账</button>
-			<button class="btn-secondary" onclick={() => { screen = 'transfer-input'; }}>返回</button>
 		</div>
 	</div>
 
@@ -657,23 +646,25 @@
 				<input bind:value={createStakingAmount} placeholder="质押数量" type="text" inputmode="decimal" />
 				<input bind:value={createStakingLockupDays} placeholder="锁仓天数 (0=不锁仓)" type="text" inputmode="numeric" />
 			{/if}
-			<input type="password" bind:value={createStakingPassword} placeholder="密码确认" />
 			<button class="btn-primary" onclick={async () => {
-				if (!createStakingPassword) { showToast('请输入密码'); return; }
 				if (!menuTarget) { showToast('无效操作'); return; }
 				const fp = (await api.getFeePayers())[0];
 				if (!fp) { showToast('没有可用的 Fee Payer'); return; }
-				try {
-					let sig: string;
-					if (createStakingType === 'vote') {
-						sig = await api.createVoteAccount(menuTarget.walletIndex, menuTarget.accountIndex!, createStakingRpcUrl, fp.wallet_index, fp.account_index, createStakingIdentity, createStakingWithdrawer, createStakingPassword);
-					} else {
-						sig = await api.createStakeAccount(menuTarget.walletIndex, menuTarget.accountIndex!, createStakingRpcUrl, fp.wallet_index, fp.account_index, createStakingAmount, parseInt(createStakingLockupDays) || 0, createStakingPassword);
-					}
-					showToast(`创建成功: ${sig.slice(0,16)}...`);
-					screen = 'main';
-					refreshBalances();
-				} catch (e: any) { showToast(e?.message || '创建失败'); }
+				const mt = menuTarget;
+				requestPassword(createStakingType === 'vote' ? '确认创建 Vote 账户' : '确认创建 Stake 账户', async (pw) => {
+					closePwDialog();
+					try {
+						let sig: string;
+						if (createStakingType === 'vote') {
+							sig = await api.createVoteAccount(mt.walletIndex, mt.accountIndex!, createStakingRpcUrl, fp.wallet_index, fp.account_index, createStakingIdentity, createStakingWithdrawer, pw);
+						} else {
+							sig = await api.createStakeAccount(mt.walletIndex, mt.accountIndex!, createStakingRpcUrl, fp.wallet_index, fp.account_index, createStakingAmount, parseInt(createStakingLockupDays) || 0, pw);
+						}
+						showToast(`创建成功: ${sig.slice(0,16)}...`);
+						screen = 'main';
+						refreshBalances();
+					} catch (e: any) { showToast(e?.message || '创建失败'); }
+				});
 			}}>创建</button>
 			<button class="btn-secondary" onclick={() => { screen = 'main'; }}>取消</button>
 		</div>
@@ -711,18 +702,19 @@
 			{#if createMsUseSeed}
 				<input bind:value={createMsSeed} placeholder="种子私钥 (Base58)" />
 			{/if}
-			<input type="password" bind:value={createMsPassword} placeholder="密码确认" />
 			<button class="btn-primary" onclick={async () => {
 				if (createMsMembers.length < 2) { showToast('至少需要2个成员'); return; }
 				const t = parseInt(createMsThreshold);
 				if (!t || t < 1 || t > createMsMembers.length) { showToast('无效的阈值'); return; }
-				if (!createMsPassword) { showToast('请输入密码'); return; }
-				try {
-					const addr = await api.createMultisig(importMsChainId, createMsMembers[0], createMsMembers, t, createMsPassword, createMsUseSeed ? createMsSeed : undefined);
-					showToast(`多签已创建: ${addr.slice(0,12)}...`);
-					await reloadWallets();
-					screen = 'main';
-				} catch (e: any) { showToast(e?.message || '创建失败'); }
+				requestPassword('确认创建多签地址', async (pw) => {
+					closePwDialog();
+					try {
+						const addr = await api.createMultisig(importMsChainId, createMsMembers[0], createMsMembers, t, pw, createMsUseSeed ? createMsSeed : undefined);
+						showToast(`多签已创建: ${addr.slice(0,12)}...`);
+						await reloadWallets();
+						screen = 'main';
+					} catch (e: any) { showToast(e?.message || '创建失败'); }
+				});
 			}}>创建多签地址</button>
 			<button class="btn-secondary" onclick={() => { screen = 'main'; }}>取消</button>
 		</div>
@@ -768,6 +760,10 @@
 			<button class="btn-primary" onclick={() => { screen = 'main'; refreshBalances(); }}>返回</button>
 		</div>
 	</div>
+{/if}
+
+{#if pwDialogCallback}
+	<PasswordDialog title={pwDialogTitle} onConfirm={pwDialogCallback} onCancel={closePwDialog} />
 {/if}
 
 {#if toast}<div class="toast">{toast}</div>{/if}
