@@ -155,6 +155,7 @@ pub async fn create_proposal_and_approve(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     multisig_address: &str,
     vault_index: u8,
     inner_instructions: Vec<proposals::VaultInstruction>,
@@ -164,6 +165,10 @@ pub async fn create_proposal_and_approve(
         .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
     let keypair = Keypair::new_from_array(key_bytes);
     let creator_pubkey = keypair.pubkey();
+    let fp_bytes: [u8; 32] = fee_payer_key
+        .try_into()
+        .map_err(|_| "Fee Payer 私钥长度必须为 32 字节".to_string())?;
+    let fee_payer = Keypair::new_from_array(fp_bytes);
 
     let multisig_pubkey = Pubkey::from_str(multisig_address)
         .map_err(|e| format!("无效的多签地址: {e}"))?;
@@ -233,20 +238,8 @@ pub async fn create_proposal_and_approve(
     );
 
     // 构建并签名 Solana 交易
-    let recent_blockhash = sol_transfer::get_latest_blockhash(client, rpc_url).await?;
-
-    let message_bytes = sol_transfer::build_and_serialize_message(
-        &creator_pubkey.to_bytes(),
-        &recent_blockhash,
-        &[vault_tx_create_ix, proposal_create_ix, proposal_approve_ix],
-    );
-
-    let sig = keypair.sign_message(&message_bytes);
-    let mut sig_bytes = [0u8; 64];
-    sig_bytes.copy_from_slice(sig.as_ref());
-    let tx_bytes = sol_transfer::build_transaction(&[sig_bytes], &message_bytes);
-
-    sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await
+    let instructions = [vault_tx_create_ix, proposal_create_ix, proposal_approve_ix];
+    sign_and_send_with_fee_payer(client, rpc_url, &keypair, &fee_payer, &instructions).await
 }
 
 /// 审批提案
@@ -254,11 +247,13 @@ pub async fn approve_proposal(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     multisig_address: &str,
     transaction_index: u64,
 ) -> Result<String, String> {
     let (keypair, multisig_pubkey, proposal_pda) =
         prepare_vote(private_key, multisig_address, transaction_index)?;
+    let fee_payer = prepare_fee_payer(fee_payer_key)?;
 
     let ix = sdk_instruction(
         client::accounts::ProposalApprove {
@@ -271,7 +266,7 @@ pub async fn approve_proposal(
         },
     );
 
-    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+    sign_and_send_with_fee_payer(client, rpc_url, &keypair, &fee_payer, &[ix]).await
 }
 
 /// 拒绝提案
@@ -279,11 +274,13 @@ pub async fn reject_proposal(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     multisig_address: &str,
     transaction_index: u64,
 ) -> Result<String, String> {
     let (keypair, multisig_pubkey, proposal_pda) =
         prepare_vote(private_key, multisig_address, transaction_index)?;
+    let fee_payer = prepare_fee_payer(fee_payer_key)?;
 
     let ix = sdk_instruction(
         client::accounts::ProposalReject {
@@ -296,7 +293,7 @@ pub async fn reject_proposal(
         },
     );
 
-    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+    sign_and_send_with_fee_payer(client, rpc_url, &keypair, &fee_payer, &[ix]).await
 }
 
 /// 准备投票所需的公共参数
@@ -313,6 +310,13 @@ fn prepare_vote(
         .map_err(|e| format!("无效的多签地址: {e}"))?;
     let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index);
     Ok((keypair, multisig_pubkey, proposal_pda))
+}
+
+fn prepare_fee_payer(fee_payer_key: &[u8]) -> Result<Keypair, String> {
+    let fp_bytes: [u8; 32] = fee_payer_key
+        .try_into()
+        .map_err(|_| "Fee Payer 私钥长度必须为 32 字节".to_string())?;
+    Ok(Keypair::new_from_array(fp_bytes))
 }
 
 /// 签名并发送单签名者交易
@@ -335,11 +339,38 @@ async fn sign_and_send(
     sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await
 }
 
+async fn sign_and_send_with_fee_payer(
+    client: &Client,
+    rpc_url: &str,
+    signer: &Keypair,
+    fee_payer: &Keypair,
+    instructions: &[Instruction],
+) -> Result<String, String> {
+    if signer.pubkey() == fee_payer.pubkey() {
+        return sign_and_send(client, rpc_url, signer, instructions).await;
+    }
+    let recent_blockhash = sol_transfer::get_latest_blockhash(client, rpc_url).await?;
+    let message_bytes = sol_transfer::build_and_serialize_message(
+        &fee_payer.pubkey().to_bytes(),
+        &recent_blockhash,
+        instructions,
+    );
+    let sig1 = fee_payer.sign_message(&message_bytes);
+    let sig2 = signer.sign_message(&message_bytes);
+    let mut sig1_bytes = [0u8; 64];
+    let mut sig2_bytes = [0u8; 64];
+    sig1_bytes.copy_from_slice(sig1.as_ref());
+    sig2_bytes.copy_from_slice(sig2.as_ref());
+    let tx_bytes = sol_transfer::build_transaction(&[sig1_bytes, sig2_bytes], &message_bytes);
+    sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await
+}
+
 /// 执行已通过的 Vault Transaction
 pub async fn execute_vault_transaction(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     multisig_address: &str,
     transaction_index: u64,
     vault_index: u8,
@@ -349,6 +380,7 @@ pub async fn execute_vault_transaction(
         .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
     let keypair = Keypair::new_from_array(key_bytes);
     let executor_pubkey = keypair.pubkey();
+    let fee_payer = prepare_fee_payer(fee_payer_key)?;
 
     let multisig_pubkey = Pubkey::from_str(multisig_address)
         .map_err(|e| format!("无效的多签地址: {e}"))?;
@@ -402,7 +434,7 @@ pub async fn execute_vault_transaction(
         });
     }
 
-    sign_and_send(client, rpc_url, &keypair, &[ix_with_remaining]).await
+    sign_and_send_with_fee_payer(client, rpc_url, &keypair, &fee_payer, &[ix_with_remaining]).await
 }
 
 /// 从 VaultTransaction 原始账户数据中解析消息（标准 Borsh 格式）

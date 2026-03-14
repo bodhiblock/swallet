@@ -2122,6 +2122,7 @@ impl App {
             MultisigStep::InputVoteStakeTarget => self.handle_ms_text_input_key(key, MsInputField::VsTarget),
             MultisigStep::InputVoteStakeParam => self.handle_ms_text_input_key(key, MsInputField::VsParam),
             MultisigStep::InputVoteStakeAmount => self.handle_ms_text_input_key(key, MsInputField::VsAmount),
+            MultisigStep::SelectMsFeePayer => self.handle_ms_select_fee_payer_key(key),
             MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => {
                 self.handle_ms_confirm_key(key);
             }
@@ -2314,25 +2315,19 @@ impl App {
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 if status == Some(multisig::ProposalStatus::Active) {
                     self.ui.ms_vote_action = Some(VoteAction::Approve);
-                    self.ui.ms_confirm_password.clear();
-                    self.ui.ms_step = MultisigStep::ConfirmVote;
-                    self.ui.clear_status();
+                    self.enter_ms_fee_payer_select(MultisigStep::ConfirmVote);
                 }
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 if status == Some(multisig::ProposalStatus::Active) {
                     self.ui.ms_vote_action = Some(VoteAction::Reject);
-                    self.ui.ms_confirm_password.clear();
-                    self.ui.ms_step = MultisigStep::ConfirmVote;
-                    self.ui.clear_status();
+                    self.enter_ms_fee_payer_select(MultisigStep::ConfirmVote);
                 }
             }
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if status == Some(multisig::ProposalStatus::Approved) {
                     self.ui.ms_vote_action = Some(VoteAction::Execute);
-                    self.ui.ms_confirm_password.clear();
-                    self.ui.ms_step = MultisigStep::ConfirmVote;
-                    self.ui.clear_status();
+                    self.enter_ms_fee_payer_select(MultisigStep::ConfirmVote);
                 }
             }
             KeyCode::Esc => {
@@ -2514,8 +2509,7 @@ impl App {
                             self.ui.ms_step = MultisigStep::InputProgramArgs;
                         } else {
                             self.ui.ms_program_args.clear();
-                            self.ui.ms_confirm_password.clear();
-                            self.ui.ms_step = MultisigStep::ConfirmCreate;
+                            self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
                         }
                     }
                     Err(e) => {
@@ -2601,8 +2595,7 @@ impl App {
                     .unwrap_or(0);
 
                 if self.ui.ms_program_arg_index >= total_args {
-                    self.ui.ms_confirm_password.clear();
-                    self.ui.ms_step = MultisigStep::ConfirmCreate;
+                    self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
                 }
             }
             KeyCode::Esc => {
@@ -2670,8 +2663,7 @@ impl App {
                             self.ui.set_status(e);
                             return;
                         }
-                        self.ui.ms_confirm_password.clear();
-                        self.ui.ms_step = MultisigStep::ConfirmCreate;
+                        self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
                         self.ui.clear_status();
                     }
                     MsInputField::UpgradeProgram => {
@@ -2703,8 +2695,7 @@ impl App {
                             self.ui.set_status("无效的 Solana 地址");
                             return;
                         }
-                        self.ui.ms_confirm_password.clear();
-                        self.ui.ms_step = MultisigStep::ConfirmCreate;
+                        self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
                         self.ui.clear_status();
                     }
                     MsInputField::VsTarget => {
@@ -2730,8 +2721,7 @@ impl App {
                             }
                             _ => {
                                 // StakeDeactivate: 只需 target，直接确认
-                                self.ui.ms_confirm_password.clear();
-                                self.ui.ms_step = MultisigStep::ConfirmCreate;
+                                self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
                             }
                         }
                         self.ui.clear_status();
@@ -2753,8 +2743,7 @@ impl App {
                         if op.as_ref().is_some_and(|o| o.needs_amount()) {
                             self.ui.ms_step = MultisigStep::InputVoteStakeAmount;
                         } else {
-                            self.ui.ms_confirm_password.clear();
-                            self.ui.ms_step = MultisigStep::ConfirmCreate;
+                            self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
                         }
                         self.ui.clear_status();
                     }
@@ -2767,8 +2756,7 @@ impl App {
                             self.ui.set_status(e);
                             return;
                         }
-                        self.ui.ms_confirm_password.clear();
-                        self.ui.ms_step = MultisigStep::ConfirmCreate;
+                        self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
                         self.ui.clear_status();
                     }
                 }
@@ -3049,6 +3037,64 @@ impl App {
     }
 
     /// 执行创建提案
+    /// 进入多签 fee payer 选择，完成后进入 next_step
+    fn enter_ms_fee_payer_select(&mut self, next_step: MultisigStep) {
+        let list = self.build_fee_payer_list();
+        if list.is_empty() {
+            self.ui.set_status("没有可用的 Fee Payer（需要有余额的 SOL 地址）");
+            return;
+        }
+        if list.len() == 1 {
+            let (_, _, _, wi, ai) = list[0].clone();
+            self.ui.ms_fee_payer_wallet_index = wi;
+            self.ui.ms_fee_payer_account_index = ai;
+            self.ui.ms_fee_payer_list = list;
+            self.ui.ms_confirm_password.clear();
+            self.ui.ms_step = next_step;
+        } else {
+            self.ui.ms_fee_payer_list = list;
+            self.ui.ms_fee_payer_selected = 0;
+            self.ui.ms_fee_payer_next_step = next_step;
+            self.ui.ms_step = MultisigStep::SelectMsFeePayer;
+        }
+        self.ui.clear_status();
+    }
+
+    fn handle_ms_select_fee_payer_key(&mut self, key: KeyEvent) {
+        let count = self.ui.ms_fee_payer_list.len();
+        match key.code {
+            KeyCode::Up => {
+                if self.ui.ms_fee_payer_selected > 0 {
+                    self.ui.ms_fee_payer_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.ui.ms_fee_payer_selected + 1 < count {
+                    self.ui.ms_fee_payer_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if count == 0 { return; }
+                let (_, _, _, wi, ai) = self.ui.ms_fee_payer_list[self.ui.ms_fee_payer_selected].clone();
+                self.ui.ms_fee_payer_wallet_index = wi;
+                self.ui.ms_fee_payer_account_index = ai;
+                self.ui.ms_confirm_password.clear();
+                self.ui.ms_step = self.ui.ms_fee_payer_next_step.clone();
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => {
+                // 返回提案类型或提案详情
+                if self.ui.ms_fee_payer_next_step == MultisigStep::ConfirmVote {
+                    self.ui.ms_step = MultisigStep::ViewProposal;
+                } else {
+                    self.ui.ms_step = MultisigStep::SelectProposalType;
+                }
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
     fn execute_create_proposal(&mut self) {
         // 验证密码
         let pw = match &self.password {
@@ -3073,11 +3119,23 @@ impl App {
             }
         };
 
-        // 获取签名用的 SOL 私钥
+        // 获取签名用的 SOL 私钥（成员）
         let private_key = match self.get_multisig_signer_key(&ms_info) {
             Some(pk) => pk,
             None => {
                 self.ui.set_status("未找到匹配的签名私钥（请确保你的钱包中有此多签的成员地址）");
+                return;
+            }
+        };
+
+        // 获取 fee payer 私钥
+        let fee_payer_key = match self.get_sol_private_key_by_index(
+            self.ui.ms_fee_payer_wallet_index,
+            self.ui.ms_fee_payer_account_index,
+        ) {
+            Some(pk) => pk,
+            None => {
+                self.ui.set_status("无法获取 Fee Payer 私钥");
                 return;
             }
         };
@@ -3107,6 +3165,7 @@ impl App {
             let result = execute_create_proposal_async(
                 &rpc_url,
                 &private_key,
+                &fee_payer_key,
                 &ms_info.address.to_string(),
                 proposal_type_idx,
                 &to_address,
@@ -3183,6 +3242,17 @@ impl App {
             }
         };
 
+        let fee_payer_key = match self.get_sol_private_key_by_index(
+            self.ui.ms_fee_payer_wallet_index,
+            self.ui.ms_fee_payer_account_index,
+        ) {
+            Some(pk) => pk,
+            None => {
+                self.ui.set_status("无法获取 Fee Payer 私钥");
+                return;
+            }
+        };
+
         let rpc_url = self.get_current_ms_rpc_url();
         let multisig_address = ms_info.address.to_string();
         let tx_index = proposal.transaction_index;
@@ -3202,32 +3272,22 @@ impl App {
                 Ok(client) => match vote_action {
                     VoteAction::Approve => {
                         multisig::squads::approve_proposal(
-                            &client,
-                            &rpc_url,
-                            &private_key,
-                            &multisig_address,
-                            tx_index,
+                            &client, &rpc_url, &private_key, &fee_payer_key,
+                            &multisig_address, tx_index,
                         )
                         .await
                     }
                     VoteAction::Reject => {
                         multisig::squads::reject_proposal(
-                            &client,
-                            &rpc_url,
-                            &private_key,
-                            &multisig_address,
-                            tx_index,
+                            &client, &rpc_url, &private_key, &fee_payer_key,
+                            &multisig_address, tx_index,
                         )
                         .await
                     }
                     VoteAction::Execute => {
                         multisig::squads::execute_vault_transaction(
-                            &client,
-                            &rpc_url,
-                            &private_key,
-                            &multisig_address,
-                            tx_index,
-                            vault_index,
+                            &client, &rpc_url, &private_key, &fee_payer_key,
+                            &multisig_address, tx_index, vault_index,
                         )
                         .await
                     }
@@ -4023,6 +4083,7 @@ async fn execute_transfer_async(
 async fn execute_create_proposal_async(
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     multisig_address: &str,
     proposal_type_idx: usize,
     to_address: &str,
@@ -4194,6 +4255,7 @@ async fn execute_create_proposal_async(
         &client,
         rpc_url,
         private_key,
+        fee_payer_key,
         multisig_address,
         vault_index,
         inner_instructions,

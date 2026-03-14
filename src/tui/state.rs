@@ -197,6 +197,8 @@ pub enum MultisigStep {
     InputVoteStakeParam,
     /// 输入金额（仅 Withdraw）
     InputVoteStakeAmount,
+    /// 选择 Fee Payer（创建提案/投票前）
+    SelectMsFeePayer,
     /// 确认创建提案（输入密码）
     ConfirmCreate,
     /// 确认投票（输入密码）
@@ -434,6 +436,12 @@ pub struct UiState {
     pub ms_vs_target: String,    // 目标 vote/stake 账户地址
     pub ms_vs_param: String,     // 参数（new authority / vote account / to address）
     pub ms_vs_amount: String,    // 金额（仅 withdraw）
+    // Fee Payer 选择（提案/投票）
+    pub ms_fee_payer_list: Vec<(String, String, u128, usize, usize)>, // (address, label, balance, wi, ai)
+    pub ms_fee_payer_selected: usize,
+    pub ms_fee_payer_wallet_index: usize,
+    pub ms_fee_payer_account_index: usize,
+    pub ms_fee_payer_next_step: MultisigStep,
     // 创建多签流程
     pub ms_create_use_seed: bool,           // 是否使用种子模式
     pub ms_create_preset_creator: Option<String>, // 从地址菜单预设的创建者地址
@@ -576,6 +584,11 @@ impl UiState {
             ms_vs_target: String::new(),
             ms_vs_param: String::new(),
             ms_vs_amount: String::new(),
+            ms_fee_payer_list: Vec::new(),
+            ms_fee_payer_selected: 0,
+            ms_fee_payer_wallet_index: 0,
+            ms_fee_payer_account_index: 0,
+            ms_fee_payer_next_step: MultisigStep::ConfirmCreate,
             ms_create_use_seed: false,
             ms_create_preset_creator: None,
             ms_create_seed_input: String::new(),

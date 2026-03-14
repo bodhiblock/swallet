@@ -51,6 +51,7 @@ pub fn render(
         MultisigStep::SelectProgram => render_select_program(frame, center, state),
         MultisigStep::SelectProgramInstruction => render_select_program_instruction(frame, center, state),
         MultisigStep::InputProgramArgs => render_input_program_args(frame, center, state),
+        MultisigStep::SelectMsFeePayer => render_select_ms_fee_payer(frame, center, state),
         MultisigStep::SelectVoteStakeOp => render_select_vote_stake_op(frame, center, state),
         MultisigStep::InputVoteStakeTarget => render_input_vote_stake_field(frame, center, state, "目标账户地址", &state.ms_vs_target.clone()),
         MultisigStep::InputVoteStakeParam => {
@@ -1513,4 +1514,67 @@ fn shorten_rpc(url: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+fn render_select_ms_fee_payer(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let height = (state.ms_fee_payer_list.len() as u16 + 5).min(18);
+    let width = area.width.min(90);
+    let [_, center_v, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(height),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+    let [_, center, _] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(width),
+        Constraint::Fill(1),
+    ])
+    .areas(center_v);
+
+    let block = Block::default()
+        .title(" 选择 Fee Payer ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(center);
+    frame.render_widget(block, center);
+
+    let items: Vec<ListItem> = state
+        .ms_fee_payer_list
+        .iter()
+        .map(|(addr, label, lamports, _wi, _ai)| {
+            let bal_str = crate::chain::format_balance(*lamports, 9);
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("  {addr}"), Style::default().fg(Color::White)),
+                Span::styled(format!("  {label}"), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("  {bal_str}"), Style::default().fg(Color::Green)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items).highlight_style(
+        Style::default()
+            .bg(Color::Indexed(236))
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.ms_fee_payer_selected));
+
+    let [list_area, hint_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            " ↑↓选择  Enter确认  Esc返回",
+            Style::default().fg(Color::DarkGray),
+        )),
+        hint_area,
+    );
 }
