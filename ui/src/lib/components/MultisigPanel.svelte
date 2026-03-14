@@ -275,13 +275,6 @@
 				{#if vsNeedsAmount(vsOp)}<input bind:value={vsAmount} placeholder="金额 (SOL)" type="text" inputmode="decimal" />{/if}
 			{/if}
 
-			{#if feePayers.length > 0}
-				<label class="dim">Fee Payer</label>
-				<select bind:value={selectedFeePayer}>
-					{#each feePayers as fp, i}<option value={i}>{fp.address.slice(0,8)}... ({fp.balance})</option>{/each}
-				</select>
-			{/if}
-
 			<button class="btn-primary" onclick={startCreateProposal}>创建提案</button>
 		</div>
 	{/if}
