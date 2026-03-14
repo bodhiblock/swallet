@@ -6,7 +6,7 @@
 	import StakingPanel from '$lib/components/StakingPanel.svelte';
 
 	// Screen state
-	let screen: 'loading' | 'unlock' | 'create' | 'confirm' | 'main' | 'add-wallet' | 'show-mnemonic' | 'input-name' | 'transfer-assets' | 'transfer-input' | 'transfer-confirm' | 'transfer-result' | 'multisig' | 'staking' = $state('loading');
+	let screen: 'loading' | 'unlock' | 'create' | 'confirm' | 'main' | 'add-wallet' | 'show-mnemonic' | 'input-name' | 'transfer-assets' | 'transfer-input' | 'transfer-confirm' | 'transfer-result' | 'multisig' | 'staking' | 'import-multisig' = $state('loading');
 	let password = $state('');
 	let confirmPassword = $state('');
 	let error = $state('');
@@ -45,6 +45,11 @@
 	let txPassword = $state('');
 	let txSending = $state(false);
 	let txResult = $state<{ success: boolean; message: string } | null>(null);
+
+	// Import multisig
+	let importMsChains: { id: string; name: string }[] = $state([]);
+	let importMsChainId = $state('');
+	let importMsAddress = $state('');
 
 	// Multisig/Staking
 	let msWalletIndex = $state(0);
@@ -196,12 +201,25 @@
 						stakingAccountIndex = accountIndex!;
 						const b = balances.find(b => b.address === acc.address);
 						stakingAccountOwner = b?.account_owner || null;
-						// Get RPC URL from service
 						try { const chains = await api.getSolanaChains(); stakingRpcUrl = chains[0]?.rpc_url || ''; } catch (_) {}
 						screen = 'staking';
 					}
 					break;
 				}
+				case 'create-vote':
+				case 'create-stake':
+					// TODO: create vote/stake account flow
+					showToast('创建 Vote/Stake 账户功能开发中');
+					break;
+				case 'import-multisig':
+					try {
+						const chains = await api.getSolanaChains();
+						importMsChains = chains;
+						importMsChainId = chains[0]?.id || '';
+						importMsAddress = '';
+						screen = 'import-multisig';
+					} catch (_) { showToast('加载链配置失败'); }
+					break;
 				case 'rename':
 					dialogType = 'rename';
 					dialogInput = wallets[walletIndex]?.name || '';
@@ -468,6 +486,11 @@
 						<button onclick={() => menuAction('staking')}>账户详情</button>
 					{:else}
 						<button onclick={() => menuAction('transfer')}>转账</button>
+						{#if menuTarget.chainType === 'solana'}
+							<button onclick={() => menuAction('create-vote')}>创建 Vote 账户</button>
+							<button onclick={() => menuAction('create-stake')}>创建 Stake 账户</button>
+							<button onclick={() => menuAction('import-multisig')}>导入多签</button>
+						{/if}
 					{/if}
 					<button onclick={() => menuAction('relabel')}>修改标签</button>
 					<button onclick={() => menuAction('hide-address')}>隐藏</button>
@@ -485,6 +508,7 @@
 				<button onclick={() => { showMainMenu = false; startAddWallet('import-mnemonic'); }}>导入助记词</button>
 				<button onclick={() => { showMainMenu = false; startAddWallet('private-key'); }}>导入私钥</button>
 				<button onclick={() => { showMainMenu = false; startAddWallet('watch'); }}>添加观察钱包</button>
+				<button onclick={async () => { showMainMenu = false; try { const chains = await api.getSolanaChains(); importMsChains = chains; importMsChainId = chains[0]?.id || ''; importMsAddress = ''; screen = 'import-multisig'; } catch(_) { showToast('加载链配置失败'); } }}>导入多签</button>
 				<button onclick={() => { showMainMenu = false; restoreHidden(); }}>恢复隐藏项</button>
 				<button onclick={() => { showMainMenu = false; }}>取消</button>
 			</div>
@@ -561,6 +585,27 @@
 			{#if txSending}<p class="dim">提交中...</p>{/if}
 			<button class="btn-primary" onclick={confirmTransfer} disabled={txSending}>确认转账</button>
 			<button class="btn-secondary" onclick={() => { screen = 'transfer-input'; }}>返回</button>
+		</div>
+	</div>
+
+{:else if screen === 'import-multisig'}
+	<div class="container center">
+		<div class="card">
+			<h2>导入多签</h2>
+			{#if importMsChains.length > 1}
+				<div class="chain-select">
+					{#each importMsChains as chain}
+						<button class:active={importMsChainId === chain.id} onclick={() => importMsChainId = chain.id}>{chain.name}</button>
+					{/each}
+				</div>
+			{/if}
+			<input bind:value={importMsAddress} placeholder="多签地址 (Base58)" />
+			<button class="btn-primary" onclick={async () => {
+				if (!importMsAddress.trim()) { showToast('请输入地址'); return; }
+				try { await api.importMultisig(importMsChainId, importMsAddress.trim()); showToast('导入成功'); await reloadWallets(); screen = 'main'; }
+				catch (e) { showToast((e as any)?.message || '导入失败'); }
+			}}>导入</button>
+			<button class="btn-secondary" onclick={() => { screen = 'main'; }}>取消</button>
 		</div>
 	</div>
 

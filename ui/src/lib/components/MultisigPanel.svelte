@@ -4,7 +4,7 @@
 
 	let { walletIndex, onClose, onToast }: { walletIndex: number; onClose: () => void; onToast: (msg: string) => void } = $props();
 
-	let tab: 'proposals' | 'import' | 'create-proposal' = $state('proposals');
+	let tab: 'proposals' | 'create-proposal' = $state('proposals');
 	let proposals: ProposalDto[] = $state([]);
 	let feePayers: FeePayerDto[] = $state([]);
 	let chains: ChainDto[] = $state([]);
@@ -111,8 +111,7 @@
 	</header>
 
 	<div class="tabs">
-		<button class:active={tab === 'proposals'} onclick={() => tab = 'proposals'}>提案</button>
-		<button class:active={tab === 'import'} onclick={() => tab = 'import'}>导入</button>
+		<button class:active={tab === 'proposals'} onclick={() => tab = 'proposals'}>提案列表</button>
 		<button class:active={tab === 'create-proposal'} onclick={() => tab = 'create-proposal'}>创建提案</button>
 	</div>
 
@@ -143,17 +142,6 @@
 			{/each}
 		{/if}
 		<button class="btn-refresh" onclick={loadProposals}>刷新提案列表</button>
-
-	{:else if tab === 'import'}
-		<div class="form">
-			{#if chains.length > 1}
-				<select bind:value={importChainId}>
-					{#each chains as chain}<option value={chain.id}>{chain.name}</option>{/each}
-				</select>
-			{/if}
-			<input bind:value={importAddress} placeholder="输入多签地址 (Base58)" />
-			<button class="btn-primary" onclick={handleImport}>导入</button>
-		</div>
 
 	{:else if tab === 'create-proposal'}
 		<div class="form">
