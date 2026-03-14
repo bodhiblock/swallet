@@ -453,8 +453,12 @@
 					<button onclick={() => menuAction('hide-wallet')}>隐藏</button>
 					<button class="danger" onclick={() => menuAction('delete')}>删除</button>
 				{:else}
-					<button onclick={() => menuAction('transfer')}>转账</button>
-					<button onclick={() => menuAction('staking')}>详情</button>
+					{#if menuTarget.walletType === 'multisig'}
+						<button onclick={() => menuAction('multisig')}>多签管理</button>
+					{:else}
+						<button onclick={() => menuAction('transfer')}>转账</button>
+						<button onclick={() => menuAction('staking')}>详情</button>
+					{/if}
 					<button onclick={() => menuAction('relabel')}>修改标签</button>
 					<button onclick={() => menuAction('hide-address')}>隐藏</button>
 				{/if}
