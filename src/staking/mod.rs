@@ -25,4 +25,7 @@ pub struct StakeAccountInfo {
     pub authorized_withdrawer: String,
     pub activation_epoch: Option<u64>,
     pub deactivation_epoch: Option<u64>,
+    pub lockup_timestamp: i64,
+    pub lockup_epoch: u64,
+    pub lockup_custodian: String,
 }

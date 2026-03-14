@@ -825,6 +825,21 @@ pub async fn fetch_stake_account(
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse().ok());
 
+    let lockup = meta.and_then(|m| m.get("lockup"));
+    let lockup_timestamp = lockup
+        .and_then(|l| l.get("unixTimestamp"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let lockup_epoch = lockup
+        .and_then(|l| l.get("epoch"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let lockup_custodian = lockup
+        .and_then(|l| l.get("custodian"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     Ok(StakeAccountInfo {
         address: address.to_string(),
         state: state_type,
@@ -834,5 +849,8 @@ pub async fn fetch_stake_account(
         authorized_withdrawer,
         activation_epoch,
         deactivation_epoch,
+        lockup_timestamp,
+        lockup_epoch,
+        lockup_custodian,
     })
 }

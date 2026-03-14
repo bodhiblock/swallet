@@ -516,7 +516,7 @@ fn render_vote_detail(frame: &mut Frame, state: &UiState) {
 // ========== Stake 详情 ==========
 
 fn render_stake_detail(frame: &mut Frame, state: &UiState) {
-    let area = centered_rect(80, 21, frame.area());
+    let area = centered_rect(80, 25, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -530,7 +530,9 @@ fn render_stake_detail(frame: &mut Frame, state: &UiState) {
 
     // 动态计算 info 行数
     let has_delegate = state.stk_stake_info.as_ref().and_then(|i| i.delegated_vote_account.as_ref()).is_some();
-    let info_lines = if state.stk_fetch_error.is_some() { 3 } else if state.stk_stake_info.is_some() { if has_delegate { 8 } else { 7 } } else { 3 };
+    let has_lockup = state.stk_stake_info.as_ref().is_some_and(|i| i.lockup_timestamp != 0 || i.lockup_epoch != 0 || !i.lockup_custodian.is_empty());
+    let lockup_extra = if has_lockup { 2 } else { 0 }; // Lockup Time + Custodian
+    let info_lines = if state.stk_fetch_error.is_some() { 3 } else if state.stk_stake_info.is_some() { (if has_delegate { 8 } else { 7 }) + lockup_extra } else { 3 };
 
     let [info_area, menu_area, hint_area] = Layout::vertical([
         Constraint::Length(info_lines as u16),
@@ -575,6 +577,31 @@ fn render_stake_detail(frame: &mut Frame, state: &UiState) {
             Span::styled("  Withdrawer:  ", Style::default().fg(Color::DarkGray)),
             Span::styled(&info.authorized_withdrawer, Style::default().fg(Color::White)),
         ]));
+        // Lockup 信息
+        if info.lockup_timestamp != 0 || info.lockup_epoch != 0 || !info.lockup_custodian.is_empty() {
+            let lockup_time = if info.lockup_timestamp > 0 {
+                let dt = chrono::DateTime::from_timestamp(info.lockup_timestamp, 0);
+                match dt {
+                    Some(d) => d.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                    None => format!("{}", info.lockup_timestamp),
+                }
+            } else {
+                "无".to_string()
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  Lockup Time: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(lockup_time, Style::default().fg(Color::White)),
+            ]));
+            let custodian_display = if info.lockup_custodian.is_empty() || info.lockup_custodian == "11111111111111111111111111111111" {
+                "无".to_string()
+            } else {
+                info.lockup_custodian.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  Custodian:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(custodian_display, Style::default().fg(Color::White)),
+            ]));
+        }
         lines.push(Line::from(""));
     } else {
         lines.push(Line::from(Span::styled("  加载中...", Style::default().fg(Color::DarkGray))));
