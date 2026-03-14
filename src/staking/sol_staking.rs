@@ -51,6 +51,7 @@ async fn get_rent_exemption(client: &Client, rpc_url: &str, space: u64) -> Resul
 }
 
 /// 签名并发送交易（单签名者）
+#[allow(dead_code)]
 async fn sign_and_send(
     client: &Client,
     rpc_url: &str,
@@ -312,17 +313,17 @@ pub async fn vote_authorize(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     new_authority: &str,
     authorize_type: u32,
 ) -> Result<String, String> {
     let keypair = keypair_from_private_key(private_key)?;
+    let fee_payer = keypair_from_private_key(fee_payer_key)?;
     let vote_pubkey = keypair.pubkey().to_bytes();
     let new_authority_pubkey = decode_pubkey(new_authority)?;
     let clock_sysvar = decode_pubkey(SYSVAR_CLOCK)?;
     let vote_program = decode_pubkey(VOTE_PROGRAM_STR)?;
 
-    // Vote Authorize (index 1)
-    // data: [1,0,0,0] + new_authority(32) + authorize_type(4)
     let mut data = vec![1u8, 0, 0, 0];
     data.extend_from_slice(&new_authority_pubkey);
     data.extend_from_slice(&authorize_type.to_le_bytes());
@@ -330,26 +331,14 @@ pub async fn vote_authorize(
     let ix = Instruction {
         program_id: vote_program,
         accounts: vec![
-            AccountMeta {
-                pubkey: vote_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: clock_sysvar,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: vote_pubkey, // current authority = self
-                is_signer: true,
-                is_writable: false,
-            },
+            AccountMeta { pubkey: vote_pubkey, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: vote_pubkey, is_signer: true, is_writable: false },
         ],
         data,
     };
 
-    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+    sign_and_send_two(client, rpc_url, &fee_payer, &keypair, &[ix]).await
 }
 
 // ========== Vote Withdraw ==========
@@ -359,44 +348,32 @@ pub async fn vote_withdraw(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     to_address: &str,
     amount_sol: &str,
 ) -> Result<String, String> {
     let keypair = keypair_from_private_key(private_key)?;
+    let fee_payer = keypair_from_private_key(fee_payer_key)?;
     let vote_pubkey = keypair.pubkey().to_bytes();
     let to_pubkey = decode_pubkey(to_address)?;
     let vote_program = decode_pubkey(VOTE_PROGRAM_STR)?;
 
     let amount_lamports = parse_sol_amount(amount_sol)?;
 
-    // Vote Withdraw (index 3)
-    // data: [3,0,0,0] + lamports(8)
     let mut data = vec![3u8, 0, 0, 0];
     data.extend_from_slice(&amount_lamports.to_le_bytes());
 
     let ix = Instruction {
         program_id: vote_program,
         accounts: vec![
-            AccountMeta {
-                pubkey: vote_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: to_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: vote_pubkey, // authorized withdrawer = self
-                is_signer: true,
-                is_writable: false,
-            },
+            AccountMeta { pubkey: vote_pubkey, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: to_pubkey, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: vote_pubkey, is_signer: true, is_writable: false },
         ],
         data,
     };
 
-    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+    sign_and_send_two(client, rpc_url, &fee_payer, &keypair, &[ix]).await
 }
 
 // ========== Stake Authorize ==========
@@ -407,17 +384,17 @@ pub async fn stake_authorize(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     new_authority: &str,
     authorize_type: u32,
 ) -> Result<String, String> {
     let keypair = keypair_from_private_key(private_key)?;
+    let fee_payer = keypair_from_private_key(fee_payer_key)?;
     let stake_pubkey = keypair.pubkey().to_bytes();
     let new_authority_pubkey = decode_pubkey(new_authority)?;
     let clock_sysvar = decode_pubkey(SYSVAR_CLOCK)?;
     let stake_program = decode_pubkey(STAKE_PROGRAM_STR)?;
 
-    // Stake Authorize (index 1)
-    // data: [1,0,0,0] + new_authority(32) + stake_authorize_type(4)
     let mut data = vec![1u8, 0, 0, 0];
     data.extend_from_slice(&new_authority_pubkey);
     data.extend_from_slice(&authorize_type.to_le_bytes());
@@ -425,26 +402,14 @@ pub async fn stake_authorize(
     let ix = Instruction {
         program_id: stake_program,
         accounts: vec![
-            AccountMeta {
-                pubkey: stake_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: clock_sysvar,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: stake_pubkey, // current authority = self
-                is_signer: true,
-                is_writable: false,
-            },
+            AccountMeta { pubkey: stake_pubkey, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: stake_pubkey, is_signer: true, is_writable: false },
         ],
         data,
     };
 
-    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+    sign_and_send_two(client, rpc_url, &fee_payer, &keypair, &[ix]).await
 }
 
 // ========== Stake Delegate ==========
@@ -454,9 +419,11 @@ pub async fn stake_delegate(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     vote_account: &str,
 ) -> Result<String, String> {
     let keypair = keypair_from_private_key(private_key)?;
+    let fee_payer = keypair_from_private_key(fee_payer_key)?;
     let stake_pubkey = keypair.pubkey().to_bytes();
     let vote_pubkey = decode_pubkey(vote_account)?;
     let clock_sysvar = decode_pubkey(SYSVAR_CLOCK)?;
@@ -464,47 +431,22 @@ pub async fn stake_delegate(
     let stake_config = decode_pubkey(STAKE_CONFIG)?;
     let stake_program = decode_pubkey(STAKE_PROGRAM_STR)?;
 
-    // Stake DelegateStake (index 2)
     let data = vec![2u8, 0, 0, 0];
 
     let ix = Instruction {
         program_id: stake_program,
         accounts: vec![
-            AccountMeta {
-                pubkey: stake_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: vote_pubkey,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: clock_sysvar,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: stake_history,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: stake_config,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: stake_pubkey, // staker authority = self
-                is_signer: true,
-                is_writable: false,
-            },
+            AccountMeta { pubkey: stake_pubkey, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: vote_pubkey, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: stake_history, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: stake_config, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: stake_pubkey, is_signer: true, is_writable: false },
         ],
         data,
     };
 
-    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+    sign_and_send_two(client, rpc_url, &fee_payer, &keypair, &[ix]).await
 }
 
 // ========== Stake Deactivate ==========
@@ -514,38 +456,27 @@ pub async fn stake_deactivate(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
 ) -> Result<String, String> {
     let keypair = keypair_from_private_key(private_key)?;
+    let fee_payer = keypair_from_private_key(fee_payer_key)?;
     let stake_pubkey = keypair.pubkey().to_bytes();
     let clock_sysvar = decode_pubkey(SYSVAR_CLOCK)?;
     let stake_program = decode_pubkey(STAKE_PROGRAM_STR)?;
 
-    // Stake Deactivate (index 5)
     let data = vec![5u8, 0, 0, 0];
 
     let ix = Instruction {
         program_id: stake_program,
         accounts: vec![
-            AccountMeta {
-                pubkey: stake_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: clock_sysvar,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: stake_pubkey, // staker authority = self
-                is_signer: true,
-                is_writable: false,
-            },
+            AccountMeta { pubkey: stake_pubkey, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: stake_pubkey, is_signer: true, is_writable: false },
         ],
         data,
     };
 
-    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+    sign_and_send_two(client, rpc_url, &fee_payer, &keypair, &[ix]).await
 }
 
 // ========== Stake Withdraw ==========
@@ -557,10 +488,12 @@ pub async fn stake_withdraw(
     client: &Client,
     rpc_url: &str,
     private_key: &[u8],
+    fee_payer_key: &[u8],
     to_address: &str,
     amount_sol: &str,
 ) -> Result<String, String> {
     let keypair = keypair_from_private_key(private_key)?;
+    let fee_payer = keypair_from_private_key(fee_payer_key)?;
     let stake_pubkey = keypair.pubkey().to_bytes();
     let to_pubkey = decode_pubkey(to_address)?;
     let clock_sysvar = decode_pubkey(SYSVAR_CLOCK)?;
@@ -569,44 +502,22 @@ pub async fn stake_withdraw(
 
     let amount_lamports = parse_sol_amount(amount_sol)?;
 
-    // Stake Withdraw (index 4)
-    // data: [4,0,0,0] + lamports(8)
     let mut data = vec![4u8, 0, 0, 0];
     data.extend_from_slice(&amount_lamports.to_le_bytes());
 
     let ix = Instruction {
         program_id: stake_program,
         accounts: vec![
-            AccountMeta {
-                pubkey: stake_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: to_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: clock_sysvar,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: stake_history,
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: stake_pubkey, // withdrawer authority = self
-                is_signer: true,
-                is_writable: false,
-            },
+            AccountMeta { pubkey: stake_pubkey, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: to_pubkey, is_signer: false, is_writable: true },
+            AccountMeta { pubkey: clock_sysvar, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: stake_history, is_signer: false, is_writable: false },
+            AccountMeta { pubkey: stake_pubkey, is_signer: true, is_writable: false },
         ],
         data,
     };
 
-    sign_and_send(client, rpc_url, &keypair, &[ix]).await
+    sign_and_send_two(client, rpc_url, &fee_payer, &keypair, &[ix]).await
 }
 
 // ========== 辅助函数 ==========
@@ -840,9 +751,19 @@ pub async fn fetch_stake_account(
         .unwrap_or("")
         .to_string();
 
+    // 根据 activation/deactivation epoch 推算更精确的状态
+    let effective_state = if state_type == "delegated" {
+        match (activation_epoch, deactivation_epoch) {
+            (Some(_), Some(deact)) if deact < u64::MAX => "deactivating".to_string(),
+            _ => "delegated".to_string(),
+        }
+    } else {
+        state_type
+    };
+
     Ok(StakeAccountInfo {
         address: address.to_string(),
-        state: state_type,
+        state: effective_state,
         delegated_vote_account,
         stake_lamports: lamports,
         authorized_staker,

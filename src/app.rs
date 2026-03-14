@@ -590,8 +590,32 @@ impl App {
                 });
             }
             SelectionTarget::PrivateKeyAddress(wi) => {
+                let ct = self.store.as_ref()
+                    .and_then(|s| s.wallets.get(wi))
+                    .and_then(|w| match &w.wallet_type {
+                        WalletType::PrivateKey { chain_type, .. } => Some(chain_type.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or(ChainType::Ethereum);
+                // SOL 私钥钱包检测 Vote/Stake 账户
+                if ct == ChainType::Solana
+                    && let Some(address) = self.get_sol_address(wi, 0) {
+                        let owner = self
+                            .balance_cache
+                            .get(&address)
+                            .and_then(|p| p.account_owner.as_deref())
+                            .unwrap_or("");
+                        if owner == crate::chain::solana::VOTE_PROGRAM {
+                            self.enter_vote_detail(wi, 0, &address);
+                            return;
+                        }
+                        if owner == crate::chain::solana::STAKE_PROGRAM {
+                            self.enter_stake_detail(wi, 0, &address);
+                            return;
+                        }
+                    }
                 self.ui
-                    .enter_action_menu(ActionContext::PrivateKeyAddress { wallet_index: wi });
+                    .enter_action_menu(ActionContext::PrivateKeyAddress { wallet_index: wi, chain_type: ct });
             }
             SelectionTarget::WatchAddress(wi) => {
                 self.ui
@@ -1178,7 +1202,7 @@ impl App {
             ActionItem::HideWallet => {
                 let wi = match context {
                     ActionContext::Wallet { wallet_index } => wallet_index,
-                    ActionContext::PrivateKeyAddress { wallet_index } => wallet_index,
+                    ActionContext::PrivateKeyAddress { wallet_index, .. } => wallet_index,
                     ActionContext::MultisigWallet { wallet_index } => wallet_index,
                     _ => return,
                 };
@@ -1233,23 +1257,25 @@ impl App {
                 }
             }
             ActionItem::CreateVoteAccount => {
-                if let ActionContext::MnemonicAddress {
-                    wallet_index,
-                    account_index,
-                    ..
-                } = context
-                {
-                    self.enter_create_vote(wallet_index, account_index);
+                match context {
+                    ActionContext::MnemonicAddress { wallet_index, account_index, .. } => {
+                        self.enter_create_vote(wallet_index, account_index);
+                    }
+                    ActionContext::PrivateKeyAddress { wallet_index, .. } => {
+                        self.enter_create_vote(wallet_index, 0);
+                    }
+                    _ => {}
                 }
             }
             ActionItem::CreateStakeAccount => {
-                if let ActionContext::MnemonicAddress {
-                    wallet_index,
-                    account_index,
-                    ..
-                } = context
-                {
-                    self.enter_create_stake(wallet_index, account_index);
+                match context {
+                    ActionContext::MnemonicAddress { wallet_index, account_index, .. } => {
+                        self.enter_create_stake(wallet_index, account_index);
+                    }
+                    ActionContext::PrivateKeyAddress { wallet_index, .. } => {
+                        self.enter_create_stake(wallet_index, 0);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1401,7 +1427,7 @@ impl App {
         let store = self.store.as_ref()?;
         match context {
             Some(ActionContext::Wallet { wallet_index })
-            | Some(ActionContext::PrivateKeyAddress { wallet_index })
+            | Some(ActionContext::PrivateKeyAddress { wallet_index, .. })
             | Some(ActionContext::MultisigWallet { wallet_index }) => {
                 store.wallets.get(*wallet_index).map(|w| w.name.clone())
             }
@@ -1474,7 +1500,7 @@ impl App {
                             }
                         }
                 }
-                Some(ActionContext::PrivateKeyAddress { wallet_index }) => {
+                Some(ActionContext::PrivateKeyAddress { wallet_index, .. }) => {
                     if let Some(w) = store.wallets.get_mut(wallet_index) {
                         w.name = new_label;
                     }
@@ -1728,7 +1754,7 @@ impl App {
                 };
                 (*wallet_index, chain_type.clone(), addr, lbl, Some(*account_index))
             }
-            ActionContext::PrivateKeyAddress { wallet_index } => {
+            ActionContext::PrivateKeyAddress { wallet_index, .. } => {
                 let store = match &self.store {
                     Some(s) => s,
                     None => return,
@@ -4327,6 +4353,11 @@ impl App {
             WalletType::Mnemonic { sol_accounts, .. } => {
                 sol_accounts.get(account_index).map(|a| a.address.clone())
             }
+            WalletType::PrivateKey {
+                chain_type: ChainType::Solana,
+                address,
+                ..
+            } => Some(address.clone()),
             _ => None,
         }
     }
@@ -4463,6 +4494,7 @@ impl App {
         self.ui.screen = Screen::Staking;
         self.ui.stk_fee_payer_list = fee_payer_list;
         self.ui.stk_fee_payer_selected = 0;
+        self.ui.stk_pending_step = None; // creation flow uses stk_create_type
         self.ui.stk_step = StakingStep::SelectFeePayer;
         self.ui.clear_status();
     }
@@ -4478,43 +4510,57 @@ impl App {
             if wallet.hidden {
                 continue;
             }
-            if let WalletType::Mnemonic { sol_accounts, .. } = &wallet.wallet_type {
-                for (ai, acc) in sol_accounts.iter().enumerate() {
-                    if acc.hidden {
-                        continue;
+            // 收集该钱包的 SOL 地址列表: (address, label, account_index)
+            let sol_addrs: Vec<(String, String, usize)> = match &wallet.wallet_type {
+                WalletType::Mnemonic { sol_accounts, .. } => {
+                    sol_accounts.iter().enumerate()
+                        .filter(|(_, acc)| !acc.hidden)
+                        .map(|(ai, acc)| {
+                            let label = acc.label.as_deref().unwrap_or(&wallet.name).to_string();
+                            (acc.address.clone(), label, ai)
+                        })
+                        .collect()
+                }
+                WalletType::PrivateKey {
+                    chain_type: ChainType::Solana,
+                    address,
+                    label,
+                    hidden,
+                    ..
+                } => {
+                    if *hidden { vec![] } else {
+                        let lbl = label.as_deref().unwrap_or(&wallet.name).to_string();
+                        vec![(address.clone(), lbl, 0)]
                     }
-                    // 排除当前选中的空地址本身
-                    if acc.address == self.ui.stk_from_address {
-                        continue;
-                    }
-                    // 排除 Vote/Stake 账户（不能作为 fee payer）
-                    let is_special_account = self
+                }
+                _ => vec![],
+            };
+            for (addr, label, ai) in sol_addrs {
+                if addr == self.ui.stk_from_address {
+                    continue;
+                }
+                // 排除 Vote/Stake 账户
+                let is_special_account = self
+                    .balance_cache
+                    .get(&addr)
+                    .and_then(|p| p.account_owner.as_deref())
+                    .is_some_and(|o| o == crate::chain::solana::VOTE_PROGRAM || o == crate::chain::solana::STAKE_PROGRAM);
+                if is_special_account {
+                    continue;
+                }
+                let has_balance = self
+                    .balance_cache
+                    .get(&addr)
+                    .map(|p| p.chains.iter().any(|c| c.native_balance > 0))
+                    .unwrap_or(false);
+                if has_balance {
+                    let balance_lamports = self
                         .balance_cache
-                        .get(&acc.address)
-                        .and_then(|p| p.account_owner.as_deref())
-                        .is_some_and(|o| o == crate::chain::solana::VOTE_PROGRAM || o == crate::chain::solana::STAKE_PROGRAM);
-                    if is_special_account {
-                        continue;
-                    }
-                    // 检查有余额
-                    let has_balance = self
-                        .balance_cache
-                        .get(&acc.address)
-                        .map(|p| p.chains.iter().any(|c| c.native_balance > 0))
-                        .unwrap_or(false);
-                    if has_balance {
-                        let label = acc
-                            .label
-                            .as_deref()
-                            .unwrap_or(&wallet.name);
-                        let balance_lamports = self
-                            .balance_cache
-                            .get(&acc.address)
-                            .and_then(|p| p.chains.iter().find(|c| c.native_balance > 0))
-                            .map(|c| c.native_balance)
-                            .unwrap_or(0);
-                        list.push((acc.address.clone(), label.to_string(), balance_lamports, wi, ai));
-                    }
+                        .get(&addr)
+                        .and_then(|p| p.chains.iter().find(|c| c.native_balance > 0))
+                        .map(|c| c.native_balance)
+                        .unwrap_or(0);
+                    list.push((addr, label, balance_lamports, wi, ai));
                 }
             }
         }
@@ -4522,11 +4568,43 @@ impl App {
     }
 
     /// fee payer 选择后，进入具体创建步骤
+    /// 进入 fee payer 选择，完成后进入 next_step
+    fn enter_fee_payer_select(&mut self, next_step: StakingStep) {
+        let list = self.build_fee_payer_list();
+        if list.is_empty() {
+            self.ui.set_status("没有可用的 Fee Payer（需要有余额的 SOL 地址）");
+            return;
+        }
+        if list.len() == 1 {
+            // 只有一个，自动选择
+            let (_, _, _, wi, ai) = list[0].clone();
+            self.ui.stk_fee_payer_wallet_index = wi;
+            self.ui.stk_fee_payer_account_index = ai;
+            self.ui.stk_fee_payer_list = list;
+            self.ui.stk_pending_step = None;
+            self.ui.stk_step = next_step;
+            self.ui.clear_status();
+        } else {
+            self.ui.stk_fee_payer_list = list;
+            self.ui.stk_fee_payer_selected = 0;
+            self.ui.stk_pending_step = Some(next_step);
+            self.ui.stk_step = StakingStep::SelectFeePayer;
+            self.ui.clear_status();
+        }
+    }
+
     fn proceed_after_fee_payer_select(&mut self) {
         let (_, _, _, wi, ai) = self.ui.stk_fee_payer_list[self.ui.stk_fee_payer_selected].clone();
         self.ui.stk_fee_payer_wallet_index = wi;
         self.ui.stk_fee_payer_account_index = ai;
 
+        if let Some(step) = self.ui.stk_pending_step.take() {
+            self.ui.stk_step = step;
+            self.ui.clear_status();
+            return;
+        }
+
+        // Legacy: creation flow
         match self.ui.stk_create_type {
             StakingCreateType::Vote => {
                 self.ui.stk_step = StakingStep::CreateVoteInputIdentity;
@@ -4611,7 +4689,7 @@ impl App {
 
     /// 获取 fee payer 的 SOL 私钥
     fn get_fee_payer_private_key(&mut self) -> Option<Vec<u8>> {
-        self.get_mnemonic_sol_private_key(
+        self.get_sol_private_key_by_index(
             self.ui.stk_fee_payer_wallet_index,
             self.ui.stk_fee_payer_account_index,
         )
@@ -4619,31 +4697,59 @@ impl App {
 
     /// 获取 staking 操作的 SOL 私钥
     fn get_staking_private_key(&mut self) -> Option<Vec<u8>> {
-        self.get_mnemonic_sol_private_key(
+        self.get_sol_private_key_by_index(
             self.ui.stk_wallet_index,
             self.ui.stk_account_index,
         )
     }
 
-    /// 通用：通过 wallet_index + account_index 获取助记词钱包的 SOL 私钥
-    fn get_mnemonic_sol_private_key(&mut self, wallet_index: usize, account_index: usize) -> Option<Vec<u8>> {
-        let (encrypted, derivation_index) = {
+    /// 通用：通过 wallet_index + account_index 获取 SOL 私钥（支持助记词和私钥钱包）
+    fn get_sol_private_key_by_index(&mut self, wallet_index: usize, account_index: usize) -> Option<Vec<u8>> {
+        enum KeySource {
+            Mnemonic { encrypted: String, derivation_index: u32 },
+            PrivateKey { encrypted: String },
+        }
+        let source = {
             let store = self.store.as_ref()?;
             let wallet = store.wallets.get(wallet_index)?;
             match &wallet.wallet_type {
                 WalletType::Mnemonic { encrypted_mnemonic, sol_accounts, .. } => {
                     let acc = sol_accounts.get(account_index)?;
-                    (encrypted_mnemonic.clone(), acc.derivation_index)
+                    KeySource::Mnemonic {
+                        encrypted: encrypted_mnemonic.clone(),
+                        derivation_index: acc.derivation_index,
+                    }
                 }
+                WalletType::PrivateKey {
+                    chain_type: ChainType::Solana,
+                    encrypted_private_key,
+                    ..
+                } => KeySource::PrivateKey { encrypted: encrypted_private_key.clone() },
                 _ => return None,
             }
         };
-        let mut phrase = self.decrypt_inner_secret(&encrypted)?;
-        let mut seed = mnemonic::mnemonic_to_seed(&phrase, "").ok()?;
-        phrase.clear_sensitive();
-        let result = sol_keys::derive_sol_private_key(&seed, derivation_index).ok();
-        seed.clear_sensitive();
-        result
+        match source {
+            KeySource::Mnemonic { encrypted, derivation_index } => {
+                let mut phrase = self.decrypt_inner_secret(&encrypted)?;
+                let mut seed = mnemonic::mnemonic_to_seed(&phrase, "").ok()?;
+                phrase.clear_sensitive();
+                let result = sol_keys::derive_sol_private_key(&seed, derivation_index).ok();
+                seed.clear_sensitive();
+                result
+            }
+            KeySource::PrivateKey { encrypted } => {
+                let mut pk_str = self.decrypt_inner_secret(&encrypted)?;
+                let mut bytes = bs58::decode(&pk_str).into_vec().ok()?;
+                pk_str.clear_sensitive();
+                let result = match bytes.len() {
+                    64 => Some(bytes[..32].to_vec()),
+                    32 => Some(bytes.clone()),
+                    _ => None,
+                };
+                bytes.clear_sensitive();
+                result
+            }
+        }
     }
 
     fn handle_staking_key(&mut self, key: KeyEvent) {
@@ -4818,7 +4924,7 @@ impl App {
                     }
                     3 => {
                         self.ui.stk_confirm_password.clear();
-                        self.ui.stk_step = StakingStep::StakeDeactivateConfirm;
+                        self.enter_fee_payer_select(StakingStep::StakeDeactivateConfirm);
                     }
                     4 => {
                         self.ui.stk_target_address = self.ui.stk_from_address.clone();
@@ -4926,8 +5032,7 @@ impl App {
                         } else {
                             StakingOp::StakeAuthorize
                         };
-                        self.ui.stk_step = StakingStep::Confirm;
-                        self.ui.clear_status();
+                        self.enter_fee_payer_select(StakingStep::Confirm);
                     }
                     StakingTextField::VoteAccount => {
                         if self.ui.stk_vote_account_input.is_empty() {
@@ -4936,8 +5041,7 @@ impl App {
                         }
                         self.ui.stk_confirm_password.clear();
                         self.ui.stk_confirm_op = StakingOp::StakeDelegate;
-                        self.ui.stk_step = StakingStep::Confirm;
-                        self.ui.clear_status();
+                        self.enter_fee_payer_select(StakingStep::Confirm);
                     }
                     StakingTextField::WithdrawAmount => {
                         if self.ui.stk_amount_input.is_empty() {
@@ -4950,8 +5054,7 @@ impl App {
                         } else {
                             StakingOp::StakeWithdraw
                         };
-                        self.ui.stk_step = StakingStep::Confirm;
-                        self.ui.clear_status();
+                        self.enter_fee_payer_select(StakingStep::Confirm);
                     }
                 }
             }
@@ -5028,20 +5131,13 @@ impl App {
                         return;
                     }
                 };
-                // 创建操作需要 fee payer 私钥
-                let fee_payer_key = if matches!(
-                    self.ui.stk_step,
-                    StakingStep::CreateVoteConfirm | StakingStep::CreateStakeConfirm
-                ) {
-                    match self.get_fee_payer_private_key() {
-                        Some(pk) => Some(pk),
-                        None => {
-                            self.ui.set_status("无法获取 Fee Payer 私钥");
-                            return;
-                        }
+                // 所有操作都需要 fee payer（program-owned 账户不能付手续费）
+                let fee_payer_key = match self.get_fee_payer_private_key() {
+                    Some(pk) => pk,
+                    None => {
+                        self.ui.set_status("无法获取 Fee Payer 私钥");
+                        return;
                     }
-                } else {
-                    None
                 };
 
                 let current_step = self.ui.stk_step.clone();
@@ -5071,7 +5167,7 @@ impl App {
                                 &client,
                                 &rpc_url,
                                 &private_key,
-                                fee_payer_key.as_deref().unwrap_or(&private_key),
+                                &fee_payer_key,
                                 &identity_input,
                                 &withdrawer_input,
                             )
@@ -5083,7 +5179,7 @@ impl App {
                                 &client,
                                 &rpc_url,
                                 &private_key,
-                                fee_payer_key.as_deref().unwrap_or(&private_key),
+                                &fee_payer_key,
                                 &amount_input,
                                 lockup_days,
                             )
@@ -5094,6 +5190,7 @@ impl App {
                                 &client,
                                 &rpc_url,
                                 &private_key,
+                                &fee_payer_key,
                             )
                             .await
                         }
@@ -5103,6 +5200,7 @@ impl App {
                                     &client,
                                     &rpc_url,
                                     &private_key,
+                                    &fee_payer_key,
                                     &new_authority_input,
                                     authorize_type,
                                 )
@@ -5113,6 +5211,7 @@ impl App {
                                     &client,
                                     &rpc_url,
                                     &private_key,
+                                    &fee_payer_key,
                                     &target_address,
                                     &amount_input,
                                 )
@@ -5123,6 +5222,7 @@ impl App {
                                     &client,
                                     &rpc_url,
                                     &private_key,
+                                    &fee_payer_key,
                                     &new_authority_input,
                                     authorize_type,
                                 )
@@ -5133,6 +5233,7 @@ impl App {
                                     &client,
                                     &rpc_url,
                                     &private_key,
+                                    &fee_payer_key,
                                     &vote_account_input,
                                 )
                                 .await
@@ -5142,6 +5243,7 @@ impl App {
                                     &client,
                                     &rpc_url,
                                     &private_key,
+                                    &fee_payer_key,
                                     &target_address,
                                     &amount_input,
                                 )

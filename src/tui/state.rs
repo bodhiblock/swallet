@@ -115,7 +115,10 @@ pub enum ActionContext {
         account_index: usize,
     },
     /// 选中了私钥钱包的地址
-    PrivateKeyAddress { wallet_index: usize },
+    PrivateKeyAddress {
+        wallet_index: usize,
+        chain_type: ChainType,
+    },
     /// 选中了观察钱包的地址
     WatchAddress { wallet_index: usize },
     /// 选中了多签钱包标题行
@@ -336,6 +339,10 @@ impl ActionItem {
         vec![Self::Transfer, Self::EditName, Self::HideWallet]
     }
 
+    pub fn for_private_key_sol_address() -> Vec<Self> {
+        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditName, Self::HideWallet, Self::CreateMultisig]
+    }
+
     pub fn for_watch_address() -> Vec<Self> {
         vec![Self::EditAddressLabel, Self::DeleteWatchWallet]
     }
@@ -460,6 +467,8 @@ pub struct UiState {
     pub stk_chain_selected: usize,
     pub stk_create_type: StakingCreateType,
     pub stk_native_symbol: String,
+    /// fee payer 选择后要进入的步骤
+    pub stk_pending_step: Option<StakingStep>,
     // Fee Payer 选择
     pub stk_fee_payer_list: Vec<(String, String, u128, usize, usize)>, // (address, label, balance_lamports, wallet_index, account_index)
     pub stk_fee_payer_selected: usize,
@@ -594,6 +603,7 @@ impl UiState {
             stk_chain_selected: 0,
             stk_create_type: StakingCreateType::Vote,
             stk_native_symbol: String::new(),
+            stk_pending_step: None,
             stk_fee_payer_list: Vec::new(),
             stk_fee_payer_selected: 0,
             stk_fee_payer_wallet_index: 0,
@@ -651,7 +661,13 @@ impl UiState {
                     ActionItem::for_mnemonic_address()
                 }
             }
-            ActionContext::PrivateKeyAddress { .. } => ActionItem::for_private_key_address(),
+            ActionContext::PrivateKeyAddress { chain_type, .. } => {
+                if *chain_type == ChainType::Solana {
+                    ActionItem::for_private_key_sol_address()
+                } else {
+                    ActionItem::for_private_key_address()
+                }
+            }
             ActionContext::WatchAddress { .. } => ActionItem::for_watch_address(),
             ActionContext::MultisigWallet { .. } => ActionItem::for_multisig_wallet(),
             ActionContext::MultisigVault { .. } => ActionItem::for_multisig_vault(),

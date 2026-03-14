@@ -805,39 +805,58 @@ fn render_submitting(frame: &mut Frame) {
 // ========== 结果 ==========
 
 fn render_result(frame: &mut Frame, state: &UiState) {
-    let area = centered_rect(80, 8, frame.area());
+    let area = centered_rect(80, 10, frame.area());
     frame.render_widget(Clear, area);
 
     let (success, msg) = state.stk_result.as_ref().map(|(s, m)| (*s, m.as_str())).unwrap_or((false, "未知"));
 
-    let color = if success { Color::Green } else { Color::Red };
-    let title = if success { " 成功 " } else { " 失败 " };
+    let (icon, color) = if success {
+        ("OK", Color::Green)
+    } else {
+        ("FAIL", Color::Red)
+    };
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("   [{icon}] {}", if success { "交易已发送" } else { "交易失败" }),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    // 按换行符拆分消息，每行加缩进
+    for part in msg.split('\n') {
+        if part.len() > 70 {
+            // 长行自动折行
+            let mut i = 0;
+            while i < part.len() {
+                let end = (i + 70).min(part.len());
+                lines.push(Line::from(Span::styled(
+                    format!("   {}", &part[i..end]),
+                    Style::default().fg(Color::White),
+                )));
+                i = end;
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("   {part}"),
+                Style::default().fg(Color::White),
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "   按任意键返回",
+        Style::default().fg(Color::DarkGray),
+    )));
 
     let block = Block::default()
-        .title(title)
+        .title(" 执行结果 ")
+        .title_alignment(ratatui::layout::Alignment::Center)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(color));
 
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let [msg_area, _, hint_area] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(inner);
-
-    frame.render_widget(
-        Paragraph::new(msg).style(Style::default().fg(color)).wrap(ratatui::widgets::Wrap { trim: false }),
-        msg_area,
-    );
-
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            "按任意键返回",
-            Style::default().fg(Color::DarkGray),
-        )),
-        hint_area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
