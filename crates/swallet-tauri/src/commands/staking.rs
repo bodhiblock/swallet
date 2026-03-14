@@ -155,6 +155,25 @@ pub async fn stake_withdraw(
         .await.map_err(|e| e.into())
 }
 
+#[tauri::command]
+pub async fn vote_withdraw(
+    state: tauri::State<'_, AppState>,
+    wallet_index: usize,
+    account_index: usize,
+    rpc_url: String,
+    fee_payer_wi: usize,
+    fee_payer_ai: usize,
+    to_address: String,
+    amount: String,
+    password: String,
+) -> CommandResult<String> {
+    let (pk, fp) = get_staking_keys(&state, wallet_index, account_index, fee_payer_wi, fee_payer_ai, &password)?;
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
+        .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
+    swallet_core::staking::sol_staking::vote_withdraw(&client, &rpc_url, &pk, &fp, &to_address, &amount)
+        .await.map_err(|e| e.into())
+}
+
 fn get_staking_keys(
     state: &tauri::State<'_, AppState>,
     wallet_index: usize,

@@ -77,4 +77,6 @@ export const api = {
 		invoke<string>('stake_deactivate', { walletIndex, accountIndex, rpcUrl, feePayerWi, feePayerAi, password }),
 	stakeWithdraw: (walletIndex: number, accountIndex: number, rpcUrl: string, feePayerWi: number, feePayerAi: number, toAddress: string, amount: string, password: string) =>
 		invoke<string>('stake_withdraw', { walletIndex, accountIndex, rpcUrl, feePayerWi, feePayerAi, toAddress, amount, password }),
+	voteWithdraw: (walletIndex: number, accountIndex: number, rpcUrl: string, feePayerWi: number, feePayerAi: number, toAddress: string, amount: string, password: string) =>
+		invoke<string>('vote_withdraw', { walletIndex, accountIndex, rpcUrl, feePayerWi, feePayerAi, toAddress, amount, password }),
 };

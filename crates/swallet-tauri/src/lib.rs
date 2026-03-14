@@ -68,6 +68,7 @@ pub fn run(data_path: Option<std::path::PathBuf>, config_path: Option<std::path:
             commands::staking::stake_delegate,
             commands::staking::stake_deactivate,
             commands::staking::stake_withdraw,
+            commands::staking::vote_withdraw,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

@@ -58,7 +58,11 @@
 					sig = await api.stakeDeactivate(walletIndex, accountIndex, rpcUrl, fp.wallet_index, fp.account_index, actionPassword);
 					break;
 				case 'withdraw':
-					sig = await api.stakeWithdraw(walletIndex, accountIndex, rpcUrl, fp.wallet_index, fp.account_index, actionInput, actionAmount, actionPassword);
+					if (isVote) {
+						sig = await api.voteWithdraw(walletIndex, accountIndex, rpcUrl, fp.wallet_index, fp.account_index, actionInput, actionAmount, actionPassword);
+					} else {
+						sig = await api.stakeWithdraw(walletIndex, accountIndex, rpcUrl, fp.wallet_index, fp.account_index, actionInput, actionAmount, actionPassword);
+					}
 					break;
 				default: return;
 			}
@@ -77,20 +81,24 @@
 		<div></div>
 	</header>
 
-	<p class="address">{address}</p>
-
 	{#if loading}
 		<p class="dim center-text">加载中...</p>
 	{:else if isVote && voteInfo}
 		<div class="info-card">
+			<div class="info-row-v"><span class="dim">地址</span><button class="addr-copy" onclick={() => copyAddr(address)}>{address}</button></div>
 			<div class="info-row-v"><span class="dim">Identity</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.validator_identity)}>{voteInfo.validator_identity}</button></div>
 			<div class="info-row-v"><span class="dim">Voter</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_voter)}>{voteInfo.authorized_voter}</button></div>
 			<div class="info-row-v"><span class="dim">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_withdrawer)}>{voteInfo.authorized_withdrawer}</button></div>
 			<div class="info-row"><span class="dim">Commission</span><span>{voteInfo.commission}%</span></div>
 			{#if voteInfo.credits}<div class="info-row"><span class="dim">Credits</span><span>{voteInfo.credits}</span></div>{/if}
 		</div>
+
+		<div class="actions">
+			<button class="btn-action" onclick={() => { actionType = 'withdraw'; actionInput = ''; actionAmount = ''; actionPassword = ''; }}>提取</button>
+		</div>
 	{:else if isStake && stakeInfo}
 		<div class="info-card">
+			<div class="info-row-v"><span class="dim">地址</span><button class="addr-copy" onclick={() => copyAddr(address)}>{address}</button></div>
 			<div class="info-row"><span class="dim">状态</span><span>{stakeInfo.state}</span></div>
 			<div class="info-row"><span class="dim">质押数量</span><span class="green">{stakeInfo.stake_lamports}</span></div>
 			{#if stakeInfo.delegated_vote_account}
@@ -145,7 +153,6 @@
 	.dim { color: var(--text-dim); font-size: 14px; }
 	.green { color: var(--green); }
 	.center-text { text-align: center; padding: 24px 0; }
-	.address { font-family: monospace; font-size: 12px; color: var(--text-dim); word-break: break-all; margin-bottom: 16px; }
 	.mono { font-family: monospace; font-size: 13px; }
 
 	.info-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
