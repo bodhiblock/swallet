@@ -26,6 +26,7 @@
 
 	// Context menu
 	let menuTarget: { type: 'wallet' | 'account'; walletIndex: number; accountIndex?: number; chainType?: string; walletType?: string } | null = $state(null);
+	let showMainMenu = $state(false);
 
 	// Dialog
 	let dialogType: 'rename' | 'relabel' | 'delete' | 'add-address' | null = $state(null);
@@ -396,7 +397,7 @@
 			<div class="header-actions">
 				{#if loading}<span class="dim">刷新中...</span>{/if}
 				<button class="btn-icon" onclick={refreshBalances} title="刷新">↻</button>
-				<button class="btn-icon" onclick={restoreHidden} title="恢复隐藏项">⊕</button>
+				<button class="btn-icon" onclick={(e) => { e.stopPropagation(); showMainMenu = true; }} title="菜单">☰</button>
 			</div>
 		</header>
 
@@ -430,13 +431,8 @@
 			<div class="empty"><p class="dim">还没有钱包</p></div>
 		{/if}
 
-		<!-- Add wallet buttons -->
-		<div class="add-buttons">
-			<button class="btn-add" onclick={() => startAddWallet('mnemonic')}>+ 创建钱包</button>
-			<button class="btn-add" onclick={() => startAddWallet('import-mnemonic')}>导入助记词</button>
-			<button class="btn-add" onclick={() => startAddWallet('private-key')}>导入私钥</button>
-			<button class="btn-add" onclick={() => startAddWallet('watch')}>观察钱包</button>
-		</div>
+		<!-- padding bottom for scroll -->
+		<div style="height:24px"></div>
 	</div>
 
 	<!-- Context Menu -->
@@ -463,6 +459,20 @@
 					<button onclick={() => menuAction('hide-address')}>隐藏</button>
 				{/if}
 				<button onclick={closeMenu}>取消</button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Main Menu -->
+	{#if showMainMenu}
+		<div class="overlay" onclick={() => { showMainMenu = false; }}>
+			<div class="context-menu" onclick={(e) => e.stopPropagation()}>
+				<button onclick={() => { showMainMenu = false; startAddWallet('mnemonic'); }}>创建助记词钱包</button>
+				<button onclick={() => { showMainMenu = false; startAddWallet('import-mnemonic'); }}>导入助记词</button>
+				<button onclick={() => { showMainMenu = false; startAddWallet('private-key'); }}>导入私钥</button>
+				<button onclick={() => { showMainMenu = false; startAddWallet('watch'); }}>添加观察钱包</button>
+				<button onclick={() => { showMainMenu = false; restoreHidden(); }}>恢复隐藏项</button>
+				<button onclick={() => { showMainMenu = false; }}>取消</button>
 			</div>
 		</div>
 	{/if}
@@ -611,10 +621,6 @@
 	.chain-select { display: flex; gap: 8px; }
 	.chain-select button { padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border); color: var(--text-dim); font-size: 14px; }
 	.chain-select button.active { border-color: var(--accent); color: var(--accent); background: rgba(34, 211, 238, 0.1); }
-
-	.add-buttons { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0 24px; }
-	.btn-add { padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-dim); font-size: 13px; }
-	.btn-add:hover { border-color: var(--accent); color: var(--accent); }
 
 	.empty { text-align: center; padding: 48px 0; }
 
