@@ -21,6 +21,10 @@
 	let actionPassword = $state('');
 	let submitting = $state(false);
 
+	async function copyAddr(addr: string) {
+		try { await navigator.clipboard.writeText(addr); onToast('已复制'); } catch (_) {}
+	}
+
 	$effect(() => {
 		loadAccount();
 		loadFeePayers();
@@ -79,9 +83,9 @@
 		<p class="dim center-text">加载中...</p>
 	{:else if isVote && voteInfo}
 		<div class="info-card">
-			<div class="info-row"><span class="dim">Identity</span><span class="mono">{voteInfo.validator_identity.slice(0,12)}...</span></div>
-			<div class="info-row"><span class="dim">Voter</span><span class="mono">{voteInfo.authorized_voter.slice(0,12)}...</span></div>
-			<div class="info-row"><span class="dim">Withdrawer</span><span class="mono">{voteInfo.authorized_withdrawer.slice(0,12)}...</span></div>
+			<div class="info-row-v"><span class="dim">Identity</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.validator_identity)}>{voteInfo.validator_identity}</button></div>
+			<div class="info-row-v"><span class="dim">Voter</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_voter)}>{voteInfo.authorized_voter}</button></div>
+			<div class="info-row-v"><span class="dim">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_withdrawer)}>{voteInfo.authorized_withdrawer}</button></div>
 			<div class="info-row"><span class="dim">Commission</span><span>{voteInfo.commission}%</span></div>
 			{#if voteInfo.credits}<div class="info-row"><span class="dim">Credits</span><span>{voteInfo.credits}</span></div>{/if}
 		</div>
@@ -90,10 +94,10 @@
 			<div class="info-row"><span class="dim">状态</span><span>{stakeInfo.state}</span></div>
 			<div class="info-row"><span class="dim">质押数量</span><span class="green">{stakeInfo.stake_lamports}</span></div>
 			{#if stakeInfo.delegated_vote_account}
-				<div class="info-row"><span class="dim">委托 Vote</span><span class="mono">{stakeInfo.delegated_vote_account.slice(0,12)}...</span></div>
+				<div class="info-row-v"><span class="dim">委托 Vote</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.delegated_vote_account!)}>{stakeInfo.delegated_vote_account}</button></div>
 			{/if}
-			<div class="info-row"><span class="dim">Staker</span><span class="mono">{stakeInfo.authorized_staker.slice(0,12)}...</span></div>
-			<div class="info-row"><span class="dim">Withdrawer</span><span class="mono">{stakeInfo.authorized_withdrawer.slice(0,12)}...</span></div>
+			<div class="info-row-v"><span class="dim">Staker</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.authorized_staker)}>{stakeInfo.authorized_staker}</button></div>
+			<div class="info-row-v"><span class="dim">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.authorized_withdrawer)}>{stakeInfo.authorized_withdrawer}</button></div>
 		</div>
 
 		<div class="actions">
@@ -147,6 +151,10 @@
 	.info-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
 	.info-row { display: flex; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
 	.info-row:last-child { border-bottom: none; }
+	.info-row-v { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+	.info-row-v:last-child { border-bottom: none; }
+	.addr-copy { font-family: monospace; font-size: 12px; color: var(--text); word-break: break-all; text-align: left; line-height: 1.4; background: none; border: none; cursor: pointer; padding: 0; }
+	.addr-copy:hover { color: var(--accent); }
 
 	.actions { display: flex; gap: 8px; }
 	.btn-action { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--accent); font-size: 13px; background: none; cursor: pointer; }
