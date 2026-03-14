@@ -1,1 +1,5 @@
 /target
+ui/node_modules
+ui/build
+ui/.svelte-kit
+crates/swallet-tauri/gen/

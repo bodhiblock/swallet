@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/swallet-core", "crates/swallet-tui"]
+members = ["crates/swallet-core", "crates/swallet-tui", "crates/swallet-tauri"]
 resolver = "2"

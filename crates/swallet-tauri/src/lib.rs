@@ -1,0 +1,35 @@
+mod commands;
+mod error;
+mod state;
+
+use state::AppState;
+use std::sync::Mutex;
+use swallet_core::config::AppConfig;
+use swallet_core::service::WalletService;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let config = AppConfig::load_or_create(None)
+        .unwrap_or_else(|e| panic!("配置加载失败: {e}"));
+
+    let service = WalletService::new(config, None);
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .manage(AppState {
+            service: Mutex::new(service),
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::auth::has_data_file,
+            commands::auth::create_store,
+            commands::auth::unlock,
+            commands::auth::verify_password,
+            commands::auth::is_unlocked,
+            commands::wallet::get_wallets,
+            commands::wallet::generate_mnemonic,
+            commands::balance::get_cached_balances,
+            commands::balance::refresh_balances,
+        ])
+        .run(tauri::generate_context!())
+        .expect("启动 Tauri 应用失败");
+}
