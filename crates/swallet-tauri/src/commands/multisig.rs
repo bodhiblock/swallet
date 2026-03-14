@@ -24,6 +24,8 @@ pub struct ProposalDto {
     pub status: String,
     pub approved_count: usize,
     pub rejected_count: usize,
+    pub approved_addresses: Vec<String>,
+    pub rejected_addresses: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -40,6 +42,12 @@ pub struct ChainDto {
     pub id: String,
     pub name: String,
     pub rpc_url: String,
+}
+
+#[tauri::command]
+pub fn get_local_sol_addresses(state: tauri::State<'_, AppState>) -> Vec<String> {
+    let service = state.service.lock().unwrap();
+    service.collect_local_sol_addresses().into_iter().map(|(addr, _)| addr).collect()
 }
 
 #[tauri::command]
@@ -126,6 +134,8 @@ pub async fn fetch_proposals(
         status: p.status.label().to_string(),
         approved_count: p.approved.len(),
         rejected_count: p.rejected.len(),
+        approved_addresses: p.approved.iter().map(|a| a.to_string()).collect(),
+        rejected_addresses: p.rejected.iter().map(|a| a.to_string()).collect(),
     }).collect())
 }
 

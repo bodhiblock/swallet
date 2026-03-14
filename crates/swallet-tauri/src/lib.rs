@@ -43,6 +43,7 @@ pub fn run() {
             commands::balance::refresh_balances,
             commands::transfer::build_transfer_assets,
             commands::transfer::execute_transfer,
+            commands::multisig::get_local_sol_addresses,
             commands::multisig::get_solana_chains,
             commands::multisig::get_fee_payers,
             commands::multisig::import_multisig,

@@ -55,12 +55,23 @@
 	let selectedFeePayer = $state(0);
 	let submitting = $state(false);
 
+	// Local addresses for vote check
+	let localAddresses: string[] = $state([]);
+
 	// Password dialog
 	let passwordDialog: 'create' | 'vote' | null = $state(null);
 	let dialogPassword = $state('');
 	let voteDialog: { action: 'approve' | 'reject' | 'execute'; proposal: ProposalDto } | null = $state(null);
 
-	$effect(() => { loadProposals(); loadFeePayers(); });
+	$effect(() => { loadProposals(); loadFeePayers(); loadLocalAddresses(); });
+
+	async function loadLocalAddresses() {
+		try { localAddresses = await api.getLocalSolAddresses(); } catch (_) {}
+	}
+
+	function hasVoted(proposal: ProposalDto): boolean {
+		return localAddresses.some(a => proposal.approved_addresses.includes(a) || proposal.rejected_addresses.includes(a));
+	}
 
 	async function loadProposals() {
 		loadingProposals = true;
@@ -191,8 +202,12 @@
 					<div class="proposal-votes"><span class="dim">通过: {proposal.approved_count} · 拒绝: {proposal.rejected_count}</span></div>
 					<div class="proposal-actions">
 						{#if proposal.status === '投票中'}
-							<button class="btn-sm green" onclick={() => startVote('approve', proposal)}>审批</button>
-							<button class="btn-sm red" onclick={() => startVote('reject', proposal)}>拒绝</button>
+							{#if hasVoted(proposal)}
+								<span class="dim">已投票</span>
+							{:else}
+								<button class="btn-sm green" onclick={() => startVote('approve', proposal)}>审批</button>
+								<button class="btn-sm red" onclick={() => startVote('reject', proposal)}>拒绝</button>
+							{/if}
 						{:else if proposal.status === '已通过'}
 							<button class="btn-sm accent" onclick={() => startVote('execute', proposal)}>执行</button>
 						{/if}

@@ -39,6 +39,7 @@ export const api = {
 		invoke<string>('execute_transfer', { password, walletIndex, accountIndex, chainType, assetIndex, toAddress, amount }),
 
 	// Multisig
+	getLocalSolAddresses: () => invoke<string[]>('get_local_sol_addresses'),
 	getSolanaChains: () => invoke<ChainDto[]>('get_solana_chains'),
 	getFeePayers: () => invoke<FeePayerDto[]>('get_fee_payers'),
 	importMultisig: (chainId: string, address: string) => invoke<MultisigDetailDto>('import_multisig', { chainId, address }),

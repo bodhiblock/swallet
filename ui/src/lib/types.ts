@@ -61,6 +61,8 @@ export interface ProposalDto {
 	status: string;
 	approved_count: number;
 	rejected_count: number;
+	approved_addresses: string[];
+	rejected_addresses: string[];
 }
 
 export interface FeePayerDto {
