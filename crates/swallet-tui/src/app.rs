@@ -645,14 +645,15 @@ impl App {
             Some(w) => w,
             None => return,
         };
-        let (multisig_address, rpc_url, chain_id, vaults) = match &wallet.wallet_type {
+        let (multisig_address, rpc_url, chain_id, chain_name, vaults) = match &wallet.wallet_type {
             WalletType::Multisig {
                 multisig_address,
                 rpc_url,
                 chain_id,
+                chain_name,
                 vaults,
                 ..
-            } => (multisig_address.clone(), rpc_url.clone(), chain_id.clone(), vaults),
+            } => (multisig_address.clone(), rpc_url.clone(), chain_id.clone(), chain_name.clone(), vaults),
             _ => return,
         };
 
@@ -666,6 +667,7 @@ impl App {
 
         self.ui.ms_current_wallet_index = wallet_index;
         self.ui.ms_selected_chain_id = chain_id;
+        self.ui.ms_selected_chain_name = chain_name;
         self.ui.ms_selected_rpc_url = rpc_url.clone();
         self.ui.screen = Screen::Multisig;
         self.ui.ms_step = MultisigStep::ViewDetail;
@@ -2424,7 +2426,7 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                if let Some((addr, acct_type)) = self.ui.ms_vs_accounts.get(self.ui.ms_vs_account_selected).cloned() {
+                if let Some((addr, acct_type, _, _)) = self.ui.ms_vs_accounts.get(self.ui.ms_vs_account_selected).cloned() {
                     // 异步验证权限
                     self.ui.set_status("验证权限中...");
                     self.verify_vs_account_authority(addr, acct_type);
@@ -3057,18 +3059,61 @@ impl App {
 
     /// 执行创建提案
     /// 进入多签 fee payer 选择，完成后进入 next_step
-    /// 从 balance_cache 收集所有 Vote 或 Stake 账户
-    fn collect_vs_accounts(&self, acct_type: &str) -> Vec<(String, String)> {
-        let owner = if acct_type == "vote" {
-            swallet_core::chain::solana::VOTE_PROGRAM
+    /// 从 balance_cache 收集所有 Vote 或 Stake 账户，附带标签和余额
+    fn collect_vs_accounts(&self, acct_type: &str) -> Vec<(String, String, String, String)> {
+        use swallet_core::chain;
+        let owner_program = if acct_type == "vote" {
+            chain::solana::VOTE_PROGRAM
         } else {
-            swallet_core::chain::solana::STAKE_PROGRAM
+            chain::solana::STAKE_PROGRAM
         };
+
+        // 构建 address -> label 映射
+        let mut label_map = std::collections::HashMap::new();
+        if let Some(store) = &self.service.store {
+            for w in &store.wallets {
+                match &w.wallet_type {
+                    swallet_core::storage::data::WalletType::Mnemonic { sol_accounts, .. } => {
+                        for acc in sol_accounts {
+                            let lbl = acc.label.as_deref().unwrap_or(&w.name);
+                            label_map.insert(acc.address.clone(), lbl.to_string());
+                        }
+                    }
+                    swallet_core::storage::data::WalletType::PrivateKey { address, label, .. } => {
+                        let lbl = label.as_deref().unwrap_or(&w.name);
+                        label_map.insert(address.clone(), lbl.to_string());
+                    }
+                    swallet_core::storage::data::WalletType::WatchOnly { address, label, .. } => {
+                        let lbl = label.as_deref().unwrap_or(&w.name);
+                        label_map.insert(address.clone(), lbl.to_string());
+                    }
+                    swallet_core::storage::data::WalletType::Multisig { vaults, .. } => {
+                        for v in vaults {
+                            let lbl = v.label.as_deref().unwrap_or("vault");
+                            label_map.insert(v.address.clone(), lbl.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
         self.service
             .balance_cache
             .iter()
-            .filter(|(_, portfolio)| portfolio.account_owner.as_deref() == Some(owner))
-            .map(|(addr, _)| (addr.clone(), acct_type.to_string()))
+            .filter(|(_, portfolio)| portfolio.account_owner.as_deref() == Some(owner_program))
+            .map(|(addr, portfolio)| {
+                let label = label_map.get(addr).cloned().unwrap_or_default();
+                // 取 account_owner_chain_id 对应链的余额
+                let balance = portfolio.chains.iter()
+                    .find(|c| portfolio.account_owner_chain_id.as_deref() == Some(&c.chain_id))
+                    .map(|c| chain::format_balance(c.native_balance, c.native_decimals))
+                    .unwrap_or_else(|| "0".to_string());
+                let symbol = portfolio.chains.iter()
+                    .find(|c| portfolio.account_owner_chain_id.as_deref() == Some(&c.chain_id))
+                    .map(|c| c.native_symbol.clone())
+                    .unwrap_or_else(|| "SOL".to_string());
+                (addr.clone(), acct_type.to_string(), label, format!("{balance} {symbol}"))
+            })
             .collect()
     }
 

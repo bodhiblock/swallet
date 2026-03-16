@@ -431,7 +431,7 @@ pub struct UiState {
     pub ms_vote_action: Option<VoteAction>,
     pub ms_result: Option<(bool, String)>,
     // Vote/Stake 管理提案
-    pub ms_vs_accounts: Vec<(String, String)>, // (address, type: "vote"/"stake")
+    pub ms_vs_accounts: Vec<(String, String, String, String)>, // (address, type, label, balance)
     pub ms_vs_account_selected: usize,
     pub ms_vs_ops: Vec<swallet_core::multisig::MsVoteStakeOp>,
     pub ms_vs_op_selected: usize,
@@ -581,7 +581,7 @@ impl UiState {
             ms_confirm_password: String::new(),
             ms_vote_action: None,
             ms_result: None,
-            ms_vs_accounts: Vec::new(),
+            ms_vs_accounts: vec![],
             ms_vs_account_selected: 0,
             ms_vs_ops: Vec::new(),
             ms_vs_op_selected: 0,

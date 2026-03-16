@@ -266,6 +266,15 @@ fn render_view_detail(
     let mut lines = vec![Line::from("")];
 
     if let Some(ref info) = state.ms_current_info {
+        if !state.ms_selected_chain_name.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  链: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    state.ms_selected_chain_name.clone(),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]));
+        }
         lines.push(Line::from(vec![
             Span::styled("  地址: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
@@ -1449,7 +1458,14 @@ fn render_select_vote_stake_account(
     let items: Vec<ListItem> = state
         .ms_vs_accounts
         .iter()
-        .map(|(addr, _)| ListItem::new(Span::styled(format!("  {addr}"), Style::default().fg(Color::White))))
+        .map(|(addr, _, label, balance)| {
+            let mut spans = vec![Span::styled(format!(" {addr}"), Style::default().fg(Color::White))];
+            if !label.is_empty() {
+                spans.push(Span::styled(format!(" ({label})"), Style::default().fg(Color::DarkGray)));
+            }
+            spans.push(Span::styled(format!("  {balance}"), Style::default().fg(Color::Green)));
+            ListItem::new(Line::from(spans))
+        })
         .collect();
 
     let list = List::new(items).highlight_style(
