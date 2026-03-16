@@ -40,6 +40,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3.32"
 solana-sdk = "2"
+# Android 交叉编译需要 vendored openssl（solana-sdk 间接依赖）
+openssl = { version = "0.10", features = ["vendored"] }
 anchor-lang = { version = "0.31.0", features = ["idl-build"] }
 bytemuck = { version = "1.25.0", features = ["derive", "min_const_generics"] }
 spl-token = "7"
