@@ -492,32 +492,33 @@ fn parse_vault_tx_message_borsh(data: &[u8]) -> Result<ParsedMessage, String> {
         account_keys.push(key);
     }
 
-    // instructions: u8 长度前缀（beet 格式，链上存储也用 u8）
-    if off >= data.len() {
+    // instructions: Borsh 格式 u32 长度前缀
+    if off + 4 > data.len() {
         return Ok(ParsedMessage {
             num_signers, num_writable_signers, num_writable_non_signers,
             account_keys, instructions: vec![],
         });
     }
-    let ix_count = data[off] as usize;
-    off += 1;
+    let ix_count = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+    off += 4;
 
     let mut instructions = Vec::with_capacity(ix_count);
     for _ in 0..ix_count {
         if off >= data.len() { break; }
         let program_id_index = data[off]; off += 1;
 
-        // account_indices: u8 长度前缀
-        if off >= data.len() { break; }
-        let ai_len = data[off] as usize; off += 1;
+        // account_indices: Borsh u32 长度前缀
+        if off + 4 > data.len() { break; }
+        let ai_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
         if off + ai_len > data.len() { break; }
         let account_indices = data[off..off + ai_len].to_vec();
         off += ai_len;
 
-        // data: u16 LE 长度前缀
-        if off + 2 > data.len() { break; }
-        let d_len = u16::from_le_bytes(data[off..off + 2].try_into().unwrap()) as usize;
-        off += 2;
+        // data: Borsh u32 长度前缀
+        if off + 4 > data.len() { break; }
+        let d_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
         if off + d_len > data.len() { break; }
         let ix_data = data[off..off + d_len].to_vec();
         off += d_len;
