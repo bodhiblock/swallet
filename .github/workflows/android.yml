@@ -5,10 +5,13 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+env:
+  NDK_VERSION: "27.0.12077973"
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +26,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android NDK
-        run: sdkmanager --install "ndk;27.0.12077973"
+        run: sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -51,16 +54,35 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
+      - name: Configure NDK toolchain
+        run: |
+          NDK_HOME="${ANDROID_HOME}/ndk/${{ env.NDK_VERSION }}"
+          TOOLCHAIN="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          echo "NDK_HOME=${NDK_HOME}" >> $GITHUB_ENV
+          echo "${TOOLCHAIN}/bin" >> $GITHUB_PATH
+          # OpenSSL vendored build needs these for aarch64
+          echo "CC_aarch64_linux_android=${TOOLCHAIN}/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
+          echo "AR_aarch64_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
+          echo "RANLIB_aarch64_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
+          # armv7
+          echo "CC_armv7_linux_androideabi=${TOOLCHAIN}/bin/armv7a-linux-androideabi21-clang" >> $GITHUB_ENV
+          echo "AR_armv7_linux_androideabi=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
+          echo "RANLIB_armv7_linux_androideabi=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
+          # x86_64
+          echo "CC_x86_64_linux_android=${TOOLCHAIN}/bin/x86_64-linux-android21-clang" >> $GITHUB_ENV
+          echo "AR_x86_64_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
+          echo "RANLIB_x86_64_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
+          # i686
+          echo "CC_i686_linux_android=${TOOLCHAIN}/bin/i686-linux-android21-clang" >> $GITHUB_ENV
+          echo "AR_i686_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
+          echo "RANLIB_i686_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
+
       - name: Initialize Android project
         working-directory: crates/swallet-tauri
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
         run: cargo tauri android init
 
       - name: Build Android APK (debug)
         working-directory: crates/swallet-tauri
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
         run: cargo tauri android build --debug
 
       - name: Find and upload APK
