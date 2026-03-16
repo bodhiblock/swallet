@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { ProposalDto, FeePayerDto, PresetProgramDto } from '$lib/types';
+	import type { ProposalDto, FeePayerDto, PresetProgramDto, BalanceDto, VoteAccountDto, StakeAccountDto } from '$lib/types';
 
 	let { walletIndex, onClose, onToast }: { walletIndex: number; onClose: () => void; onToast: (msg: string) => void } = $props();
 
@@ -51,6 +51,14 @@
 	let vsParam = $state('');
 	let vsAmount = $state('');
 
+	// Vote/Stake account selection
+	let vsAccounts: { address: string; type: 'vote' | 'stake'; label: string }[] = $state([]);
+	let vsSelectedAccount = $state(-1);
+	let vsVerifying = $state(false);
+	let vsVerified = $state(false);
+	let vsVerifyError = $state('');
+	let vaultAddress = $state('');
+
 	// Fee payer
 	let selectedFeePayer = $state(0);
 	let submitting = $state(false);
@@ -81,9 +89,7 @@
 	async function loadFeePayers() { try { feePayers = await api.getFeePayers(); } catch (_) {} }
 
 	async function loadPresets() {
-		// Get chain_id from wallet's multisig config
 		try {
-			// Use nara-mainnet as default, could improve later
 			presetPrograms = await api.getPresetPrograms('nara-mainnet');
 			selectedProgram = 0;
 			selectedInstruction = 0;
@@ -108,11 +114,56 @@
 	}
 	function vsNeedsAmount(op: VsOp): boolean { return op === 'vote-withdraw' || op === 'stake-withdraw'; }
 
+	async function loadVsAccounts(type: 'vote' | 'stake') {
+		vsAccounts = [];
+		vsSelectedAccount = -1;
+		vsVerified = false;
+		vsVerifyError = '';
+		try {
+			const balances = await api.getCachedBalances();
+			const owner = type === 'vote' ? 'Vote111111111111111111111111111111111111111' : 'Stake11111111111111111111111111111111111111';
+			vsAccounts = balances
+				.filter(b => b.account_owner === owner)
+				.map(b => ({ address: b.address, type, label: b.address.slice(0, 8) + '...' + b.address.slice(-6) }));
+			// 获取 vault 地址
+			vaultAddress = await api.getMultisigVaultAddress(walletIndex);
+		} catch (e: any) { onToast(e?.message || '加载失败'); }
+	}
+
+	async function verifyVsAccount() {
+		if (vsSelectedAccount < 0) { onToast('请先选择账户'); return; }
+		vsVerifying = true;
+		vsVerifyError = '';
+		vsVerified = false;
+		const account = vsAccounts[vsSelectedAccount];
+		try {
+			const rpcUrl = await api.getRpcUrlForAddress(account.address);
+			if (account.type === 'vote') {
+				const info: VoteAccountDto = await api.fetchVoteAccount(account.address, rpcUrl);
+				// 检查 voter 或 withdrawer 是否匹配 vault
+				if (info.authorized_voter === vaultAddress || info.authorized_withdrawer === vaultAddress) {
+					vsVerified = true;
+					vsTarget = account.address;
+				} else {
+					vsVerifyError = `权限不匹配\nVault: ${vaultAddress}\nVoter: ${info.authorized_voter}\nWithdrawer: ${info.authorized_withdrawer}`;
+				}
+			} else {
+				const info: StakeAccountDto = await api.fetchStakeAccount(account.address, rpcUrl);
+				if (info.authorized_staker === vaultAddress || info.authorized_withdrawer === vaultAddress) {
+					vsVerified = true;
+					vsTarget = account.address;
+				} else {
+					vsVerifyError = `权限不匹配\nVault: ${vaultAddress}\nStaker: ${info.authorized_staker}\nWithdrawer: ${info.authorized_withdrawer}`;
+				}
+			}
+		} catch (e: any) { vsVerifyError = e?.message || '验证失败'; }
+		vsVerifying = false;
+	}
+
 	function startCreateProposal() {
-		// Validate
 		if (proposalKind === 'sol-transfer' && (!proposalTo.trim() || !proposalAmount.trim())) { onToast('请填写目标地址和金额'); return; }
 		if (proposalKind === 'program-upgrade' && (!upgradeProgram.trim() || !upgradeBuffer.trim())) { onToast('请填写程序和 Buffer 地址'); return; }
-		if ((proposalKind === 'vote-manage' || proposalKind === 'stake-manage') && !vsTarget.trim()) { onToast('请填写目标账户地址'); return; }
+		if ((proposalKind === 'vote-manage' || proposalKind === 'stake-manage') && !vsTarget.trim()) { onToast('请先选择并验证账户'); return; }
 		if (proposalKind === 'program-call' && presetPrograms.length === 0) { onToast('没有可用的预制程序'); return; }
 		if (feePayers.length === 0) { onToast('没有可用的 Fee Payer'); return; }
 		dialogPassword = '';
@@ -124,8 +175,6 @@
 		submitting = true;
 		const fp = feePayers[selectedFeePayer];
 		const typeMap: Record<ProposalKind, number> = { 'sol-transfer': 0, 'program-upgrade': 2, 'vote-manage': 3, 'stake-manage': 4, 'program-call': 5 };
-		// ProgramCall is after StakeManage in for_chain, but its index depends on whether it exists
-		// for_chain returns: [SolTransfer=0, TokenTransfer=1, ProgramUpgrade=2, VoteManage=3, StakeManage=4, ProgramCall=5]
 		const vsOpMap: Record<string, number> = {
 			'vote-auth-voter': 0, 'vote-auth-withdrawer': 1, 'vote-withdraw': 2,
 			'stake-auth-staker': 3, 'stake-auth-withdrawer': 4, 'stake-delegate': 5, 'stake-deactivate': 6, 'stake-withdraw': 7,
@@ -142,6 +191,7 @@
 			onToast(`提案已创建: ${sig.slice(0, 16)}...`);
 			passwordDialog = null;
 			proposalTo = ''; proposalAmount = ''; upgradeProgram = ''; upgradeBuffer = ''; vsTarget = ''; vsParam = ''; vsAmount = '';
+			vsVerified = false; vsSelectedAccount = -1;
 			tab = 'proposals';
 			await loadProposals();
 		} catch (e: any) { onToast(e?.message || '创建失败'); }
@@ -223,7 +273,11 @@
 			<div class="type-grid">
 				{#each proposalKinds as kind}
 					<button class="type-btn" class:active={proposalKind === kind.key}
-						onclick={() => { proposalKind = kind.key; if (kind.key === 'vote-manage') vsOp = 'vote-auth-voter'; if (kind.key === 'stake-manage') vsOp = 'stake-auth-staker'; }}>
+						onclick={() => {
+							proposalKind = kind.key;
+							if (kind.key === 'vote-manage') { vsOp = 'vote-auth-voter'; loadVsAccounts('vote'); }
+							if (kind.key === 'stake-manage') { vsOp = 'stake-auth-staker'; loadVsAccounts('stake'); }
+						}}>
 						{kind.label}
 					</button>
 				{/each}
@@ -256,26 +310,53 @@
 					{/each}
 				{/if}
 
-			{:else if proposalKind === 'vote-manage'}
-				<p class="dim">操作类型</p>
-				<div class="type-grid">
-					{#each voteOps as op}<button class="type-btn small" class:active={vsOp === op.key} onclick={() => vsOp = op.key}>{op.label}</button>{/each}
-				</div>
-				<input bind:value={vsTarget} placeholder="Vote 账户地址" />
-				{#if vsNeedsParam(vsOp)}<input bind:value={vsParam} placeholder={vsParamLabel(vsOp)} />{/if}
-				{#if vsNeedsAmount(vsOp)}<input bind:value={vsAmount} placeholder="金额 (SOL)" type="text" inputmode="decimal" />{/if}
+			{:else if proposalKind === 'vote-manage' || proposalKind === 'stake-manage'}
+				<!-- Step 1: 选择账户 -->
+				<p class="dim">选择 {proposalKind === 'vote-manage' ? 'Vote' : 'Stake'} 账户</p>
+				{#if vsAccounts.length === 0}
+					<p class="dim center-text">未找到 {proposalKind === 'vote-manage' ? 'Vote' : 'Stake'} 账户</p>
+				{:else}
+					<div class="vs-account-list">
+						{#each vsAccounts as acc, i}
+							<button class="vs-account-item" class:active={vsSelectedAccount === i}
+								onclick={() => { vsSelectedAccount = i; vsVerified = false; vsVerifyError = ''; }}>
+								<span class="vs-addr">{acc.address}</span>
+							</button>
+						{/each}
+					</div>
+					{#if vsSelectedAccount >= 0 && !vsVerified}
+						<button class="btn-verify" onclick={verifyVsAccount} disabled={vsVerifying}>
+							{vsVerifying ? '验证中...' : '验证权限'}
+						</button>
+					{/if}
+					{#if vsVerifyError}
+						<div class="vs-error">{vsVerifyError}</div>
+					{/if}
+					{#if vsVerified}
+						<div class="vs-ok">权限验证通过</div>
+					{/if}
+				{/if}
 
-			{:else if proposalKind === 'stake-manage'}
-				<p class="dim">操作类型</p>
-				<div class="type-grid">
-					{#each stakeOps as op}<button class="type-btn small" class:active={vsOp === op.key} onclick={() => vsOp = op.key}>{op.label}</button>{/each}
-				</div>
-				<input bind:value={vsTarget} placeholder="Stake 账户地址" />
-				{#if vsNeedsParam(vsOp)}<input bind:value={vsParam} placeholder={vsParamLabel(vsOp)} />{/if}
-				{#if vsNeedsAmount(vsOp)}<input bind:value={vsAmount} placeholder="金额 (SOL)" type="text" inputmode="decimal" />{/if}
+				<!-- Step 2: 选择操作（验证通过后） -->
+				{#if vsVerified}
+					<p class="dim">操作类型</p>
+					<div class="type-grid">
+						{#if proposalKind === 'vote-manage'}
+							{#each voteOps as op}<button class="type-btn small" class:active={vsOp === op.key} onclick={() => vsOp = op.key}>{op.label}</button>{/each}
+						{:else}
+							{#each stakeOps as op}<button class="type-btn small" class:active={vsOp === op.key} onclick={() => vsOp = op.key}>{op.label}</button>{/each}
+						{/if}
+					</div>
+					{#if vsNeedsParam(vsOp)}<input bind:value={vsParam} placeholder={vsParamLabel(vsOp)} />{/if}
+					{#if vsNeedsAmount(vsOp)}<input bind:value={vsAmount} placeholder="金额 (SOL)" type="text" inputmode="decimal" />{/if}
+				{/if}
 			{/if}
 
-			<button class="btn-primary" onclick={startCreateProposal}>创建提案</button>
+			{#if proposalKind !== 'vote-manage' && proposalKind !== 'stake-manage'}
+				<button class="btn-primary" onclick={startCreateProposal}>创建提案</button>
+			{:else if vsVerified}
+				<button class="btn-primary" onclick={startCreateProposal}>创建提案</button>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -334,7 +415,16 @@
 	select { border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 10px; border-radius: 8px; font-size: 14px; width: 100%; }
 	label { font-size: 12px; }
 	.btn-primary { width: 100%; padding: 12px; background: var(--accent); color: var(--bg); border-radius: 8px; font-size: 16px; font-weight: 600; border: none; cursor: pointer; }
-	.btn-secondary { flex: 1; padding: 10px; color: var(--text-dim); font-size: 14px; background: none; border: none; cursor: pointer; }
+
+	/* Vote/Stake account selection */
+	.vs-account-list { display: flex; flex-direction: column; gap: 4px; }
+	.vs-account-item { width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: none; color: var(--text); font-size: 12px; font-family: monospace; cursor: pointer; word-break: break-all; }
+	.vs-account-item.active { border-color: var(--accent); background: rgba(34,211,238,0.08); }
+	.vs-addr { word-break: break-all; }
+	.btn-verify { width: 100%; padding: 10px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font-size: 14px; background: none; cursor: pointer; }
+	.btn-verify:disabled { opacity: 0.5; cursor: not-allowed; }
+	.vs-error { padding: 10px; border-radius: 8px; background: rgba(239,68,68,0.1); border: 1px solid var(--red); color: var(--red); font-size: 12px; font-family: monospace; white-space: pre-line; word-break: break-all; }
+	.vs-ok { padding: 10px; border-radius: 8px; background: rgba(34,197,94,0.1); border: 1px solid var(--green); color: var(--green); font-size: 14px; text-align: center; }
 
 	.pw-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
 	.pw-dialog { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 90%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; }

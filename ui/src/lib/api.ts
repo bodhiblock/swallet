@@ -63,6 +63,7 @@ export const api = {
 		invoke<string>('execute_proposal', { walletIndex, txIndex, vaultIndex, password, feePayerWi, feePayerAi }),
 	createMultisig: (chainId: string, creatorAddress: string, members: string[], threshold: number, password: string, seed?: string) =>
 		invoke<string>('create_multisig', { chainId, creatorAddress, members, threshold, password, seed }),
+	getMultisigVaultAddress: (walletIndex: number) => invoke<string>('get_multisig_vault_address', { walletIndex }),
 
 	// Staking
 	fetchVoteAccount: (address: string, rpcUrl: string) => invoke<VoteAccountDto>('fetch_vote_account', { address, rpcUrl }),

@@ -400,6 +400,33 @@ fn get_vote_params(
     Ok((pk, fp, rpc, ms_addr))
 }
 
+#[tauri::command]
+pub fn get_multisig_vault_address(
+    state: tauri::State<'_, AppState>,
+    wallet_index: usize,
+) -> CommandResult<String> {
+    let service = state.service.lock().unwrap();
+    let store = service.store.as_ref().ok_or("钱包未解锁")?;
+    // 从 multisigs 中查找
+    let wallet = store.wallets.get(wallet_index).ok_or("无效的钱包")?;
+    match &wallet.wallet_type {
+        swallet_core::storage::data::WalletType::Multisig { multisig_address, .. } => {
+            // 从 store.multisigs 找到对应的 vault_address
+            if let Some(ms) = store.multisigs.iter().find(|m| m.address == *multisig_address) {
+                Ok(ms.vault_address.clone())
+            } else {
+                // 动态计算
+                let (vault_pda, _) = multisig::derive_vault_pda(
+                    &multisig_address.parse().map_err(|_| "多签地址解析失败")?,
+                    0,
+                );
+                Ok(vault_pda.to_string())
+            }
+        }
+        _ => Err("不是多签钱包".into()),
+    }
+}
+
 fn get_ms_info(service: &swallet_core::service::WalletService, wallet_index: usize) -> CommandResult<(String, Vec<String>)> {
     let store = service.store.as_ref().ok_or("钱包未解锁")?;
     let wallet = store.wallets.get(wallet_index).ok_or("无效的钱包")?;
