@@ -242,7 +242,13 @@
 						<span>TX #{proposal.transaction_index}</span>
 						<span style="color:{statusColor(proposal.status)}">{proposal.status}</span>
 					</div>
-					{#if proposal.summary}<div class="proposal-summary">{proposal.summary}</div>{/if}
+					{#if proposal.summary}
+						<div class="proposal-summary">
+							{#each proposal.summary.split('\n') as line}
+								<div>{line}</div>
+							{/each}
+						</div>
+					{/if}
 					<div class="proposal-votes"><span class="dim">通过: {proposal.approved_count} · 拒绝: {proposal.rejected_count}</span></div>
 					<div class="proposal-actions">
 						{#if proposal.status === '投票中'}
@@ -376,7 +382,9 @@
 
 	.proposal-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
 	.proposal-header { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
-	.proposal-summary { font-size: 12px; color: var(--accent); margin-bottom: 4px; word-break: break-all; }
+	.proposal-summary { font-size: 12px; color: var(--accent); margin-bottom: 4px; }
+	.proposal-summary div { word-break: break-all; }
+	.proposal-summary div + div { color: var(--text-dim); font-family: monospace; font-size: 11px; margin-top: 2px; }
 	.proposal-votes { font-size: 13px; margin-bottom: 8px; }
 	.proposal-actions { display: flex; gap: 8px; }
 	.btn-sm { padding: 4px 12px; border-radius: 4px; font-size: 12px; border: 1px solid; cursor: pointer; background: none; }

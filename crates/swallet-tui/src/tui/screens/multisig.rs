@@ -421,7 +421,7 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                     swallet_core::multisig::ProposalStatus::Rejected | swallet_core::multisig::ProposalStatus::Cancelled => Color::Red,
                     _ => Color::DarkGray,
                 };
-                let mut spans = vec![
+                let line1 = Line::from(vec![
                     Span::styled(
                         format!("  #{} ", p.transaction_index),
                         Style::default().fg(Color::White),
@@ -430,18 +430,22 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                         format!("[{}]", p.status.label()),
                         Style::default().fg(status_color),
                     ),
-                ];
+                    Span::styled(
+                        format!("  通过:{} 拒绝:{}", p.approved.len(), p.rejected.len()),
+                        Style::default().fg(Color::Gray),
+                    ),
+                ]);
+                let mut lines = vec![line1];
                 if let Some(ref summary) = p.summary {
-                    spans.push(Span::styled(
-                        format!("  {summary}"),
-                        Style::default().fg(Color::Cyan),
-                    ));
+                    for line in summary.lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!("    {line}"),
+                            Style::default().fg(Color::Cyan),
+                        )));
+                    }
                 }
-                spans.push(Span::styled(
-                    format!("  通过:{} 拒绝:{}", p.approved.len(), p.rejected.len()),
-                    Style::default().fg(Color::Gray),
-                ));
-                ListItem::new(Line::from(spans))
+                lines.push(Line::from("")); // 间隔行
+                ListItem::new(lines)
             })
             .collect();
 

@@ -568,6 +568,43 @@ pub fn decode_vault_tx_summary(data: &[u8]) -> Result<String, String> {
     Ok(summaries.join(" + "))
 }
 
+/// 解码 Anchor Borsh 序列化的参数
+fn decode_anchor_args(data: &[u8], args: &[super::presets::PresetArg]) -> String {
+    use super::presets::ArgType;
+    let mut parts = Vec::new();
+    let mut off = 0;
+    for arg in args {
+        match arg.arg_type {
+            ArgType::Pubkey => {
+                if off + 32 > data.len() { break; }
+                let pk = Pubkey::try_from(&data[off..off + 32]).ok();
+                let s = pk.map(|p| { let s = p.to_string(); format!("{}..{}", &s[..4], &s[s.len()-4..]) }).unwrap_or_default();
+                parts.push(format!("{}={}", arg.name, s));
+                off += 32;
+            }
+            ArgType::U64 => {
+                if off + 8 > data.len() { break; }
+                let v = u64::from_le_bytes(data[off..off + 8].try_into().unwrap_or_default());
+                parts.push(format!("{}={}", arg.name, v));
+                off += 8;
+            }
+            ArgType::U32 => {
+                if off + 4 > data.len() { break; }
+                let v = u32::from_le_bytes(data[off..off + 4].try_into().unwrap_or_default());
+                parts.push(format!("{}={}", arg.name, v));
+                off += 4;
+            }
+            ArgType::I64 => {
+                if off + 8 > data.len() { break; }
+                let v = i64::from_le_bytes(data[off..off + 8].try_into().unwrap_or_default());
+                parts.push(format!("{}={}", arg.name, v));
+                off += 8;
+            }
+        }
+    }
+    parts.join(", ")
+}
+
 fn decode_instruction_summary(
     program_id: &Pubkey,
     data: &[u8],
@@ -590,7 +627,7 @@ fn decode_instruction_summary(
         if data.len() >= 12 && data[..4] == [2, 0, 0, 0] {
             let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
             let to = get_account(1).map(short).unwrap_or_default();
-            return format!("SOL 转账 → {to} {} SOL", format_sol(lamports));
+            return format!("SOL 转账 (transfer) → {to} {} SOL", format_sol(lamports));
         }
         return "System 调用".into();
     }
@@ -605,14 +642,14 @@ fn decode_instruction_summary(
                         let new_auth = Pubkey::try_from(&data[4..36]).ok().map(|p| short(&p)).unwrap_or_default();
                         let auth_type = u32::from_le_bytes(data[36..40].try_into().unwrap_or_default());
                         let role = if auth_type == 0 { "Voter" } else { "Withdrawer" };
-                        return format!("Vote 授权 {role} → {new_auth}");
+                        return format!("Vote 授权 (authorize) {role} → {new_auth}");
                     }
                 }
                 7 => { // Withdraw
                     if data.len() >= 12 {
                         let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
                         let to = get_account(1).map(short).unwrap_or_default();
-                        return format!("Vote 提取 {} SOL → {to}", format_sol(lamports));
+                        return format!("Vote 提取 (withdraw) {} SOL → {to}", format_sol(lamports));
                     }
                 }
                 _ => {}
@@ -631,21 +668,21 @@ fn decode_instruction_summary(
                         let new_auth = Pubkey::try_from(&data[4..36]).ok().map(|p| short(&p)).unwrap_or_default();
                         let auth_type = u32::from_le_bytes(data[36..40].try_into().unwrap_or_default());
                         let role = if auth_type == 0 { "Staker" } else { "Withdrawer" };
-                        return format!("Stake 授权 {role} → {new_auth}");
+                        return format!("Stake 授权 (authorize) {role} → {new_auth}");
                     }
                 }
                 2 => { // DelegateStake
                     let vote = get_account(1).map(short).unwrap_or_default();
-                    return format!("Stake 委托 → {vote}");
+                    return format!("Stake 委托 (delegate) → {vote}");
                 }
                 4 => { // Withdraw
                     if data.len() >= 12 {
                         let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
                         let to = get_account(1).map(short).unwrap_or_default();
-                        return format!("Stake 提取 {} SOL → {to}", format_sol(lamports));
+                        return format!("Stake 提取 (withdraw) {} SOL → {to}", format_sol(lamports));
                     }
                 }
-                5 => { return "Stake 取消质押".into(); }
+                5 => { return "Stake 取消质押 (deactivate)".into(); }
                 _ => {}
             }
         }
@@ -654,21 +691,37 @@ fn decode_instruction_summary(
 
     // BPF Loader Upgradeable
     if pid == "BPFLoaderUpgradeab1e11111111111111111111111" {
-        if data.len() >= 4 && data[..4] == [3, 0, 0, 0] {
-            let prog = get_account(1).map(short).unwrap_or_default();
-            return format!("升级程序 {prog}");
+        if data.len() >= 4 {
+            let bpf_type = u32::from_le_bytes(data[..4].try_into().unwrap_or_default());
+            match bpf_type {
+                3 => {
+                    let prog = get_account(1).map(short).unwrap_or_default();
+                    return format!("升级程序 (upgrade) {prog}");
+                }
+                4 => { return "设置 Authority (set_authority)".into(); }
+                5 => { return "关闭 Buffer (close)".into(); }
+                _ => {}
+            }
         }
         return "BPF Loader 调用".into();
     }
 
-    // 预制程序匹配
+    // 预制程序匹配（Anchor discriminator = sha256("global:<name>")[..8]）
     for preset in super::presets::all_programs() {
         if preset.program_id == program_id.to_bytes() {
-            // 尝试匹配 Anchor discriminator (前8字节)
             if data.len() >= 8 {
                 for ix in &preset.instructions {
-                    // 无法直接获取 discriminator，只显示程序名
-                    let _ = ix;
+                    use sha2::{Sha256, Digest};
+                    let mut hasher = Sha256::new();
+                    hasher.update(format!("global:{}", ix.name).as_bytes());
+                    let hash = hasher.finalize();
+                    if data[..8] == hash[..8] {
+                        let args_str = decode_anchor_args(&data[8..], &ix.args);
+                        if args_str.is_empty() {
+                            return format!("{}: {} ({})", preset.name, ix.label, ix.name);
+                        }
+                        return format!("{}: {} ({})\n    {}", preset.name, ix.label, ix.name, args_str);
+                    }
                 }
             }
             return format!("调用 {}", preset.name);
