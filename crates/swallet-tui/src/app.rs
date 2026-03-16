@@ -43,6 +43,7 @@ enum BgMessage {
     VoteAccountFetched(swallet_core::staking::VoteAccountInfo),
     StakeAccountFetched(swallet_core::staking::StakeAccountInfo),
     StakingFetchError(String),
+    VsAccountVerified(Result<String, String>),
 }
 
 pub struct App {
@@ -234,6 +235,19 @@ impl App {
                 }
                 BgMessage::StakingFetchError(err) => {
                     self.ui.stk_fetch_error = Some(err);
+                }
+                BgMessage::VsAccountVerified(result) => {
+                    match result {
+                        Ok(address) => {
+                            self.ui.ms_vs_target = address;
+                            self.ui.ms_vs_op_selected = 0;
+                            self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
+                            self.ui.clear_status();
+                        }
+                        Err(err) => {
+                            self.ui.set_status(&err);
+                        }
+                    }
                 }
             }
         }
@@ -2106,8 +2120,8 @@ impl App {
             MultisigStep::SelectProgram => self.handle_ms_select_program_key(key),
             MultisigStep::SelectProgramInstruction => self.handle_ms_select_program_instruction_key(key),
             MultisigStep::InputProgramArgs => self.handle_ms_input_program_args_key(key),
+            MultisigStep::SelectVoteStakeAccount => self.handle_ms_select_vote_stake_account_key(key),
             MultisigStep::SelectVoteStakeOp => self.handle_ms_select_vote_stake_op_key(key),
-            MultisigStep::InputVoteStakeTarget => self.handle_ms_text_input_key(key, MsInputField::VsTarget),
             MultisigStep::InputVoteStakeParam => self.handle_ms_text_input_key(key, MsInputField::VsParam),
             MultisigStep::InputVoteStakeAmount => self.handle_ms_text_input_key(key, MsInputField::VsAmount),
             MultisigStep::SelectMsFeePayer => self.handle_ms_select_fee_payer_key(key),
@@ -2352,20 +2366,32 @@ impl App {
                         self.ui.ms_step = MultisigStep::SelectProgram;
                     }
                     Some(ProposalType::VoteManage) => {
+                        self.ui.ms_vs_accounts = self.collect_vs_accounts("vote");
+                        self.ui.ms_vs_account_selected = 0;
                         self.ui.ms_vs_ops = multisig::MsVoteStakeOp::vote_ops();
                         self.ui.ms_vs_op_selected = 0;
                         self.ui.ms_vs_target.clear();
                         self.ui.ms_vs_param.clear();
                         self.ui.ms_vs_amount.clear();
-                        self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
+                        if self.ui.ms_vs_accounts.is_empty() {
+                            self.ui.set_status("未找到 Vote 账户");
+                            return;
+                        }
+                        self.ui.ms_step = MultisigStep::SelectVoteStakeAccount;
                     }
                     Some(ProposalType::StakeManage) => {
+                        self.ui.ms_vs_accounts = self.collect_vs_accounts("stake");
+                        self.ui.ms_vs_account_selected = 0;
                         self.ui.ms_vs_ops = multisig::MsVoteStakeOp::stake_ops();
                         self.ui.ms_vs_op_selected = 0;
                         self.ui.ms_vs_target.clear();
                         self.ui.ms_vs_param.clear();
                         self.ui.ms_vs_amount.clear();
-                        self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
+                        if self.ui.ms_vs_accounts.is_empty() {
+                            self.ui.set_status("未找到 Stake 账户");
+                            return;
+                        }
+                        self.ui.ms_step = MultisigStep::SelectVoteStakeAccount;
                     }
                     _ => {
                         self.ui.ms_transfer_to.clear();
@@ -2378,6 +2404,34 @@ impl App {
             }
             KeyCode::Esc => {
                 self.ui.ms_step = MultisigStep::ViewDetail;
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_select_vote_stake_account_key(&mut self, key: KeyEvent) {
+        let count = self.ui.ms_vs_accounts.len();
+        match key.code {
+            KeyCode::Up => {
+                if self.ui.ms_vs_account_selected > 0 {
+                    self.ui.ms_vs_account_selected -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.ui.ms_vs_account_selected + 1 < count {
+                    self.ui.ms_vs_account_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some((addr, acct_type)) = self.ui.ms_vs_accounts.get(self.ui.ms_vs_account_selected).cloned() {
+                    // 异步验证权限
+                    self.ui.set_status("验证权限中...");
+                    self.verify_vs_account_authority(addr, acct_type);
+                }
+            }
+            KeyCode::Esc => {
+                self.ui.ms_step = MultisigStep::SelectProposalType;
                 self.ui.clear_status();
             }
             _ => {}
@@ -2398,14 +2452,24 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                self.ui.ms_vs_target.clear();
                 self.ui.ms_vs_param.clear();
                 self.ui.ms_vs_amount.clear();
-                self.ui.ms_step = MultisigStep::InputVoteStakeTarget;
+                let op = self.ui.ms_vs_ops.get(self.ui.ms_vs_op_selected).cloned();
+                match op {
+                    Some(ref o) if o.needs_param() => {
+                        self.ui.ms_step = MultisigStep::InputVoteStakeParam;
+                    }
+                    Some(ref o) if o.needs_amount() => {
+                        self.ui.ms_step = MultisigStep::InputVoteStakeAmount;
+                    }
+                    _ => {
+                        self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
+                    }
+                }
                 self.ui.clear_status();
             }
             KeyCode::Esc => {
-                self.ui.ms_step = MultisigStep::SelectProposalType;
+                self.ui.ms_step = MultisigStep::SelectVoteStakeAccount;
                 self.ui.clear_status();
             }
             _ => {}
@@ -2610,7 +2674,6 @@ impl App {
                     MsInputField::TransferAmount => self.ui.ms_transfer_amount.push(c),
                     MsInputField::UpgradeProgram => self.ui.ms_upgrade_program.push(c),
                     MsInputField::UpgradeBuffer => self.ui.ms_upgrade_buffer.push(c),
-                    MsInputField::VsTarget => self.ui.ms_vs_target.push(c),
                     MsInputField::VsParam => self.ui.ms_vs_param.push(c),
                     MsInputField::VsAmount => self.ui.ms_vs_amount.push(c),
                 }
@@ -2622,7 +2685,6 @@ impl App {
                     MsInputField::TransferAmount => { self.ui.ms_transfer_amount.pop(); }
                     MsInputField::UpgradeProgram => { self.ui.ms_upgrade_program.pop(); }
                     MsInputField::UpgradeBuffer => { self.ui.ms_upgrade_buffer.pop(); }
-                    MsInputField::VsTarget => { self.ui.ms_vs_target.pop(); }
                     MsInputField::VsParam => { self.ui.ms_vs_param.pop(); }
                     MsInputField::VsAmount => { self.ui.ms_vs_amount.pop(); }
                 }
@@ -2686,34 +2748,6 @@ impl App {
                         self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
                         self.ui.clear_status();
                     }
-                    MsInputField::VsTarget => {
-                        if self.ui.ms_vs_target.is_empty() {
-                            self.ui.set_status("地址不能为空");
-                            return;
-                        }
-                        if bs58::decode(&self.ui.ms_vs_target)
-                            .into_vec()
-                            .map(|v| v.len() != 32)
-                            .unwrap_or(true)
-                        {
-                            self.ui.set_status("无效的 Solana 地址");
-                            return;
-                        }
-                        let op = self.ui.ms_vs_ops.get(self.ui.ms_vs_op_selected).cloned();
-                        match op {
-                            Some(ref o) if o.needs_param() => {
-                                self.ui.ms_step = MultisigStep::InputVoteStakeParam;
-                            }
-                            Some(ref o) if o.needs_amount() => {
-                                self.ui.ms_step = MultisigStep::InputVoteStakeAmount;
-                            }
-                            _ => {
-                                // StakeDeactivate: 只需 target，直接确认
-                                self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
-                            }
-                        }
-                        self.ui.clear_status();
-                    }
                     MsInputField::VsParam => {
                         if self.ui.ms_vs_param.is_empty() {
                             self.ui.set_status("参数不能为空");
@@ -2764,11 +2798,8 @@ impl App {
                     MsInputField::UpgradeBuffer => {
                         self.ui.ms_step = MultisigStep::InputUpgradeProgram;
                     }
-                    MsInputField::VsTarget => {
-                        self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
-                    }
                     MsInputField::VsParam => {
-                        self.ui.ms_step = MultisigStep::InputVoteStakeTarget;
+                        self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
                     }
                     MsInputField::VsAmount => {
                         self.ui.ms_step = MultisigStep::InputVoteStakeParam;
@@ -3026,6 +3057,94 @@ impl App {
 
     /// 执行创建提案
     /// 进入多签 fee payer 选择，完成后进入 next_step
+    /// 从 balance_cache 收集所有 Vote 或 Stake 账户
+    fn collect_vs_accounts(&self, acct_type: &str) -> Vec<(String, String)> {
+        let owner = if acct_type == "vote" {
+            swallet_core::chain::solana::VOTE_PROGRAM
+        } else {
+            swallet_core::chain::solana::STAKE_PROGRAM
+        };
+        self.service
+            .balance_cache
+            .iter()
+            .filter(|(_, portfolio)| portfolio.account_owner.as_deref() == Some(owner))
+            .map(|(addr, _)| (addr.clone(), acct_type.to_string()))
+            .collect()
+    }
+
+    /// 异步验证 Vote/Stake 账户的权限是否匹配当前多签 vault
+    fn verify_vs_account_authority(&mut self, address: String, acct_type: String) {
+        // 获取 vault 地址
+        let vault_address = {
+            let store = match self.service.store.as_ref() {
+                Some(s) => s,
+                None => { self.ui.set_status("钱包未解锁"); return; }
+            };
+            let ms_idx = self.ui.ms_current_wallet_index;
+            let wallet = match store.wallets.get(ms_idx) {
+                Some(w) => w,
+                None => { self.ui.set_status("无效的钱包"); return; }
+            };
+            match &wallet.wallet_type {
+                swallet_core::storage::data::WalletType::Multisig { multisig_address, .. } => {
+                    // 从 multisigs 找 vault_address
+                    store.multisigs.iter()
+                        .find(|m| m.address == *multisig_address)
+                        .map(|m| m.vault_address.clone())
+                        .unwrap_or_else(|| {
+                            let (vault_pda, _) = multisig::derive_vault_pda(
+                                &multisig_address.parse().unwrap_or_default(), 0,
+                            );
+                            vault_pda.to_string()
+                        })
+                }
+                _ => { self.ui.set_status("不是多签钱包"); return; }
+            }
+        };
+
+        let rpc_url = self.get_rpc_url_for_address(&address);
+        let tx = self.bg_tx.clone();
+
+        tokio::spawn(async move {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .unwrap();
+
+            let result = if acct_type == "vote" {
+                match swallet_core::staking::sol_staking::fetch_vote_account(&client, &rpc_url, &address).await {
+                    Ok(info) => {
+                        if info.authorized_voter == vault_address || info.authorized_withdrawer == vault_address {
+                            Ok(address)
+                        } else {
+                            Err(format!(
+                                "权限不匹配\nVault: {}\nVoter: {}\nWithdrawer: {}",
+                                vault_address, info.authorized_voter, info.authorized_withdrawer
+                            ))
+                        }
+                    }
+                    Err(e) => Err(format!("查询失败: {e}")),
+                }
+            } else {
+                match swallet_core::staking::sol_staking::fetch_stake_account(&client, &rpc_url, &address).await {
+                    Ok(info) => {
+                        if info.authorized_staker == vault_address || info.authorized_withdrawer == vault_address {
+                            Ok(address)
+                        } else {
+                            Err(format!(
+                                "权限不匹配\nVault: {}\nStaker: {}\nWithdrawer: {}",
+                                vault_address, info.authorized_staker, info.authorized_withdrawer
+                            ))
+                        }
+                    }
+                    Err(e) => Err(format!("查询失败: {e}")),
+                }
+            };
+
+            let _ = tx.send(BgMessage::VsAccountVerified(result));
+        });
+    }
+
     fn enter_ms_fee_payer_select(&mut self, next_step: MultisigStep) {
         let list = self.build_fee_payer_list();
         if list.is_empty() {
@@ -3972,7 +4091,6 @@ enum MsInputField {
     TransferAmount,
     UpgradeProgram,
     UpgradeBuffer,
-    VsTarget,
     VsParam,
     VsAmount,
 }
