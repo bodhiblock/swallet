@@ -421,7 +421,7 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                     swallet_core::multisig::ProposalStatus::Rejected | swallet_core::multisig::ProposalStatus::Cancelled => Color::Red,
                     _ => Color::DarkGray,
                 };
-                ListItem::new(Line::from(vec![
+                let mut spans = vec![
                     Span::styled(
                         format!("  #{} ", p.transaction_index),
                         Style::default().fg(Color::White),
@@ -430,11 +430,18 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                         format!("[{}]", p.status.label()),
                         Style::default().fg(status_color),
                     ),
-                    Span::styled(
-                        format!("  通过:{} 拒绝:{}", p.approved.len(), p.rejected.len()),
-                        Style::default().fg(Color::Gray),
-                    ),
-                ]))
+                ];
+                if let Some(ref summary) = p.summary {
+                    spans.push(Span::styled(
+                        format!("  {summary}"),
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+                spans.push(Span::styled(
+                    format!("  通过:{} 拒绝:{}", p.approved.len(), p.rejected.len()),
+                    Style::default().fg(Color::Gray),
+                ));
+                ListItem::new(Line::from(spans))
             })
             .collect();
 
@@ -1488,7 +1495,7 @@ fn render_select_vote_stake_account(
     }
 
     frame.render_widget(
-        Paragraph::new(Span::styled(" ↑↓选择  Enter验证权限  Esc返回", Style::default().fg(Color::DarkGray))),
+        Paragraph::new(Span::styled(" ↑↓选择  Enter确认  Esc返回", Style::default().fg(Color::DarkGray))),
         footer_area,
     );
 }

@@ -26,6 +26,7 @@ pub struct ProposalDto {
     pub rejected_count: usize,
     pub approved_addresses: Vec<String>,
     pub rejected_addresses: Vec<String>,
+    pub summary: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -136,6 +137,7 @@ pub async fn fetch_proposals(
         rejected_count: p.rejected.len(),
         approved_addresses: p.approved.iter().map(|a| a.to_string()).collect(),
         rejected_addresses: p.rejected.iter().map(|a| a.to_string()).collect(),
+        summary: p.summary.clone(),
     }).collect())
 }
 

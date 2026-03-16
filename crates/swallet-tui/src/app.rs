@@ -43,7 +43,6 @@ enum BgMessage {
     VoteAccountFetched(swallet_core::staking::VoteAccountInfo),
     StakeAccountFetched(swallet_core::staking::StakeAccountInfo),
     StakingFetchError(String),
-    VsAccountVerified(Result<String, String>),
 }
 
 pub struct App {
@@ -235,19 +234,6 @@ impl App {
                 }
                 BgMessage::StakingFetchError(err) => {
                     self.ui.stk_fetch_error = Some(err);
-                }
-                BgMessage::VsAccountVerified(result) => {
-                    match result {
-                        Ok(address) => {
-                            self.ui.ms_vs_target = address;
-                            self.ui.ms_vs_op_selected = 0;
-                            self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
-                            self.ui.clear_status();
-                        }
-                        Err(err) => {
-                            self.ui.set_status(&err);
-                        }
-                    }
                 }
             }
         }
@@ -2426,10 +2412,11 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                if let Some((addr, acct_type, _, _)) = self.ui.ms_vs_accounts.get(self.ui.ms_vs_account_selected).cloned() {
-                    // 异步验证权限
-                    self.ui.set_status("验证权限中...");
-                    self.verify_vs_account_authority(addr, acct_type);
+                if let Some((addr, _, _, _)) = self.ui.ms_vs_accounts.get(self.ui.ms_vs_account_selected).cloned() {
+                    self.ui.ms_vs_target = addr;
+                    self.ui.ms_vs_op_selected = 0;
+                    self.ui.ms_step = MultisigStep::SelectVoteStakeOp;
+                    self.ui.clear_status();
                 }
             }
             KeyCode::Esc => {
@@ -3117,78 +3104,7 @@ impl App {
             .collect()
     }
 
-    /// 异步验证 Vote/Stake 账户的权限是否匹配当前多签 vault
-    fn verify_vs_account_authority(&mut self, address: String, acct_type: String) {
-        // 获取 vault 地址
-        let vault_address = {
-            let store = match self.service.store.as_ref() {
-                Some(s) => s,
-                None => { self.ui.set_status("钱包未解锁"); return; }
-            };
-            let ms_idx = self.ui.ms_current_wallet_index;
-            let wallet = match store.wallets.get(ms_idx) {
-                Some(w) => w,
-                None => { self.ui.set_status("无效的钱包"); return; }
-            };
-            match &wallet.wallet_type {
-                swallet_core::storage::data::WalletType::Multisig { multisig_address, .. } => {
-                    // 从 multisigs 找 vault_address
-                    store.multisigs.iter()
-                        .find(|m| m.address == *multisig_address)
-                        .map(|m| m.vault_address.clone())
-                        .unwrap_or_else(|| {
-                            let (vault_pda, _) = multisig::derive_vault_pda(
-                                &multisig_address.parse().unwrap_or_default(), 0,
-                            );
-                            vault_pda.to_string()
-                        })
-                }
-                _ => { self.ui.set_status("不是多签钱包"); return; }
-            }
-        };
 
-        let rpc_url = self.get_rpc_url_for_address(&address);
-        let tx = self.bg_tx.clone();
-
-        tokio::spawn(async move {
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .unwrap();
-
-            let result = if acct_type == "vote" {
-                match swallet_core::staking::sol_staking::fetch_vote_account(&client, &rpc_url, &address).await {
-                    Ok(info) => {
-                        if info.authorized_voter == vault_address || info.authorized_withdrawer == vault_address {
-                            Ok(address)
-                        } else {
-                            Err(format!(
-                                "权限不匹配\nVault: {}\nVoter: {}\nWithdrawer: {}",
-                                vault_address, info.authorized_voter, info.authorized_withdrawer
-                            ))
-                        }
-                    }
-                    Err(e) => Err(format!("查询失败: {e}")),
-                }
-            } else {
-                match swallet_core::staking::sol_staking::fetch_stake_account(&client, &rpc_url, &address).await {
-                    Ok(info) => {
-                        if info.authorized_staker == vault_address || info.authorized_withdrawer == vault_address {
-                            Ok(address)
-                        } else {
-                            Err(format!(
-                                "权限不匹配\nVault: {}\nStaker: {}\nWithdrawer: {}",
-                                vault_address, info.authorized_staker, info.authorized_withdrawer
-                            ))
-                        }
-                    }
-                    Err(e) => Err(format!("查询失败: {e}")),
-                }
-            };
-
-            let _ = tx.send(BgMessage::VsAccountVerified(result));
-        });
-    }
 
     fn enter_ms_fee_payer_select(&mut self, next_step: MultisigStep) {
         let list = self.build_fee_payer_list();
@@ -4321,6 +4237,23 @@ async fn execute_create_proposal_async(
             let target_bytes: [u8; 32] = multisig::proposals::decode_bs58_pubkey(vs_target)
                 .ok_or_else(|| format!("无效的目标地址: {vs_target}"))?;
             let vault_bytes = vault_pda.to_bytes();
+            let vault_str = vault_pda.to_string();
+
+            // 提交前自动验证权限
+            let is_vote = matches!(proposal_type, ProposalType::VoteManage);
+            if is_vote {
+                let info = swallet_core::staking::sol_staking::fetch_vote_account(&client, rpc_url, vs_target).await
+                    .map_err(|e| format!("查询 Vote 账户失败: {e}"))?;
+                if info.authorized_voter != vault_str && info.authorized_withdrawer != vault_str {
+                    return Err(format!("权限不匹配\nVault: {vault_str}\nVoter: {}\nWithdrawer: {}", info.authorized_voter, info.authorized_withdrawer));
+                }
+            } else {
+                let info = swallet_core::staking::sol_staking::fetch_stake_account(&client, rpc_url, vs_target).await
+                    .map_err(|e| format!("查询 Stake 账户失败: {e}"))?;
+                if info.authorized_staker != vault_str && info.authorized_withdrawer != vault_str {
+                    return Err(format!("权限不匹配\nVault: {vault_str}\nStaker: {}\nWithdrawer: {}", info.authorized_staker, info.authorized_withdrawer));
+                }
+            }
 
             use multisig::MsVoteStakeOp;
             match op {

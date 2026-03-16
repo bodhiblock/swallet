@@ -80,7 +80,12 @@ pub async fn fetch_active_proposals(
         let proposal_addr = proposal_pda.to_string();
 
         match fetch_proposal(client, rpc_url, &proposal_addr).await {
-            Ok(proposal) => {
+            Ok(mut proposal) => {
+                // 尝试获取 VaultTransaction 解析摘要
+                let (tx_pda, _) = derive_transaction_pda(&multisig.address, idx);
+                if let Ok(tx_data) = fetch_account_data(client, rpc_url, &tx_pda.to_string()).await {
+                    proposal.summary = decode_vault_tx_summary(&tx_data).ok();
+                }
                 proposals.push(proposal);
             }
             Err(_) => {
@@ -145,6 +150,7 @@ fn parse_proposal_account(data: &[u8], address: Pubkey) -> Result<ProposalInfo, 
         rejected: p.rejected,
         cancelled: p.cancelled,
         bump: p.bump,
+        summary: None,
     })
 }
 
@@ -486,20 +492,190 @@ fn parse_vault_tx_message_borsh(data: &[u8]) -> Result<ParsedMessage, String> {
         account_keys.push(key);
     }
 
+    // instructions: u8 长度前缀（beet 格式，链上存储也用 u8）
+    if off >= data.len() {
+        return Ok(ParsedMessage {
+            num_signers, num_writable_signers, num_writable_non_signers,
+            account_keys, instructions: vec![],
+        });
+    }
+    let ix_count = data[off] as usize;
+    off += 1;
+
+    let mut instructions = Vec::with_capacity(ix_count);
+    for _ in 0..ix_count {
+        if off >= data.len() { break; }
+        let program_id_index = data[off]; off += 1;
+
+        // account_indices: u8 长度前缀
+        if off >= data.len() { break; }
+        let ai_len = data[off] as usize; off += 1;
+        if off + ai_len > data.len() { break; }
+        let account_indices = data[off..off + ai_len].to_vec();
+        off += ai_len;
+
+        // data: u16 LE 长度前缀
+        if off + 2 > data.len() { break; }
+        let d_len = u16::from_le_bytes(data[off..off + 2].try_into().unwrap()) as usize;
+        off += 2;
+        if off + d_len > data.len() { break; }
+        let ix_data = data[off..off + d_len].to_vec();
+        off += d_len;
+
+        instructions.push(ParsedInstruction { program_id_index, account_indices, data: ix_data });
+    }
+
     Ok(ParsedMessage {
         num_signers,
         num_writable_signers,
         num_writable_non_signers,
         account_keys,
+        instructions,
     })
 }
 
-/// 解析后的 VaultTransaction 消息（仅包含 execute 所需字段）
+/// 解析后的指令
+struct ParsedInstruction {
+    program_id_index: u8,
+    account_indices: Vec<u8>,
+    data: Vec<u8>,
+}
+
+/// 解析后的 VaultTransaction 消息
 struct ParsedMessage {
     num_signers: u8,
     num_writable_signers: u8,
     num_writable_non_signers: u8,
     account_keys: Vec<Pubkey>,
+    instructions: Vec<ParsedInstruction>,
+}
+
+/// 解码 VaultTransaction 原始数据为人类可读摘要
+pub fn decode_vault_tx_summary(data: &[u8]) -> Result<String, String> {
+    let msg = parse_vault_tx_message_borsh(data)?;
+    if msg.instructions.is_empty() {
+        return Ok("空交易".into());
+    }
+
+    let summaries: Vec<String> = msg.instructions.iter().map(|ix| {
+        let program_id = msg.account_keys.get(ix.program_id_index as usize)
+            .copied()
+            .unwrap_or_default();
+        decode_instruction_summary(&program_id, &ix.data, &ix.account_indices, &msg.account_keys)
+    }).collect();
+
+    Ok(summaries.join(" + "))
+}
+
+fn decode_instruction_summary(
+    program_id: &Pubkey,
+    data: &[u8],
+    account_indices: &[u8],
+    account_keys: &[Pubkey],
+) -> String {
+    let pid = program_id.to_string();
+    let short = |pk: &Pubkey| { let s = pk.to_string(); format!("{}..{}", &s[..4], &s[s.len()-4..]) };
+    let format_sol = |lamports: u64| {
+        let whole = lamports / 1_000_000_000;
+        let frac = lamports % 1_000_000_000;
+        if frac == 0 { format!("{whole}") } else { format!("{whole}.{frac:09}").trim_end_matches('0').to_string() }
+    };
+    let get_account = |idx: usize| -> Option<&Pubkey> {
+        account_indices.get(idx).and_then(|&i| account_keys.get(i as usize))
+    };
+
+    // System Program (全 0 = 11111111111111111111111111111111)
+    if *program_id == Pubkey::default() {
+        if data.len() >= 12 && data[..4] == [2, 0, 0, 0] {
+            let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
+            let to = get_account(1).map(short).unwrap_or_default();
+            return format!("SOL 转账 → {to} {} SOL", format_sol(lamports));
+        }
+        return "System 调用".into();
+    }
+
+    // Vote Program
+    if pid == "Vote111111111111111111111111111111111111111" {
+        if data.len() >= 4 {
+            let ix_type = u32::from_le_bytes(data[..4].try_into().unwrap_or_default());
+            match ix_type {
+                1 => { // Authorize
+                    if data.len() >= 40 {
+                        let new_auth = Pubkey::try_from(&data[4..36]).ok().map(|p| short(&p)).unwrap_or_default();
+                        let auth_type = u32::from_le_bytes(data[36..40].try_into().unwrap_or_default());
+                        let role = if auth_type == 0 { "Voter" } else { "Withdrawer" };
+                        return format!("Vote 授权 {role} → {new_auth}");
+                    }
+                }
+                7 => { // Withdraw
+                    if data.len() >= 12 {
+                        let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
+                        let to = get_account(1).map(short).unwrap_or_default();
+                        return format!("Vote 提取 {} SOL → {to}", format_sol(lamports));
+                    }
+                }
+                _ => {}
+            }
+        }
+        return "Vote 调用".into();
+    }
+
+    // Stake Program
+    if pid == "Stake11111111111111111111111111111111111111" {
+        if data.len() >= 4 {
+            let ix_type = u32::from_le_bytes(data[..4].try_into().unwrap_or_default());
+            match ix_type {
+                1 => { // Authorize
+                    if data.len() >= 40 {
+                        let new_auth = Pubkey::try_from(&data[4..36]).ok().map(|p| short(&p)).unwrap_or_default();
+                        let auth_type = u32::from_le_bytes(data[36..40].try_into().unwrap_or_default());
+                        let role = if auth_type == 0 { "Staker" } else { "Withdrawer" };
+                        return format!("Stake 授权 {role} → {new_auth}");
+                    }
+                }
+                2 => { // DelegateStake
+                    let vote = get_account(1).map(short).unwrap_or_default();
+                    return format!("Stake 委托 → {vote}");
+                }
+                4 => { // Withdraw
+                    if data.len() >= 12 {
+                        let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
+                        let to = get_account(1).map(short).unwrap_or_default();
+                        return format!("Stake 提取 {} SOL → {to}", format_sol(lamports));
+                    }
+                }
+                5 => { return "Stake 取消质押".into(); }
+                _ => {}
+            }
+        }
+        return "Stake 调用".into();
+    }
+
+    // BPF Loader Upgradeable
+    if pid == "BPFLoaderUpgradeab1e11111111111111111111111" {
+        if data.len() >= 4 && data[..4] == [3, 0, 0, 0] {
+            let prog = get_account(1).map(short).unwrap_or_default();
+            return format!("升级程序 {prog}");
+        }
+        return "BPF Loader 调用".into();
+    }
+
+    // 预制程序匹配
+    for preset in super::presets::all_programs() {
+        if preset.program_id == program_id.to_bytes() {
+            // 尝试匹配 Anchor discriminator (前8字节)
+            if data.len() >= 8 {
+                for ix in &preset.instructions {
+                    // 无法直接获取 discriminator，只显示程序名
+                    let _ = ix;
+                }
+            }
+            return format!("调用 {}", preset.name);
+        }
+    }
+
+    // 未知程序
+    format!("调用程序 {}", short(program_id))
 }
 
 /// 创建 Squads v4 多签 (MultisigCreateV2)

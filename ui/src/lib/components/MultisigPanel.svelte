@@ -54,9 +54,6 @@
 	// Vote/Stake account selection
 	let vsAccounts: { address: string; type: 'vote' | 'stake'; label: string }[] = $state([]);
 	let vsSelectedAccount = $state(-1);
-	let vsVerifying = $state(false);
-	let vsVerified = $state(false);
-	let vsVerifyError = $state('');
 	let vaultAddress = $state('');
 
 	// Fee payer
@@ -130,42 +127,38 @@
 		} catch (e: any) { onToast(e?.message || '加载失败'); }
 	}
 
-	async function verifyVsAccount() {
-		if (vsSelectedAccount < 0) { onToast('请先选择账户'); return; }
-		vsVerifying = true;
-		vsVerifyError = '';
-		vsVerified = false;
+	async function verifyVsAuthority(): Promise<boolean> {
+		if (vsSelectedAccount < 0) { onToast('请先选择账户'); return false; }
 		const account = vsAccounts[vsSelectedAccount];
+		vsTarget = account.address;
 		try {
 			const rpcUrl = await api.getRpcUrlForAddress(account.address);
 			if (account.type === 'vote') {
 				const info: VoteAccountDto = await api.fetchVoteAccount(account.address, rpcUrl);
-				// 检查 voter 或 withdrawer 是否匹配 vault
-				if (info.authorized_voter === vaultAddress || info.authorized_withdrawer === vaultAddress) {
-					vsVerified = true;
-					vsTarget = account.address;
-				} else {
-					vsVerifyError = `权限不匹配\nVault: ${vaultAddress}\nVoter: ${info.authorized_voter}\nWithdrawer: ${info.authorized_withdrawer}`;
-				}
+				if (info.authorized_voter === vaultAddress || info.authorized_withdrawer === vaultAddress) return true;
+				onToast(`权限不匹配\nVault: ${vaultAddress}\nVoter: ${info.authorized_voter}\nWithdrawer: ${info.authorized_withdrawer}`);
 			} else {
 				const info: StakeAccountDto = await api.fetchStakeAccount(account.address, rpcUrl);
-				if (info.authorized_staker === vaultAddress || info.authorized_withdrawer === vaultAddress) {
-					vsVerified = true;
-					vsTarget = account.address;
-				} else {
-					vsVerifyError = `权限不匹配\nVault: ${vaultAddress}\nStaker: ${info.authorized_staker}\nWithdrawer: ${info.authorized_withdrawer}`;
-				}
+				if (info.authorized_staker === vaultAddress || info.authorized_withdrawer === vaultAddress) return true;
+				onToast(`权限不匹配\nVault: ${vaultAddress}\nStaker: ${info.authorized_staker}\nWithdrawer: ${info.authorized_withdrawer}`);
 			}
-		} catch (e: any) { vsVerifyError = e?.message || '验证失败'; }
-		vsVerifying = false;
+		} catch (e: any) { onToast(e?.message || '验证失败'); }
+		return false;
 	}
 
-	function startCreateProposal() {
+	async function startCreateProposal() {
 		if (proposalKind === 'sol-transfer' && (!proposalTo.trim() || !proposalAmount.trim())) { onToast('请填写目标地址和金额'); return; }
 		if (proposalKind === 'program-upgrade' && (!upgradeProgram.trim() || !upgradeBuffer.trim())) { onToast('请填写程序和 Buffer 地址'); return; }
-		if ((proposalKind === 'vote-manage' || proposalKind === 'stake-manage') && !vsTarget.trim()) { onToast('请先选择并验证账户'); return; }
+		if ((proposalKind === 'vote-manage' || proposalKind === 'stake-manage') && vsSelectedAccount < 0) { onToast('请先选择账户'); return; }
 		if (proposalKind === 'program-call' && presetPrograms.length === 0) { onToast('没有可用的预制程序'); return; }
 		if (feePayers.length === 0) { onToast('没有可用的 Fee Payer'); return; }
+		// Vote/Stake 提交前自动验证权限
+		if (proposalKind === 'vote-manage' || proposalKind === 'stake-manage') {
+			submitting = true;
+			const ok = await verifyVsAuthority();
+			submitting = false;
+			if (!ok) return;
+		}
 		dialogPassword = '';
 		passwordDialog = 'create';
 	}
@@ -249,6 +242,7 @@
 						<span>TX #{proposal.transaction_index}</span>
 						<span style="color:{statusColor(proposal.status)}">{proposal.status}</span>
 					</div>
+					{#if proposal.summary}<div class="proposal-summary">{proposal.summary}</div>{/if}
 					<div class="proposal-votes"><span class="dim">通过: {proposal.approved_count} · 拒绝: {proposal.rejected_count}</span></div>
 					<div class="proposal-actions">
 						{#if proposal.status === '投票中'}
@@ -311,7 +305,6 @@
 				{/if}
 
 			{:else if proposalKind === 'vote-manage' || proposalKind === 'stake-manage'}
-				<!-- Step 1: 选择账户 -->
 				<p class="dim">选择 {proposalKind === 'vote-manage' ? 'Vote' : 'Stake'} 账户</p>
 				{#if vsAccounts.length === 0}
 					<p class="dim center-text">未找到 {proposalKind === 'vote-manage' ? 'Vote' : 'Stake'} 账户</p>
@@ -319,26 +312,14 @@
 					<div class="vs-account-list">
 						{#each vsAccounts as acc, i}
 							<button class="vs-account-item" class:active={vsSelectedAccount === i}
-								onclick={() => { vsSelectedAccount = i; vsVerified = false; vsVerifyError = ''; }}>
+								onclick={() => { vsSelectedAccount = i; }}>
 								<span class="vs-addr">{acc.address}</span>
 							</button>
 						{/each}
 					</div>
-					{#if vsSelectedAccount >= 0 && !vsVerified}
-						<button class="btn-verify" onclick={verifyVsAccount} disabled={vsVerifying}>
-							{vsVerifying ? '验证中...' : '验证权限'}
-						</button>
-					{/if}
-					{#if vsVerifyError}
-						<div class="vs-error">{vsVerifyError}</div>
-					{/if}
-					{#if vsVerified}
-						<div class="vs-ok">权限验证通过</div>
-					{/if}
 				{/if}
 
-				<!-- Step 2: 选择操作（验证通过后） -->
-				{#if vsVerified}
+				{#if vsSelectedAccount >= 0}
 					<p class="dim">操作类型</p>
 					<div class="type-grid">
 						{#if proposalKind === 'vote-manage'}
@@ -352,11 +333,7 @@
 				{/if}
 			{/if}
 
-			{#if proposalKind !== 'vote-manage' && proposalKind !== 'stake-manage'}
-				<button class="btn-primary" onclick={startCreateProposal}>创建提案</button>
-			{:else if vsVerified}
-				<button class="btn-primary" onclick={startCreateProposal}>创建提案</button>
-			{/if}
+			<button class="btn-primary" onclick={startCreateProposal} disabled={submitting}>{submitting ? '验证中...' : '创建提案'}</button>
 		</div>
 	{/if}
 </div>
@@ -399,6 +376,7 @@
 
 	.proposal-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
 	.proposal-header { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+	.proposal-summary { font-size: 12px; color: var(--accent); margin-bottom: 4px; word-break: break-all; }
 	.proposal-votes { font-size: 13px; margin-bottom: 8px; }
 	.proposal-actions { display: flex; gap: 8px; }
 	.btn-sm { padding: 4px 12px; border-radius: 4px; font-size: 12px; border: 1px solid; cursor: pointer; background: none; }
@@ -421,10 +399,6 @@
 	.vs-account-item { width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: none; color: var(--text); font-size: 12px; font-family: monospace; cursor: pointer; word-break: break-all; }
 	.vs-account-item.active { border-color: var(--accent); background: rgba(34,211,238,0.08); }
 	.vs-addr { word-break: break-all; }
-	.btn-verify { width: 100%; padding: 10px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font-size: 14px; background: none; cursor: pointer; }
-	.btn-verify:disabled { opacity: 0.5; cursor: not-allowed; }
-	.vs-error { padding: 10px; border-radius: 8px; background: rgba(239,68,68,0.1); border: 1px solid var(--red); color: var(--red); font-size: 12px; font-family: monospace; white-space: pre-line; word-break: break-all; }
-	.vs-ok { padding: 10px; border-radius: 8px; background: rgba(34,197,94,0.1); border: 1px solid var(--green); color: var(--green); font-size: 14px; text-align: center; }
 
 	.pw-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
 	.pw-dialog { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 90%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; }

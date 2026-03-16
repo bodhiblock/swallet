@@ -112,6 +112,8 @@ pub struct ProposalInfo {
     pub rejected: Vec<Pubkey>,
     pub cancelled: Vec<Pubkey>,
     pub bump: u8,
+    /// 提案内容摘要（从 VaultTransaction 解析）
+    pub summary: Option<String>,
 }
 
 /// 提案类型（用户选择要创建的提案）
