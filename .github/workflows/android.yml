@@ -41,7 +41,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+          targets: aarch64-linux-android
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -57,7 +57,9 @@ jobs:
         run: cd ui && npm run build
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
+        run: |
+          curl -LsSf https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz | tar xzf - -C ~/.cargo/bin
+          cargo binstall tauri-cli --version "^2" -y
 
       - name: Configure NDK toolchain
         run: |
@@ -68,38 +70,29 @@ jobs:
           echo "CC_aarch64_linux_android=${TOOLCHAIN}/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
           echo "AR_aarch64_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
           echo "RANLIB_aarch64_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
-          echo "CC_armv7_linux_androideabi=${TOOLCHAIN}/bin/armv7a-linux-androideabi21-clang" >> $GITHUB_ENV
-          echo "AR_armv7_linux_androideabi=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
-          echo "RANLIB_armv7_linux_androideabi=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
-          echo "CC_x86_64_linux_android=${TOOLCHAIN}/bin/x86_64-linux-android21-clang" >> $GITHUB_ENV
-          echo "AR_x86_64_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
-          echo "RANLIB_x86_64_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
-          echo "CC_i686_linux_android=${TOOLCHAIN}/bin/i686-linux-android21-clang" >> $GITHUB_ENV
-          echo "AR_i686_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
-          echo "RANLIB_i686_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
 
       - name: Initialize Android project
         working-directory: crates/swallet-tauri
         run: cargo tauri android init
 
-      - name: Build Android APK (debug)
+      - name: Build Android APK (release, aarch64 only)
         working-directory: crates/swallet-tauri
-        run: cargo tauri android build --debug
+        run: cargo tauri android build --target aarch64
 
       - name: Rename APK
         run: |
           APK=$(find crates/swallet-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -1)
-          cp "$APK" swallet-android-debug.apk
+          cp "$APK" swallet-android-arm64.apk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: swallet-android-debug
-          path: swallet-android-debug.apk
+          name: swallet-android-arm64
+          path: swallet-android-arm64.apk
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: swallet-android-debug.apk
+          files: swallet-android-arm64.apk
           generate_release_notes: true
