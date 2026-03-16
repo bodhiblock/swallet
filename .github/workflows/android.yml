@@ -8,6 +8,9 @@ on:
 env:
   NDK_VERSION: "27.0.12077973"
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -85,10 +88,20 @@ jobs:
         working-directory: crates/swallet-tauri
         run: cargo tauri android build --debug
 
-      - name: Find and upload APK
+      - name: Rename APK
+        run: |
+          APK=$(find crates/swallet-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -1)
+          cp "$APK" swallet-android-debug.apk
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: swallet-android-debug
-          path: |
-            crates/swallet-tauri/gen/android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
+          path: swallet-android-debug.apk
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: swallet-android-debug.apk
+          generate_release_notes: true
