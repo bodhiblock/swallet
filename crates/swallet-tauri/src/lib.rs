@@ -6,6 +6,7 @@ use state::AppState;
 use std::sync::Mutex;
 use swallet_core::config::AppConfig;
 use swallet_core::service::WalletService;
+use tauri::Manager;
 
 #[cfg(mobile)]
 #[tauri::mobile_entry_point]
@@ -14,15 +15,35 @@ pub fn mobile_run() {
 }
 
 pub fn run(data_path: Option<std::path::PathBuf>, config_path: Option<std::path::PathBuf>) {
-    let config = AppConfig::load_or_create(config_path.as_deref())
-        .unwrap_or_else(|e| panic!("配置加载失败: {e}"));
-
-    let service = WalletService::new(config, data_path);
-
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .manage(AppState {
-            service: Mutex::new(service),
+        .setup(move |app| {
+            // 确定数据目录：命令行/环境变量 > tauri app_data_dir > ~/.config/swallet
+            let app_dir = app.path().app_data_dir().ok();
+
+            let final_data_path = data_path.or_else(|| {
+                app_dir.as_ref().map(|d| d.join("data.dat"))
+            });
+
+            let final_config_path = config_path.or_else(|| {
+                app_dir.as_ref().map(|d| d.join("config.toml"))
+            });
+
+            // 确保目录存在
+            if let Some(dir) = &app_dir {
+                let _ = std::fs::create_dir_all(dir);
+            }
+
+            let config = AppConfig::load_or_create(final_config_path.as_deref())
+                .unwrap_or_else(|e| panic!("配置加载失败: {e}"));
+
+            let service = WalletService::new(config, final_data_path);
+
+            app.manage(AppState {
+                service: Mutex::new(service),
+            });
+
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::auth::has_data_file,
