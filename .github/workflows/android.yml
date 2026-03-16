@@ -17,6 +17,13 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
+          sudo rm -rf /usr/local/graalvm /usr/local/.ghcup /usr/local/share/powershell
+          sudo apt-get clean
+          df -h /
+
       - uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -35,11 +42,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/swallet-tauri
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -63,19 +65,15 @@ jobs:
           TOOLCHAIN="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
           echo "NDK_HOME=${NDK_HOME}" >> $GITHUB_ENV
           echo "${TOOLCHAIN}/bin" >> $GITHUB_PATH
-          # OpenSSL vendored build needs these for aarch64
           echo "CC_aarch64_linux_android=${TOOLCHAIN}/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
           echo "AR_aarch64_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
           echo "RANLIB_aarch64_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
-          # armv7
           echo "CC_armv7_linux_androideabi=${TOOLCHAIN}/bin/armv7a-linux-androideabi21-clang" >> $GITHUB_ENV
           echo "AR_armv7_linux_androideabi=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
           echo "RANLIB_armv7_linux_androideabi=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
-          # x86_64
           echo "CC_x86_64_linux_android=${TOOLCHAIN}/bin/x86_64-linux-android21-clang" >> $GITHUB_ENV
           echo "AR_x86_64_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
           echo "RANLIB_x86_64_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
-          # i686
           echo "CC_i686_linux_android=${TOOLCHAIN}/bin/i686-linux-android21-clang" >> $GITHUB_ENV
           echo "AR_i686_linux_android=${TOOLCHAIN}/bin/llvm-ar" >> $GITHUB_ENV
           echo "RANLIB_i686_linux_android=${TOOLCHAIN}/bin/llvm-ranlib" >> $GITHUB_ENV
