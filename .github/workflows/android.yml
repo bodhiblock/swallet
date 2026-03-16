@@ -43,6 +43,11 @@ jobs:
         with:
           targets: aarch64-linux-android
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/swallet-tauri
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
