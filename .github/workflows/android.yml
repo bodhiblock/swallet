@@ -92,6 +92,15 @@ jobs:
         working-directory: crates/swallet-tauri
         run: cargo tauri android init
 
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('crates/swallet-tauri/gen/android/**/build.gradle*') }}
+          restore-keys: gradle-
+
       - name: Copy app icons
         run: cp -r crates/swallet-tauri/icons/android/* crates/swallet-tauri/gen/android/app/src/main/res/
 
