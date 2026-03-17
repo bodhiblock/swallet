@@ -344,8 +344,11 @@ pub async fn create_multisig(
     let seed_key = match seed {
         Some(s) if !s.is_empty() => {
             let bytes = bs58::decode(&s).into_vec().map_err(|_| "种子私钥无效")?;
-            if bytes.len() != 32 { return Err("种子私钥长度必须为32字节".into()); }
-            Some(bytes)
+            match bytes.len() {
+                64 => Some(bytes[..32].to_vec()),
+                32 => Some(bytes),
+                _ => return Err("种子私钥长度无效（需要32或64字节）".into()),
+            }
         }
         _ => None,
     };
