@@ -98,7 +98,7 @@ pub async fn import_multisig(
 
     {
         let mut service = state.service.lock().unwrap();
-        service.save_multisig_to_store(&info, &rpc_url, &chain_id, &chain_name);
+        service.save_multisig_to_store(&info, &chain_id, &chain_name);
         let _ = service.save_store();
     }
 
@@ -375,7 +375,7 @@ pub async fn create_multisig(
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             if let Ok(info) = multisig::squads::fetch_multisig(&client2, &rpc_url, &ms_address).await {
                 let mut service = state.service.lock().unwrap();
-                service.save_multisig_to_store(&info, &rpc_url, &chain_id, &chain_name);
+                service.save_multisig_to_store(&info, &chain_id, &chain_name);
                 let _ = service.save_store();
                 imported = true;
                 break;

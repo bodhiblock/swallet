@@ -631,17 +631,20 @@ impl App {
             Some(w) => w,
             None => return,
         };
-        let (multisig_address, rpc_url, chain_id, chain_name, vaults) = match &wallet.wallet_type {
+        let (multisig_address, chain_id, chain_name, vaults) = match &wallet.wallet_type {
             WalletType::Multisig {
                 multisig_address,
-                rpc_url,
                 chain_id,
                 chain_name,
                 vaults,
                 ..
-            } => (multisig_address.clone(), rpc_url.clone(), chain_id.clone(), chain_name.clone(), vaults),
+            } => (multisig_address.clone(), chain_id.clone(), chain_name.clone(), vaults),
             _ => return,
         };
+        let rpc_url = self.service.config.chains.solana.iter()
+            .find(|c| c.id == chain_id)
+            .map(|c| c.rpc_url.clone())
+            .unwrap_or_else(|| self.get_solana_rpc_url());
 
         // 找到选中的 vault（按可见 vault 的位置）
         let visible_vaults: Vec<_> = vaults.iter().filter(|v| !v.hidden).collect();
@@ -693,6 +696,9 @@ impl App {
                     self.ui.back_to_main();
                 }
             }
+            AddWalletStep::ChangePasswordOld
+            | AddWalletStep::ChangePasswordNew
+            | AddWalletStep::ChangePasswordConfirm => self.handle_change_password_key(key),
         }
     }
 
@@ -740,6 +746,10 @@ impl App {
                     }
                     AddWalletOption::RestoreHiddenWallet | AddWalletOption::RestoreHiddenAddress => {
                         self.handle_restore_hidden(&selected);
+                    }
+                    AddWalletOption::ChangePassword => {
+                        self.ui.add_wallet_step = AddWalletStep::ChangePasswordOld;
+                        self.ui.password_input.clear();
                     }
                 }
             }
@@ -1660,6 +1670,64 @@ impl App {
                 self.ui.delete_confirm_password.clear();
                 self.ui.back_to_main();
             }
+            _ => {}
+        }
+    }
+
+    fn handle_change_password_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.ui.password_input.clear();
+                self.ui.password_first = None;
+                self.ui.back_to_main();
+            }
+            KeyCode::Enter => {
+                let input = self.ui.password_input.clone();
+                match self.ui.add_wallet_step {
+                    AddWalletStep::ChangePasswordOld => {
+                        if !self.service.verify_password(input.as_bytes()) {
+                            self.ui.set_status("旧密码错误");
+                            self.ui.password_input.clear();
+                            return;
+                        }
+                        self.ui.password_input.clear();
+                        self.ui.add_wallet_step = AddWalletStep::ChangePasswordNew;
+                    }
+                    AddWalletStep::ChangePasswordNew => {
+                        if input.is_empty() {
+                            self.ui.set_status("密码不能为空");
+                            return;
+                        }
+                        self.ui.password_first = Some(input);
+                        self.ui.password_input.clear();
+                        self.ui.add_wallet_step = AddWalletStep::ChangePasswordConfirm;
+                    }
+                    AddWalletStep::ChangePasswordConfirm => {
+                        let new_pw = self.ui.password_first.take().unwrap_or_default();
+                        if input != new_pw {
+                            self.ui.set_status("两次密码不一致");
+                            self.ui.password_input.clear();
+                            self.ui.add_wallet_step = AddWalletStep::ChangePasswordNew;
+                            return;
+                        }
+                        let old_pw = self.service.password().unwrap_or_default().to_vec();
+                        match self.service.change_password(&old_pw, input.as_bytes()) {
+                            Ok(()) => {
+                                self.ui.set_status("密码修改成功");
+                                self.ui.back_to_main();
+                            }
+                            Err(e) => {
+                                self.ui.set_status(&format!("修改失败: {e}"));
+                                self.ui.back_to_main();
+                            }
+                        }
+                        self.ui.password_input.clear();
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Backspace => { self.ui.password_input.pop(); }
+            KeyCode::Char(c) => { self.ui.password_input.push(c); }
             _ => {}
         }
     }
@@ -2986,7 +3054,10 @@ impl App {
 
         // 后台刷新链上信息
         let address = ms.address.clone();
-        let rpc_url = ms.rpc_url.clone();
+        let rpc_url = self.service.config.chains.solana.iter()
+            .find(|c| c.id == ms.chain_id)
+            .map(|c| c.rpc_url.clone())
+            .unwrap_or_else(|| self.get_solana_rpc_url());
         let tx = self.bg_tx.clone();
 
         self.ui.set_status("正在加载...");
@@ -3904,11 +3975,6 @@ impl App {
         let (vault_pda, _) = multisig::derive_vault_pda(&info.address, 0);
         let vault_address = vault_pda.to_string();
 
-        let rpc_url = if self.ui.ms_selected_rpc_url.is_empty() {
-            self.get_solana_rpc_url()
-        } else {
-            self.ui.ms_selected_rpc_url.clone()
-        };
         let chain_id = self.ui.ms_selected_chain_id.clone();
         let chain_name = self.ui.ms_selected_chain_name.clone();
 
@@ -3920,7 +3986,6 @@ impl App {
                 name: format!("Multisig {}", &info_address_str[..8]),
                 wallet_type: WalletType::Multisig {
                     multisig_address: info_address_str,
-                    rpc_url,
                     chain_id,
                     chain_name,
                     threshold: info.threshold,
@@ -3990,21 +4055,26 @@ impl App {
             .unwrap_or_else(|| "https://api.mainnet-beta.solana.com".to_string())
     }
 
-    /// 获取当前多签的 RPC URL
+    /// 获取当前多签的 RPC URL（从 config 按 chain_id 查）
     fn get_current_ms_rpc_url(&self) -> String {
         // 先尝试新格式（WalletType::Multisig）
         if let Some(ref store) = self.service.store
             && let Some(w) = store.wallets.get(self.ui.ms_current_wallet_index)
-            && let WalletType::Multisig { ref rpc_url, .. } = w.wallet_type
+            && let WalletType::Multisig { ref chain_id, .. } = w.wallet_type
         {
-            return rpc_url.clone();
+            if let Some(cfg) = self.service.config.chains.solana.iter().find(|c| c.id == *chain_id) {
+                return cfg.rpc_url.clone();
+            }
         }
-        // 回退到旧格式（兼容）
-        self.service.store
-            .as_ref()
-            .and_then(|s| s.multisigs.get(self.ui.ms_current_index))
-            .map(|m| m.rpc_url.clone())
-            .unwrap_or_else(|| self.get_solana_rpc_url())
+        // 回退到旧格式
+        if let Some(ref store) = self.service.store
+            && let Some(ms) = store.multisigs.get(self.ui.ms_current_index)
+        {
+            if let Some(cfg) = self.service.config.chains.solana.iter().find(|c| c.id == ms.chain_id) {
+                return cfg.rpc_url.clone();
+            }
+        }
+        self.get_solana_rpc_url()
     }
 
     // ========== 辅助方法 ==========

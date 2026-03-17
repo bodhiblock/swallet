@@ -49,6 +49,7 @@ pub enum AddWalletOption {
     ImportMultisig,
     RestoreHiddenWallet,
     RestoreHiddenAddress,
+    ChangePassword,
 }
 
 impl AddWalletOption {
@@ -63,6 +64,7 @@ impl AddWalletOption {
             Self::ImportMultisig,
             Self::RestoreHiddenWallet,
             Self::RestoreHiddenAddress,
+            Self::ChangePassword,
         ]
     }
 
@@ -77,6 +79,7 @@ impl AddWalletOption {
             Self::ImportMultisig => "导入多签钱包（Squads）",
             Self::RestoreHiddenWallet => "恢复隐藏钱包",
             Self::RestoreHiddenAddress => "恢复隐藏地址",
+            Self::ChangePassword => "修改密码",
         }
     }
 }
@@ -101,6 +104,12 @@ pub enum AddWalletStep {
     /// 选择要恢复的钱包/地址（预留）
     #[allow(dead_code)]
     SelectHiddenItem,
+    /// 修改密码 - 输入旧密码
+    ChangePasswordOld,
+    /// 修改密码 - 输入新密码
+    ChangePasswordNew,
+    /// 修改密码 - 确认新密码
+    ChangePasswordConfirm,
 }
 
 /// 操作菜单上下文

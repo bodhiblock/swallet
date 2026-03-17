@@ -69,6 +69,18 @@ impl WalletService {
         self.password.as_deref() == Some(input)
     }
 
+    pub fn change_password(&mut self, old_password: &[u8], new_password: &[u8]) -> Result<(), crate::error::StorageError> {
+        if !self.verify_password(old_password) {
+            return Err(crate::error::StorageError::InvalidFormat("旧密码错误".into()));
+        }
+        if self.store.is_none() {
+            return Err(crate::error::StorageError::InvalidFormat("钱包未解锁".into()));
+        }
+        self.password = Some(new_password.to_vec());
+        self.save_store()?;
+        Ok(())
+    }
+
     // ========== 存储 ==========
 
     pub fn save_store(&self) -> Result<(), crate::error::StorageError> {
@@ -438,16 +450,24 @@ impl WalletService {
     }
 
     pub fn get_current_ms_rpc_url(&self, wallet_index: usize, legacy_index: usize) -> String {
+        // 优先从 config 按 chain_id 查 RPC URL
         if let Some(ref store) = self.store
             && let Some(w) = store.wallets.get(wallet_index)
-            && let WalletType::Multisig { ref rpc_url, .. } = w.wallet_type
+            && let WalletType::Multisig { ref chain_id, .. } = w.wallet_type
         {
-            return rpc_url.clone();
+            if let Some(cfg) = self.config.chains.solana.iter().find(|c| c.id == *chain_id) {
+                return cfg.rpc_url.clone();
+            }
         }
-        self.store.as_ref()
-            .and_then(|s| s.multisigs.get(legacy_index))
-            .map(|m| m.rpc_url.clone())
-            .unwrap_or_else(|| self.get_solana_rpc_url())
+        // 回退到 legacy multisigs
+        if let Some(ref store) = self.store {
+            if let Some(ms) = store.multisigs.get(legacy_index) {
+                if let Some(cfg) = self.config.chains.solana.iter().find(|c| c.id == ms.chain_id) {
+                    return cfg.rpc_url.clone();
+                }
+            }
+        }
+        self.get_solana_rpc_url()
     }
 
     // ========== 钱包管理 ==========
@@ -742,7 +762,6 @@ impl WalletService {
     pub fn save_multisig_to_store(
         &mut self,
         info: &multisig::MultisigInfo,
-        rpc_url: &str,
         chain_id: &str,
         chain_name: &str,
     ) -> Option<usize> {
@@ -765,7 +784,6 @@ impl WalletService {
                 name: format!("Multisig {}", &info_address_str[..8]),
                 wallet_type: WalletType::Multisig {
                     multisig_address: info_address_str,
-                    rpc_url: rpc_url.to_string(),
                     chain_id: chain_id.to_string(),
                     chain_name: chain_name.to_string(),
                     threshold: info.threshold,

@@ -18,6 +18,9 @@ pub fn render(frame: &mut Frame, state: &UiState) {
         AddWalletStep::ShowMnemonic => render_show_mnemonic(frame, state),
         AddWalletStep::SelectChainType => render_select_chain(frame, state),
         AddWalletStep::SelectHiddenItem => render_select_hidden(frame, state),
+        AddWalletStep::ChangePasswordOld
+        | AddWalletStep::ChangePasswordNew
+        | AddWalletStep::ChangePasswordConfirm => render_change_password(frame, state),
     }
 }
 
@@ -293,6 +296,45 @@ fn render_select_hidden(frame: &mut Frame, _state: &UiState) {
     .block(
         Block::default()
             .title(" 恢复隐藏项目 ")
+            .title_alignment(Alignment::Center)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
+
+    frame.render_widget(paragraph, center);
+}
+
+fn render_change_password(frame: &mut Frame, state: &UiState) {
+    let area = frame.area();
+    let [_, center_v, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(5),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+    let [_, center, _] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(50),
+        Constraint::Fill(1),
+    ])
+    .areas(center_v);
+
+    let prompt = match state.add_wallet_step {
+        AddWalletStep::ChangePasswordOld => "请输入旧密码：",
+        AddWalletStep::ChangePasswordNew => "请输入新密码：",
+        AddWalletStep::ChangePasswordConfirm => "再次输入新密码：",
+        _ => "",
+    };
+
+    let masked: String = "*".repeat(state.password_input.len());
+    let paragraph = Paragraph::new(vec![
+        Line::from(Span::styled(prompt, Style::default().fg(Color::Cyan))),
+        Line::from(""),
+        Line::from(Span::raw(format!("{masked}_"))),
+    ])
+    .block(
+        Block::default()
+            .title(" 修改密码 ")
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan)),

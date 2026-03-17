@@ -18,8 +18,6 @@ pub struct MultisigAccount {
     pub address: String,
     /// 默认 vault 地址（vault_index=0）
     pub vault_address: String,
-    /// 关联的 Solana RPC URL
-    pub rpc_url: String,
     /// 链 ID（如 "solana-mainnet", "nara-mainnet"）
     #[serde(default)]
     pub chain_id: String,
@@ -74,8 +72,6 @@ pub enum WalletType {
     Multisig {
         /// 多签 PDA 地址
         multisig_address: String,
-        /// RPC URL
-        rpc_url: String,
         /// 链 ID
         chain_id: String,
         /// 链名称
@@ -233,7 +229,6 @@ impl WalletStore {
                 name: ms.name,
                 wallet_type: WalletType::Multisig {
                     multisig_address: ms.address,
-                    rpc_url: ms.rpc_url,
                     chain_id: ms.chain_id,
                     chain_name: ms.chain_name,
                     threshold: ms.threshold,
