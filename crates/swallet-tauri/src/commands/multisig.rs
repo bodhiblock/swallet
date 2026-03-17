@@ -443,6 +443,15 @@ pub fn get_multisig_vault_address(
     }
 }
 
+#[tauri::command]
+pub fn get_multisig_rpc_url(
+    state: tauri::State<'_, AppState>,
+    wallet_index: usize,
+) -> CommandResult<String> {
+    let service = state.service.lock().unwrap();
+    Ok(service.get_current_ms_rpc_url(wallet_index, 0))
+}
+
 fn get_ms_info(service: &swallet_core::service::WalletService, wallet_index: usize) -> CommandResult<(String, Vec<String>)> {
     let store = service.store.as_ref().ok_or("钱包未解锁")?;
     let wallet = store.wallets.get(wallet_index).ok_or("无效的钱包")?;

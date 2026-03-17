@@ -84,6 +84,7 @@ pub fn run(data_path: Option<std::path::PathBuf>, config_path: Option<std::path:
             commands::multisig::create_proposal,
             commands::multisig::create_multisig,
             commands::multisig::get_multisig_vault_address,
+            commands::multisig::get_multisig_rpc_url,
             commands::staking::fetch_vote_account,
             commands::staking::fetch_stake_account,
             commands::staking::create_vote_account,

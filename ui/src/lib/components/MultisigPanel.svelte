@@ -58,6 +58,7 @@
 	let vsAccounts: { address: string; type: 'vote' | 'stake'; label: string }[] = $state([]);
 	let vsSelectedAccount = $state(-1);
 	let vaultAddress = $state('');
+	let msRpcUrl = $state('');
 
 	// 从主页钱包+余额数据获取所有 vote/stake 地址
 	function getAccountOwner(address: string): string | null {
@@ -138,6 +139,7 @@
 		vsManualAddress = '';
 		try {
 			vaultAddress = await api.getMultisigVaultAddress(walletIndex);
+			msRpcUrl = await api.getMultisigRpcUrl(walletIndex);
 		} catch (e: any) { onToast(e?.message || '加载失败'); }
 	}
 
@@ -146,7 +148,7 @@
 		if (!addr) { onToast('请先选择或输入账户地址'); return false; }
 		vsTarget = addr;
 		try {
-			const rpcUrl = await api.getRpcUrlForAddress(addr);
+			const rpcUrl = msRpcUrl || await api.getRpcUrlForAddress(addr);
 			if (proposalKind === 'vote-manage') {
 				const info: VoteAccountDto = await api.fetchVoteAccount(addr, rpcUrl);
 				// vote-auth-voter 需要 voter 权限，其他(vote-auth-withdrawer, vote-withdraw) 需要 withdrawer 权限

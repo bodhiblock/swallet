@@ -64,6 +64,7 @@ export const api = {
 	createMultisig: (chainId: string, creatorAddress: string, members: string[], threshold: number, password: string, seed?: string) =>
 		invoke<string>('create_multisig', { chainId, creatorAddress, members, threshold, password, seed }),
 	getMultisigVaultAddress: (walletIndex: number) => invoke<string>('get_multisig_vault_address', { walletIndex }),
+	getMultisigRpcUrl: (walletIndex: number) => invoke<string>('get_multisig_rpc_url', { walletIndex }),
 	addVault: (walletIndex: number) => invoke<void>('add_vault', { walletIndex }),
 
 	// Staking
