@@ -626,8 +626,8 @@ fn decode_instruction_summary(
     if *program_id == Pubkey::default() {
         if data.len() >= 12 && data[..4] == [2, 0, 0, 0] {
             let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
-            let to = get_account(1).map(short).unwrap_or_default();
-            return format!("SOL 转账 (transfer) → {to} {} SOL", format_sol(lamports));
+            let to = get_account(1).map(|p| p.to_string()).unwrap_or_default();
+            return format!("SOL 转账\n目标: {to}\n金额: {} SOL", format_sol(lamports));
         }
         return "System 调用".into();
     }
@@ -636,20 +636,21 @@ fn decode_instruction_summary(
     if pid == "Vote111111111111111111111111111111111111111" {
         if data.len() >= 4 {
             let ix_type = u32::from_le_bytes(data[..4].try_into().unwrap_or_default());
+            let vote_account = get_account(0).map(|p| p.to_string()).unwrap_or_default();
             match ix_type {
                 1 => { // Authorize
                     if data.len() >= 40 {
-                        let new_auth = Pubkey::try_from(&data[4..36]).ok().map(|p| short(&p)).unwrap_or_default();
+                        let new_auth = Pubkey::try_from(&data[4..36]).ok().map(|p| p.to_string()).unwrap_or_default();
                         let auth_type = u32::from_le_bytes(data[36..40].try_into().unwrap_or_default());
                         let role = if auth_type == 0 { "Voter" } else { "Withdrawer" };
-                        return format!("Vote 授权 (authorize) {role} → {new_auth}");
+                        return format!("Vote 授权 ({role})\nVote: {vote_account}\n新{role}: {new_auth}");
                     }
                 }
-                7 => { // Withdraw
+                3 | 7 => { // Withdraw (3=实际指令索引, 7=备用)
                     if data.len() >= 12 {
                         let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
-                        let to = get_account(1).map(short).unwrap_or_default();
-                        return format!("Vote 提取 (withdraw) {} SOL → {to}", format_sol(lamports));
+                        let to = get_account(1).map(|p| p.to_string()).unwrap_or_default();
+                        return format!("Vote 提取 (Withdraw)\nVote: {vote_account}\n目标: {to}\n金额: {} SOL", format_sol(lamports));
                     }
                 }
                 _ => {}
@@ -662,27 +663,30 @@ fn decode_instruction_summary(
     if pid == "Stake11111111111111111111111111111111111111" {
         if data.len() >= 4 {
             let ix_type = u32::from_le_bytes(data[..4].try_into().unwrap_or_default());
+            let stake_account = get_account(0).map(|p| p.to_string()).unwrap_or_default();
             match ix_type {
                 1 => { // Authorize
                     if data.len() >= 40 {
-                        let new_auth = Pubkey::try_from(&data[4..36]).ok().map(|p| short(&p)).unwrap_or_default();
+                        let new_auth = Pubkey::try_from(&data[4..36]).ok().map(|p| p.to_string()).unwrap_or_default();
                         let auth_type = u32::from_le_bytes(data[36..40].try_into().unwrap_or_default());
                         let role = if auth_type == 0 { "Staker" } else { "Withdrawer" };
-                        return format!("Stake 授权 (authorize) {role} → {new_auth}");
+                        return format!("Stake 授权 ({role})\nStake: {stake_account}\n新{role}: {new_auth}");
                     }
                 }
                 2 => { // DelegateStake
-                    let vote = get_account(1).map(short).unwrap_or_default();
-                    return format!("Stake 委托 (delegate) → {vote}");
+                    let vote = get_account(1).map(|p| p.to_string()).unwrap_or_default();
+                    return format!("Stake 委托 (Delegate)\nStake: {stake_account}\nVote: {vote}");
                 }
                 4 => { // Withdraw
                     if data.len() >= 12 {
                         let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
-                        let to = get_account(1).map(short).unwrap_or_default();
-                        return format!("Stake 提取 (withdraw) {} SOL → {to}", format_sol(lamports));
+                        let to = get_account(1).map(|p| p.to_string()).unwrap_or_default();
+                        return format!("Stake 提取 (Withdraw)\nStake: {stake_account}\n目标: {to}\n金额: {} SOL", format_sol(lamports));
                     }
                 }
-                5 => { return "Stake 取消质押 (deactivate)".into(); }
+                5 => {
+                    return format!("Stake 取消质押 (Deactivate)\nStake: {stake_account}");
+                }
                 _ => {}
             }
         }
