@@ -59,6 +59,8 @@
 	let vsSelectedAccount = $state(-1);
 	let vaultAddress = $state('');
 	let msRpcUrl = $state('');
+	let vsVerified = $state(false);
+	let vsVerifyError = $state('');
 
 	// 从主页钱包+余额数据获取所有 vote/stake 地址
 	function getAccountOwner(address: string): string | null {
@@ -148,6 +150,11 @@
 		if (!addr) { onToast('请先选择或输入账户地址'); return false; }
 		vsTarget = addr;
 		try {
+			// 确保 vaultAddress 已加载
+			if (!vaultAddress) {
+				vaultAddress = await api.getMultisigVaultAddress(walletIndex);
+			}
+			if (!vaultAddress) { onToast('无法获取 Vault 地址'); return false; }
 			const rpcUrl = msRpcUrl || await api.getRpcUrlForAddress(addr);
 			if (proposalKind === 'vote-manage') {
 				const info: VoteAccountDto = await api.fetchVoteAccount(addr, rpcUrl);
@@ -274,6 +281,22 @@
 						</div>
 					{/if}
 					<div class="proposal-votes"><span class="dim">通过: {proposal.approved_count} · 拒绝: {proposal.rejected_count}</span></div>
+					{#if proposal.approved_addresses.length > 0}
+						<div class="proposal-detail">
+							<span class="dim">赞成:</span>
+							{#each proposal.approved_addresses as addr}
+								<div class="proposal-addr">{addr}</div>
+							{/each}
+						</div>
+					{/if}
+					{#if proposal.rejected_addresses.length > 0}
+						<div class="proposal-detail">
+							<span class="dim">反对:</span>
+							{#each proposal.rejected_addresses as addr}
+								<div class="proposal-addr">{addr}</div>
+							{/each}
+						</div>
+					{/if}
 					<div class="proposal-actions">
 						{#if proposal.status === '投票中'}
 							{#if hasVoted(proposal)}
@@ -405,7 +428,9 @@
 	.proposal-summary { font-size: 12px; color: var(--accent); margin-bottom: 4px; }
 	.proposal-summary div { word-break: break-all; }
 	.proposal-summary div + div { color: var(--text-dim); font-family: monospace; font-size: 11px; margin-top: 2px; }
-	.proposal-votes { font-size: 13px; margin-bottom: 8px; }
+	.proposal-votes { font-size: 13px; margin-bottom: 4px; }
+	.proposal-detail { font-size: 12px; margin-bottom: 4px; }
+	.proposal-addr { font-family: monospace; font-size: 11px; color: var(--text-dim); word-break: break-all; margin-left: 8px; }
 	.proposal-actions { display: flex; gap: 8px; }
 	.btn-sm { padding: 4px 12px; border-radius: 4px; font-size: 12px; border: 1px solid; cursor: pointer; background: none; }
 	.btn-sm.green { color: var(--green); border-color: var(--green); }
