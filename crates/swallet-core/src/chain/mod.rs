@@ -49,19 +49,31 @@ pub type BalanceCache = HashMap<String, AddressPortfolio>;
 /// 格式化余额：最小单位 -> 可读字符串（去掉尾部零）
 pub fn format_balance(amount: u128, decimals: u8) -> String {
     if decimals == 0 {
-        return amount.to_string();
+        return thousands(amount);
     }
     let divisor = 10u128.pow(decimals as u32);
     let integer_part = amount / divisor;
     let fractional_part = amount % divisor;
 
     if fractional_part == 0 {
-        return integer_part.to_string();
+        return thousands(integer_part);
     }
 
     let frac_str = format!("{:0>width$}", fractional_part, width = decimals as usize);
     let trimmed = frac_str.trim_end_matches('0');
-    format!("{integer_part}.{trimmed}")
+    format!("{}.{trimmed}", thousands(integer_part))
+}
+
+fn thousands(n: u128) -> String {
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result
 }
 
 #[cfg(test)]
