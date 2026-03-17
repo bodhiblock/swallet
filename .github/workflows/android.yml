@@ -81,6 +81,9 @@ jobs:
         working-directory: crates/swallet-tauri
         run: cargo tauri android init
 
+      - name: Copy app icons
+        run: cp -r crates/swallet-tauri/icons/android/* crates/swallet-tauri/gen/android/app/src/main/res/
+
       - name: Build Android APK (release, aarch64 only)
         working-directory: crates/swallet-tauri
         run: cargo tauri android build --target aarch64
