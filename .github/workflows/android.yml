@@ -95,18 +95,17 @@ jobs:
         working-directory: crates/swallet-tauri
         run: cargo tauri android build --target aarch64
 
-      - name: Sign APK with debug keystore
+      - name: Sign APK with release keystore
         run: |
+          echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > /tmp/release.jks
           UNSIGNED=$(find crates/swallet-tauri/gen/android/app/build/outputs -name "*-unsigned.apk" -o -name "*.apk" | head -1)
-          # Generate debug keystore
-          keytool -genkey -v -keystore /tmp/debug.jks -keyalg RSA -keysize 2048 -validity 10000 \
-            -alias androiddebugkey -storepass android -keypass android \
-            -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null
-          # Sign with apksigner
           ${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | tail -1)/apksigner sign \
-            --ks /tmp/debug.jks --ks-key-alias androiddebugkey \
-            --ks-pass pass:android --key-pass pass:android \
+            --ks /tmp/release.jks \
+            --ks-key-alias ${{ secrets.ANDROID_KEY_ALIAS }} \
+            --ks-pass pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
+            --key-pass pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
             --out swallet-android-arm64.apk "$UNSIGNED"
+          rm -f /tmp/release.jks
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
