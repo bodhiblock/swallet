@@ -145,18 +145,24 @@
 		const addr = vsManualAddress.trim();
 		if (!addr) { onToast('请先选择或输入账户地址'); return false; }
 		vsTarget = addr;
-		const accountType = proposalKind === 'vote-manage' ? 'vote' : 'stake';
-		const account = { address: addr, type: accountType as 'vote' | 'stake' };
 		try {
-			const rpcUrl = await api.getRpcUrlForAddress(account.address);
-			if (account.type === 'vote') {
-				const info: VoteAccountDto = await api.fetchVoteAccount(account.address, rpcUrl);
-				if (info.authorized_voter === vaultAddress || info.authorized_withdrawer === vaultAddress) return true;
-				onToast(`权限不匹配\nVault: ${vaultAddress}\nVoter: ${info.authorized_voter}\nWithdrawer: ${info.authorized_withdrawer}`);
+			const rpcUrl = await api.getRpcUrlForAddress(addr);
+			if (proposalKind === 'vote-manage') {
+				const info: VoteAccountDto = await api.fetchVoteAccount(addr, rpcUrl);
+				// vote-auth-voter 需要 voter 权限，其他(vote-auth-withdrawer, vote-withdraw) 需要 withdrawer 权限
+				const needVoter = vsOp === 'vote-auth-voter';
+				const authority = needVoter ? info.authorized_voter : info.authorized_withdrawer;
+				const label = needVoter ? 'Voter' : 'Withdrawer';
+				if (authority === vaultAddress) return true;
+				onToast(`${label} 权限不匹配\nVault: ${vaultAddress}\n${label}: ${authority}`);
 			} else {
-				const info: StakeAccountDto = await api.fetchStakeAccount(account.address, rpcUrl);
-				if (info.authorized_staker === vaultAddress || info.authorized_withdrawer === vaultAddress) return true;
-				onToast(`权限不匹配\nVault: ${vaultAddress}\nStaker: ${info.authorized_staker}\nWithdrawer: ${info.authorized_withdrawer}`);
+				const info: StakeAccountDto = await api.fetchStakeAccount(addr, rpcUrl);
+				// stake-auth-withdrawer, stake-withdraw 需要 withdrawer 权限，其他需要 staker 权限
+				const needWithdrawer = vsOp === 'stake-auth-withdrawer' || vsOp === 'stake-withdraw';
+				const authority = needWithdrawer ? info.authorized_withdrawer : info.authorized_staker;
+				const label = needWithdrawer ? 'Withdrawer' : 'Staker';
+				if (authority === vaultAddress) return true;
+				onToast(`${label} 权限不匹配\nVault: ${vaultAddress}\n${label}: ${authority}`);
 			}
 		} catch (e: any) { onToast(e?.message || '验证失败'); }
 		return false;
