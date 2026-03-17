@@ -84,10 +84,18 @@ jobs:
         working-directory: crates/swallet-tauri
         run: cargo tauri android build --target aarch64
 
-      - name: Rename APK
+      - name: Sign APK with debug keystore
         run: |
-          APK=$(find crates/swallet-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -1)
-          cp "$APK" swallet-android-arm64.apk
+          UNSIGNED=$(find crates/swallet-tauri/gen/android/app/build/outputs -name "*-unsigned.apk" -o -name "*.apk" | head -1)
+          # Generate debug keystore
+          keytool -genkey -v -keystore /tmp/debug.jks -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias androiddebugkey -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null
+          # Sign with apksigner
+          ${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | tail -1)/apksigner sign \
+            --ks /tmp/debug.jks --ks-key-alias androiddebugkey \
+            --ks-pass pass:android --key-pass pass:android \
+            --out swallet-android-arm64.apk "$UNSIGNED"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
