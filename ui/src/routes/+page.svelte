@@ -817,7 +817,7 @@
 
 	.wallet-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
 	.wallet-header { padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); cursor: pointer; }
-	.ms-address-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--border); cursor: pointer; background: rgba(34, 211, 238, 0.03); }
+	.ms-address-row { display: flex; align-items: flex-start; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--border); cursor: pointer; background: rgba(34, 211, 238, 0.03); }
 	.ms-address-row:hover { background: var(--bg-hover); }
 	.wallet-header:hover { background: var(--bg-hover); }
 	.wallet-name { font-weight: 600; font-size: 14px; }
