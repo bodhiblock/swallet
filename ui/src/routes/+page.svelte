@@ -185,9 +185,7 @@
 		if (!b) return [];
 		const result: { symbol: string; amount: string }[] = [];
 		for (const chain of b.chains) {
-			if (chain.native_balance !== '0' || !chain.rpc_failed) {
-				result.push({ symbol: chain.native_symbol, amount: chain.native_balance });
-			}
+			result.push({ symbol: chain.native_symbol, amount: chain.rpc_failed ? '-' : chain.native_balance });
 			for (const token of chain.tokens) {
 				if (token.balance !== '0') result.push({ symbol: token.symbol, amount: token.balance });
 			}
