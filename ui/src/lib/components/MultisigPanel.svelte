@@ -165,7 +165,7 @@
 	async function startCreateProposal() {
 		if (proposalKind === 'sol-transfer' && (!proposalTo.trim() || !proposalAmount.trim())) { onToast('请填写目标地址和金额'); return; }
 		if (proposalKind === 'program-upgrade' && (!upgradeProgram.trim() || !upgradeBuffer.trim())) { onToast('请填写程序和 Buffer 地址'); return; }
-		if ((proposalKind === 'vote-manage' || proposalKind === 'stake-manage') && vsSelectedAccount < 0) { onToast('请先选择账户'); return; }
+		if ((proposalKind === 'vote-manage' || proposalKind === 'stake-manage') && !vsManualAddress.trim()) { onToast('请先选择或输入账户地址'); return; }
 		if (proposalKind === 'program-call' && presetPrograms.length === 0) { onToast('没有可用的预制程序'); return; }
 		if (feePayers.length === 0) { onToast('没有可用的 Fee Payer'); return; }
 		// Vote/Stake 提交前自动验证权限
