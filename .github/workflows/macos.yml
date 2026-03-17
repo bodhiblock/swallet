@@ -57,8 +57,8 @@ jobs:
 
       - name: Rename DMG
         run: |
-          find crates/swallet-tauri/target -name "*.dmg" -type f
-          DMG=$(find crates/swallet-tauri/target -name "*.dmg" -type f | head -1)
+          find target -name "*.dmg" -type f
+          DMG=$(find target -name "*.dmg" -type f | head -1)
           cp "$DMG" swallet-macos-arm64.dmg
           echo "DMG: $DMG"
 
