@@ -21,6 +21,7 @@ pub struct AccountDto {
     pub label: Option<String>,
     pub chain_type: String,
     pub hidden: bool,
+    pub index: Option<u32>,
 }
 
 fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
@@ -34,6 +35,7 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
                     label: a.label.clone(),
                     chain_type: "ethereum".to_string(),
                     hidden: a.hidden,
+                    index: Some(a.derivation_index),
                 });
             }
             for a in sol_accounts {
@@ -42,6 +44,7 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
                     label: a.label.clone(),
                     chain_type: "solana".to_string(),
                     hidden: a.hidden,
+                    index: Some(a.derivation_index),
                 });
             }
             ("mnemonic".to_string(), accs)
@@ -56,6 +59,7 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
                 label: label.clone(),
                 chain_type: ct.to_string(),
                 hidden: *hidden,
+                index: None,
             }])
         }
         WalletType::WatchOnly { chain_type, address, .. } => {
@@ -68,6 +72,7 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
                 label: None,
                 chain_type: ct.to_string(),
                 hidden: false,
+                index: None,
             }])
         }
         WalletType::Multisig { multisig_address, vaults, .. } => {
@@ -77,6 +82,7 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
                 label: v.label.clone(),
                 chain_type: "solana".to_string(),
                 hidden: v.hidden,
+                index: Some(v.vault_index as u32),
             }).collect();
             ("multisig".to_string(), accs)
         }

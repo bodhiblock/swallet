@@ -509,15 +509,15 @@
 					<span class="wallet-type">{walletTypeLabel(wallet.wallet_type)}</span>
 				</div>
 				{#if wallet.multisig_address}
-					<div class="ms-address-row" onclick={(e) => { e.stopPropagation(); copyAddress(wallet.multisig_address!); }} title="点击复制多签地址" role="button" tabindex="0">
-						<span class="chain-badge">多签</span>
-						<span class="address" style="word-break:break-all">{wallet.multisig_address}</span>
+					<div class="account-row" onclick={(e) => { e.stopPropagation(); copyAddress(wallet.multisig_address!); }} title="点击复制多签地址" role="button" tabindex="0">
+						<div class="account-top"><span class="chain-badge">多签</span></div>
+						<div class="address">{wallet.multisig_address}</div>
 					</div>
 				{/if}
 				{#each wallet.accounts.filter(a => !a.hidden) as account, ai}
 					<div class="account-row" onclick={() => copyAddress(account.address)} title="点击复制" role="button" tabindex="0">
 						<div class="account-top">
-							<span class="chain-badge">{account.chain_type === 'ethereum' ? 'ETH' : 'SOL'}</span>
+							<span class="chain-badge">{account.chain_type === 'ethereum' ? 'ETH' : 'SOL'}{#if account.index !== null && account.index !== undefined}<span class="idx">#{account.index}</span>{/if}</span>
 							{#if isVoteOrStake(account.address)}
 								<span class="tag-vote-stake">{getAccountOwner(account.address) === 'Vote111111111111111111111111111111111111111' ? 'Vote' : 'Stake'}</span>
 							{/if}
@@ -817,8 +817,6 @@
 
 	.wallet-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
 	.wallet-header { padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); cursor: pointer; }
-	.ms-address-row { display: flex; align-items: flex-start; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--border); cursor: pointer; background: rgba(34, 211, 238, 0.03); }
-	.ms-address-row:hover { background: var(--bg-hover); }
 	.wallet-header:hover { background: var(--bg-hover); }
 	.wallet-name { font-weight: 600; font-size: 14px; }
 	.wallet-type { color: var(--text-dim); font-size: 12px; }
@@ -830,6 +828,7 @@
 	.account-top .btn-dots { margin-left: auto; }
 
 	.chain-badge { background: var(--bg); color: var(--accent); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+	.chain-badge .idx { color: var(--text-dim); font-weight: 400; margin-left: 2px; }
 	.tag-vote-stake { color: var(--accent); font-size: 11px; font-weight: 600; background: rgba(34,211,238,0.15); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
 	.label { color: var(--yellow); font-size: 13px; }
 	.address { color: var(--text-dim); font-size: 12px; font-family: monospace; word-break: break-all; line-height: 1.4; }

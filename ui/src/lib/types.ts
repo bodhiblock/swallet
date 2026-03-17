@@ -13,6 +13,7 @@ export interface AccountDto {
 	label: string | null;
 	chain_type: string;
 	hidden: boolean;
+	index: number | null;
 }
 
 export interface BalanceDto {
