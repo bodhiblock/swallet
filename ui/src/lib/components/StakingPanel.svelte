@@ -106,6 +106,22 @@
 			{/if}
 			<div class="info-item"><span class="info-label">Staker</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.authorized_staker)}>{stakeInfo.authorized_staker}</button></div>
 			<div class="info-item"><span class="info-label">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(stakeInfo.authorized_withdrawer)}>{stakeInfo.authorized_withdrawer}</button></div>
+			{#if stakeInfo.lockup_timestamp > 0}
+				{@const lockupDate = new Date(stakeInfo.lockup_timestamp * 1000)}
+				{@const now = Date.now()}
+				{@const isLocked = lockupDate.getTime() > now}
+				<div class="info-item">
+					<span class="info-label">锁仓到期</span>
+					<span class="info-value" class:locked={isLocked} class:unlocked={!isLocked}>
+						{lockupDate.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+						{#if isLocked}
+							<span class="lock-tag">锁仓中</span>
+						{:else}
+							<span class="unlock-tag">已到期</span>
+						{/if}
+					</span>
+				</div>
+			{/if}
 		</div>
 
 		<div class="actions">
@@ -162,6 +178,11 @@
 	.info-value { font-size: 14px; }
 	.addr-copy { font-family: monospace; font-size: 12px; color: var(--text); word-break: break-all; text-align: left; line-height: 1.4; background: none; border: none; cursor: pointer; padding: 0; }
 	.addr-copy:hover { color: var(--accent); }
+	.locked { color: var(--yellow); }
+	.unlocked { color: var(--green); }
+	.lock-tag, .unlock-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
+	.lock-tag { background: rgba(234, 179, 8, 0.15); color: var(--yellow); }
+	.unlock-tag { background: rgba(34, 197, 94, 0.15); color: var(--green); }
 
 	.actions { display: flex; gap: 8px; }
 	.btn-action { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--accent); font-size: 13px; background: none; cursor: pointer; }
