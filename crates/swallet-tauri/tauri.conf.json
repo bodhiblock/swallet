@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-settings/main/schemas/tauri-conf-v2.json",
-  "productName": "swallet",
+  "productName": "科学计算器",
   "version": "0.1.0",
   "identifier": "com.swallet.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "swallet",
+        "title": "科学计算器",
         "width": 420,
         "height": 700,
         "resizable": true,

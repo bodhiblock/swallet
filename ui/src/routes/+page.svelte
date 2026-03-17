@@ -5,6 +5,7 @@
 	import MultisigPanel from '$lib/components/MultisigPanel.svelte';
 	import StakingPanel from '$lib/components/StakingPanel.svelte';
 	import PasswordDialog from '$lib/components/PasswordDialog.svelte';
+	import Calculator from '$lib/components/Calculator.svelte';
 
 	// Global password dialog
 	let pwDialogTitle = $state('');
@@ -18,7 +19,7 @@
 	function closePwDialog() { pwDialogCallback = null; }
 
 	// Screen state
-	let screen: string = $state('loading');
+	let screen: string = $state('calculator');
 	let password = $state('');
 	let confirmPassword = $state('');
 	let error = $state('');
@@ -87,7 +88,8 @@
 	let stakingAccountIndex = $state(0);
 	let stakingAccountOwner = $state<string | null>(null);
 
-	onMount(async () => {
+	async function initWallet() {
+		screen = 'loading';
 		try {
 			const hasData = await api.hasDataFile();
 			const unlocked = await api.isUnlocked();
@@ -98,7 +100,7 @@
 			error = `初始化失败: ${e?.message || e}`;
 			screen = 'create';
 		}
-	});
+	}
 
 	async function loadMain() {
 		screen = 'main';
@@ -402,7 +404,10 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-{#if screen === 'loading'}
+{#if screen === 'calculator'}
+	<Calculator onUnlock={initWallet} />
+
+{:else if screen === 'loading'}
 	<div class="container center"><p class="dim">loading...</p></div>
 
 {:else if screen === 'unlock'}
