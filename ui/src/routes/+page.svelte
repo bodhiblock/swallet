@@ -225,7 +225,10 @@
 	async function menuAction(action: string) {
 		if (!menuTarget) return;
 		const { walletIndex, accountIndex, chainType, walletType } = menuTarget;
-		closeMenu();
+		// rename/relabel 需要保留 menuTarget 给 confirmDialog 使用
+		if (action !== 'rename' && action !== 'relabel') {
+			closeMenu();
+		}
 		try {
 			switch (action) {
 				case 'transfer':
