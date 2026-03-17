@@ -365,13 +365,24 @@ pub async fn create_multisig(
     let ms_address = parts.next().unwrap_or(&result).to_string();
     let _tx_sig = parts.next().unwrap_or("").to_string();
 
-    // Auto import
+    // Auto import - wait for transaction confirmation then fetch
     {
         let client2 = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
             .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
-        if let Ok(info) = multisig::squads::fetch_multisig(&client2, &rpc_url, &ms_address).await {
-            let mut service = state.service.lock().unwrap();
-            service.save_multisig_to_store(&info, &rpc_url, &chain_id, &chain_name);
+        // Retry a few times since the transaction may not be confirmed yet
+        let mut imported = false;
+        for _ in 0..5 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Ok(info) = multisig::squads::fetch_multisig(&client2, &rpc_url, &ms_address).await {
+                let mut service = state.service.lock().unwrap();
+                service.save_multisig_to_store(&info, &rpc_url, &chain_id, &chain_name);
+                let _ = service.save_store();
+                imported = true;
+                break;
+            }
+        }
+        if !imported {
+            return Err("多签已创建但自动导入失败，请手动导入".into());
         }
     }
 
