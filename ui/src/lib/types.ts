@@ -5,6 +5,7 @@ export interface WalletDto {
 	sort_order: number;
 	hidden: boolean;
 	accounts: AccountDto[];
+	multisig_address: string | null;
 }
 
 export interface AccountDto {

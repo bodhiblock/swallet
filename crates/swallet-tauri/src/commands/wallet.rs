@@ -12,6 +12,7 @@ pub struct WalletDto {
     pub sort_order: u32,
     pub hidden: bool,
     pub accounts: Vec<AccountDto>,
+    pub multisig_address: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -23,6 +24,7 @@ pub struct AccountDto {
 }
 
 fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
+    let mut ms_address = None;
     let (wallet_type, accounts) = match &w.wallet_type {
         WalletType::Mnemonic { eth_accounts, sol_accounts, .. } => {
             let mut accs = Vec::new();
@@ -68,7 +70,8 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
                 hidden: false,
             }])
         }
-        WalletType::Multisig { vaults, .. } => {
+        WalletType::Multisig { multisig_address, vaults, .. } => {
+            ms_address = Some(multisig_address.clone());
             let accs = vaults.iter().map(|v| AccountDto {
                 address: v.address.clone(),
                 label: v.label.clone(),
@@ -86,6 +89,7 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
         sort_order: w.sort_order,
         hidden: w.hidden,
         accounts,
+        multisig_address: ms_address,
     }
 }
 
@@ -178,6 +182,13 @@ pub fn restore_hidden_wallets(state: tauri::State<'_, AppState>) -> CommandResul
 pub fn restore_hidden_addresses(state: tauri::State<'_, AppState>) -> CommandResult<usize> {
     let mut service = state.service.lock().unwrap();
     service.restore_hidden_addresses().map_err(|e| e.into())
+}
+
+#[tauri::command]
+pub fn add_vault(state: tauri::State<'_, AppState>, wallet_index: usize) -> CommandResult<()> {
+    let mut service = state.service.lock().unwrap();
+    service.add_vault_to_multisig(wallet_index);
+    Ok(())
 }
 
 fn parse_chain_type(s: &str) -> CommandResult<ChainType> {

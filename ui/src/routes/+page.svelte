@@ -258,7 +258,7 @@
 					createMsSeed = '';
 					createMsMembers = [];
 					createMsMemberInput = '';
-					createMsThreshold = '2';
+					createMsThreshold = '';
 					createMsPassword = '';
 					// Auto-add current address as first member
 					const cw = wallets[walletIndex];
@@ -310,6 +310,8 @@
 					await api.addDerivedAddress(walletIndex, 'ethereum'); await reloadWallets(); showToast('地址已添加'); break;
 				case 'add-sol':
 					await api.addDerivedAddress(walletIndex, 'solana'); await reloadWallets(); showToast('地址已添加'); break;
+				case 'add-vault':
+					await api.addVault(walletIndex); await reloadWallets(); showToast('Vault 地址已添加'); break;
 			}
 		} catch (e: any) { showToast(e?.message || '操作失败'); }
 	}
@@ -506,6 +508,12 @@
 					<span class="wallet-name">{wallet.name}</span>
 					<span class="wallet-type">{walletTypeLabel(wallet.wallet_type)}</span>
 				</div>
+				{#if wallet.multisig_address}
+					<div class="ms-address-row" onclick={(e) => { e.stopPropagation(); copyAddress(wallet.multisig_address!); }} title="点击复制多签地址" role="button" tabindex="0">
+						<span class="chain-badge">多签</span>
+						<span class="address" style="word-break:break-all">{wallet.multisig_address}</span>
+					</div>
+				{/if}
 				{#each wallet.accounts.filter(a => !a.hidden) as account, ai}
 					<div class="account-row" onclick={() => copyAddress(account.address)} title="点击复制" role="button" tabindex="0">
 						<div class="account-top">
@@ -542,6 +550,7 @@
 				{#if menuTarget.type === 'wallet'}
 					{#if menuTarget.walletType === 'multisig'}
 						<button onclick={() => menuAction('multisig')}>多签管理</button>
+						<button onclick={() => menuAction('add-vault')}>添加 Vault 地址</button>
 					{/if}
 					<button onclick={() => menuAction('rename')}>修改名称</button>
 					{#if menuTarget.walletType === 'mnemonic'}
@@ -708,9 +717,9 @@
 					if (addr && !createMsMembers.includes(addr)) { createMsMembers = [...createMsMembers, addr]; createMsMemberInput = ''; }
 				}}>+</button>
 			</div>
-			<input bind:value={createMsThreshold} placeholder="阈值" type="text" inputmode="numeric" />
-			<label class="dim" style="display:flex;align-items:center;gap:8px">
-				<input type="checkbox" bind:checked={createMsUseSeed} /> 使用种子
+			<input bind:value={createMsThreshold} placeholder="阈值（如 2）" type="text" inputmode="numeric" />
+			<label class="dim" style="display:flex;flex-direction:row;align-items:center;gap:8px;width:100%">
+				<input type="checkbox" bind:checked={createMsUseSeed} /> <span>使用种子</span>
 			</label>
 			{#if createMsUseSeed}
 				<input bind:value={createMsSeed} placeholder="种子私钥 (Base58)" />
@@ -808,6 +817,8 @@
 
 	.wallet-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
 	.wallet-header { padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); cursor: pointer; }
+	.ms-address-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--border); cursor: pointer; background: rgba(34, 211, 238, 0.03); }
+	.ms-address-row:hover { background: var(--bg-hover); }
 	.wallet-header:hover { background: var(--bg-hover); }
 	.wallet-name { font-weight: 600; font-size: 14px; }
 	.wallet-type { color: var(--text-dim); font-size: 12px; }
