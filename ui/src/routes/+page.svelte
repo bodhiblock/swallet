@@ -778,7 +778,7 @@
 	</div>
 
 {:else if screen === 'multisig'}
-	<MultisigPanel walletIndex={msWalletIndex} onClose={() => { screen = 'main'; reloadWallets(); }} onToast={showToast} />
+	<MultisigPanel walletIndex={msWalletIndex} {balances} {wallets} onClose={() => { screen = 'main'; reloadWallets(); }} onToast={showToast} />
 
 {:else if screen === 'staking'}
 	<StakingPanel address={stakingAddress} rpcUrl={stakingRpcUrl} walletIndex={stakingWalletIndex} accountIndex={stakingAccountIndex} accountOwner={stakingAccountOwner} onClose={() => { screen = 'main'; }} onToast={showToast} />

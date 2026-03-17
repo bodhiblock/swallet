@@ -13,6 +13,8 @@ pub struct WalletDto {
     pub hidden: bool,
     pub accounts: Vec<AccountDto>,
     pub multisig_address: Option<String>,
+    pub chain_id: Option<String>,
+    pub chain_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -26,6 +28,8 @@ pub struct AccountDto {
 
 fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
     let mut ms_address = None;
+    let mut ms_chain_id = None;
+    let mut ms_chain_name = None;
     let (wallet_type, accounts) = match &w.wallet_type {
         WalletType::Mnemonic { eth_accounts, sol_accounts, .. } => {
             let mut accs = Vec::new();
@@ -75,8 +79,10 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
                 index: None,
             }])
         }
-        WalletType::Multisig { multisig_address, vaults, .. } => {
+        WalletType::Multisig { multisig_address, vaults, chain_id, chain_name, .. } => {
             ms_address = Some(multisig_address.clone());
+            ms_chain_id = Some(chain_id.clone());
+            ms_chain_name = Some(chain_name.clone());
             let accs = vaults.iter().map(|v| AccountDto {
                 address: v.address.clone(),
                 label: v.label.clone(),
@@ -96,6 +102,8 @@ fn wallet_to_dto(w: &swallet_core::storage::data::Wallet) -> WalletDto {
         hidden: w.hidden,
         accounts,
         multisig_address: ms_address,
+        chain_id: ms_chain_id,
+        chain_name: ms_chain_name,
     }
 }
 

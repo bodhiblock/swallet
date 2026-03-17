@@ -2,8 +2,10 @@
 	import { api } from '$lib/api';
 	import type { ProposalDto, FeePayerDto, PresetProgramDto, BalanceDto, VoteAccountDto, StakeAccountDto } from '$lib/types';
 
-	let { walletIndex, onClose, onToast }: { walletIndex: number; onClose: () => void; onToast: (msg: string) => void } = $props();
+	import type { WalletDto, AccountDto } from '$lib/types';
+	let { walletIndex, balances, wallets, onClose, onToast }: { walletIndex: number; balances: BalanceDto[]; wallets: WalletDto[]; onClose: () => void; onToast: (msg: string) => void } = $props();
 
+	let msChainName = $derived(wallets[walletIndex]?.chain_name || 'SOL');
 	let tab: 'proposals' | 'create-proposal' = $state('proposals');
 	let proposals: ProposalDto[] = $state([]);
 	let feePayers: FeePayerDto[] = $state([]);
@@ -48,6 +50,7 @@
 	];
 	let vsOp: VsOp = $state('vote-auth-voter');
 	let vsTarget = $state('');
+	let vsManualAddress = $state('');
 	let vsParam = $state('');
 	let vsAmount = $state('');
 
@@ -55,6 +58,24 @@
 	let vsAccounts: { address: string; type: 'vote' | 'stake'; label: string }[] = $state([]);
 	let vsSelectedAccount = $state(-1);
 	let vaultAddress = $state('');
+
+	// 从主页钱包+余额数据获取所有 vote/stake 地址
+	function getAccountOwner(address: string): string | null {
+		return balances.find(b => b.address === address)?.account_owner || null;
+	}
+	let allVoteStakeAccounts = $derived.by(() => {
+		const vote: string[] = [];
+		const stake: string[] = [];
+		for (const w of wallets) {
+			for (const acc of w.accounts) {
+				if (acc.hidden) continue;
+				const owner = getAccountOwner(acc.address);
+				if (owner === 'Vote111111111111111111111111111111111111111') vote.push(acc.address);
+				else if (owner === 'Stake11111111111111111111111111111111111111') stake.push(acc.address);
+			}
+		}
+		return { vote, stake };
+	});
 
 	// Fee payer
 	let selectedFeePayer = $state(0);
@@ -112,25 +133,20 @@
 	function vsNeedsAmount(op: VsOp): boolean { return op === 'vote-withdraw' || op === 'stake-withdraw'; }
 
 	async function loadVsAccounts(type: 'vote' | 'stake') {
-		vsAccounts = [];
-		vsSelectedAccount = -1;
 		vsVerified = false;
 		vsVerifyError = '';
+		vsManualAddress = '';
 		try {
-			const balances = await api.getCachedBalances();
-			const owner = type === 'vote' ? 'Vote111111111111111111111111111111111111111' : 'Stake11111111111111111111111111111111111111';
-			vsAccounts = balances
-				.filter(b => b.account_owner === owner)
-				.map(b => ({ address: b.address, type, label: b.address.slice(0, 8) + '...' + b.address.slice(-6) }));
-			// 获取 vault 地址
 			vaultAddress = await api.getMultisigVaultAddress(walletIndex);
 		} catch (e: any) { onToast(e?.message || '加载失败'); }
 	}
 
 	async function verifyVsAuthority(): Promise<boolean> {
-		if (vsSelectedAccount < 0) { onToast('请先选择账户'); return false; }
-		const account = vsAccounts[vsSelectedAccount];
-		vsTarget = account.address;
+		const addr = vsManualAddress.trim();
+		if (!addr) { onToast('请先选择或输入账户地址'); return false; }
+		vsTarget = addr;
+		const accountType = proposalKind === 'vote-manage' ? 'vote' : 'stake';
+		const account = { address: addr, type: accountType as 'vote' | 'stake' };
 		try {
 			const rpcUrl = await api.getRpcUrlForAddress(account.address);
 			if (account.type === 'vote') {
@@ -244,7 +260,7 @@
 					</div>
 					{#if proposal.summary}
 						<div class="proposal-summary">
-							{#each proposal.summary.split('\n') as line}
+							{#each proposal.summary.replaceAll(' SOL', ' ' + msChainName).replace('SOL 转账', msChainName + ' 转账').split('\n') as line}
 								<div>{line}</div>
 							{/each}
 						</div>
@@ -285,7 +301,7 @@
 
 			{#if proposalKind === 'sol-transfer'}
 				<input bind:value={proposalTo} placeholder="目标地址" />
-				<input bind:value={proposalAmount} placeholder="金额 (SOL)" type="text" inputmode="decimal" />
+				<input bind:value={proposalAmount} placeholder="金额 ({msChainName})" type="text" inputmode="decimal" />
 
 			{:else if proposalKind === 'program-upgrade'}
 				<input bind:value={upgradeProgram} placeholder="程序地址" />
@@ -311,21 +327,17 @@
 				{/if}
 
 			{:else if proposalKind === 'vote-manage' || proposalKind === 'stake-manage'}
+				{@const currentVsAddrs = proposalKind === 'vote-manage' ? allVoteStakeAccounts.vote : allVoteStakeAccounts.stake}
 				<p class="dim">选择 {proposalKind === 'vote-manage' ? 'Vote' : 'Stake'} 账户</p>
-				{#if vsAccounts.length === 0}
-					<p class="dim center-text">未找到 {proposalKind === 'vote-manage' ? 'Vote' : 'Stake'} 账户</p>
-				{:else}
-					<div class="vs-account-list">
-						{#each vsAccounts as acc, i}
-							<button class="vs-account-item" class:active={vsSelectedAccount === i}
-								onclick={() => { vsSelectedAccount = i; }}>
-								<span class="vs-addr">{acc.address}</span>
-							</button>
-						{/each}
-					</div>
-				{/if}
+				<select bind:value={vsManualAddress} onchange={() => { vsSelectedAccount = -1; }}>
+					<option value="">-- 选择账户 ({currentVsAddrs.length}) --</option>
+					{#each currentVsAddrs as addr}
+						<option value={addr}>{addr}</option>
+					{/each}
+				</select>
+				<input bind:value={vsManualAddress} placeholder="或手动输入地址" />
 
-				{#if vsSelectedAccount >= 0}
+				{#if vsManualAddress.trim()}
 					<p class="dim">操作类型</p>
 					<div class="type-grid">
 						{#if proposalKind === 'vote-manage'}
@@ -335,7 +347,7 @@
 						{/if}
 					</div>
 					{#if vsNeedsParam(vsOp)}<input bind:value={vsParam} placeholder={vsParamLabel(vsOp)} />{/if}
-					{#if vsNeedsAmount(vsOp)}<input bind:value={vsAmount} placeholder="金额 (SOL)" type="text" inputmode="decimal" />{/if}
+					{#if vsNeedsAmount(vsOp)}<input bind:value={vsAmount} placeholder="金额 ({msChainName})" type="text" inputmode="decimal" />{/if}
 				{/if}
 			{/if}
 

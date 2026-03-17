@@ -6,6 +6,8 @@ export interface WalletDto {
 	hidden: boolean;
 	accounts: AccountDto[];
 	multisig_address: string | null;
+	chain_id: string | null;
+	chain_name: string | null;
 }
 
 export interface AccountDto {
