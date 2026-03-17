@@ -46,7 +46,8 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/swallet-tauri
+          cache-targets: true
+          shared-key: android-aarch64
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
