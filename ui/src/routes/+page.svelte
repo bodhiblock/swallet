@@ -6,6 +6,7 @@
 	import StakingPanel from '$lib/components/StakingPanel.svelte';
 	import PasswordDialog from '$lib/components/PasswordDialog.svelte';
 	import Calculator from '$lib/components/Calculator.svelte';
+	import MnemonicInput from '$lib/components/MnemonicInput.svelte';
 
 	// Global password dialog
 	let pwDialogTitle = $state('');
@@ -454,17 +455,25 @@
 		</div>
 	</div>
 
+{:else if screen === 'add-wallet' && addWalletType === 'import-mnemonic'}
+	<div class="container center">
+		<MnemonicInput
+			onComplete={(phrase) => { importInput = phrase; screen = 'input-name'; }}
+			onCancel={() => { screen = 'main'; }}
+		/>
+	</div>
+
 {:else if screen === 'add-wallet'}
 	<div class="container center">
 		<div class="card">
-			<h2>{addWalletType === 'import-mnemonic' ? '导入助记词' : addWalletType === 'private-key' ? '导入私钥' : '观察钱包'}</h2>
+			<h2>{addWalletType === 'private-key' ? '导入私钥' : '观察钱包'}</h2>
 			{#if addWalletType === 'private-key' || addWalletType === 'watch'}
 				<div class="chain-select">
 					<button class:active={selectedChain === 'solana'} onclick={() => selectedChain = 'solana'}>SOL</button>
 					<button class:active={selectedChain === 'ethereum'} onclick={() => selectedChain = 'ethereum'}>ETH</button>
 				</div>
 			{/if}
-			<textarea bind:value={importInput} placeholder={addWalletType === 'import-mnemonic' ? '输入助记词（空格分隔）' : addWalletType === 'private-key' ? '输入私钥' : '输入地址'} rows="3"></textarea>
+			<textarea bind:value={importInput} placeholder={addWalletType === 'private-key' ? '输入私钥' : '输入地址'} rows="3"></textarea>
 			<button class="btn-primary" onclick={proceedToName}>下一步</button>
 			<button class="btn-secondary" onclick={() => { screen = 'main'; }}>取消</button>
 		</div>
