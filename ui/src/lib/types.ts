@@ -90,6 +90,7 @@ export interface VoteAccountDto {
 	authorized_withdrawer: string;
 	commission: number;
 	credits: string | null;
+	balance: string;
 }
 
 export interface PresetProgramDto {

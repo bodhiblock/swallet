@@ -90,6 +90,7 @@
 			<div class="info-item"><span class="info-label">Voter</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_voter)}>{voteInfo.authorized_voter}</button></div>
 			<div class="info-item"><span class="info-label">Withdrawer</span><button class="addr-copy" onclick={() => copyAddr(voteInfo.authorized_withdrawer)}>{voteInfo.authorized_withdrawer}</button></div>
 			<div class="info-item"><span class="info-label">Commission</span><span class="info-value">{voteInfo.commission}%</span></div>
+			<div class="info-item"><span class="info-label">未领取奖励</span><span class="info-value green">{voteInfo.balance} SOL</span></div>
 			{#if voteInfo.credits}<div class="info-item"><span class="info-label">Credits</span><span class="info-value">{voteInfo.credits}</span></div>{/if}
 		</div>
 

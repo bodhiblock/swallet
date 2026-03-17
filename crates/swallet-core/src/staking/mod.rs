@@ -11,6 +11,7 @@ pub struct VoteAccountInfo {
     pub commission: u8,
     pub epoch_credits: Vec<(u64, u64, u64)>,
     pub last_timestamp_slot: u64,
+    pub lamports: u64,
 }
 
 /// Stake 账户信息

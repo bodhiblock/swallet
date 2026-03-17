@@ -183,12 +183,26 @@
 	}
 
 	// Balance helpers
-	function getBalance(address: string): { symbol: string; amount: string }[] {
+	function getBalance(address: string): { symbol: string; amount: string; tag?: string }[] {
 		const b = balances.find(b => b.address === address);
 		if (!b) return [];
-		const result: { symbol: string; amount: string }[] = [];
+		const owner = b.account_owner;
+		const isVote = owner === 'Vote111111111111111111111111111111111111111';
+		const isStake = owner === 'Stake11111111111111111111111111111111111111';
+		const result: { symbol: string; amount: string; tag?: string }[] = [];
 		for (const chain of b.chains) {
-			result.push({ symbol: chain.native_symbol, amount: chain.rpc_failed ? '-' : chain.native_balance });
+			if (chain.rpc_failed) {
+				result.push({ symbol: chain.native_symbol, amount: '-' });
+			} else if (isVote) {
+				result.push({ symbol: chain.native_symbol, amount: chain.native_balance, tag: '奖励' });
+			} else if (isStake) {
+				result.push({ symbol: chain.native_symbol, amount: chain.staked_balance, tag: '质押' });
+			} else {
+				result.push({ symbol: chain.native_symbol, amount: chain.native_balance });
+				if (chain.staked_balance && chain.staked_balance !== '0') {
+					result.push({ symbol: chain.native_symbol, amount: chain.staked_balance, tag: '质押' });
+				}
+			}
 			for (const token of chain.tokens) {
 				if (token.balance !== '0') result.push({ symbol: token.symbol, amount: token.balance });
 			}
@@ -527,7 +541,7 @@
 						<div class="address">{account.address}</div>
 						<div class="account-balances">
 							{#each getBalance(account.address) as bal}
-								<span class="balance">{bal.amount} {bal.symbol}</span>
+								<span class="balance">{#if bal.tag}<span class="bal-tag">{bal.tag}</span>{/if}{bal.amount} {bal.symbol}</span>
 							{/each}
 						</div>
 					</div>
@@ -834,6 +848,7 @@
 	.address { color: var(--text-dim); font-size: 12px; font-family: monospace; word-break: break-all; line-height: 1.4; }
 	.account-balances { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 	.balance { color: var(--green); font-size: 13px; font-family: monospace; }
+	.bal-tag { color: var(--text-dim); font-size: 11px; margin-right: 4px; font-family: sans-serif; }
 
 	.mnemonic-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 14px; line-height: 1.8; word-spacing: 8px; width: 100%; user-select: text; -webkit-user-select: text; }
 

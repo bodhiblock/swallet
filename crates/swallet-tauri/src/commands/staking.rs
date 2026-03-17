@@ -11,6 +11,7 @@ pub struct VoteAccountDto {
     pub authorized_withdrawer: String,
     pub commission: u8,
     pub credits: Option<String>,
+    pub balance: String,
 }
 
 #[derive(Serialize)]
@@ -35,6 +36,10 @@ pub async fn fetch_vote_account(address: String, rpc_url: String) -> CommandResu
         format!("Epoch {} +{} (累计 {})", epoch, credits - prev, credits)
     });
 
+    // Vote 账户最低租金: (128 + 3762) * 2 * 3480 = 27,074,400 lamports
+    const VOTE_RENT_EXEMPT: u64 = 27_074_400;
+    let rewards = info.lamports.saturating_sub(VOTE_RENT_EXEMPT);
+
     Ok(VoteAccountDto {
         address: info.address,
         validator_identity: info.validator_identity,
@@ -42,6 +47,7 @@ pub async fn fetch_vote_account(address: String, rpc_url: String) -> CommandResu
         authorized_withdrawer: info.authorized_withdrawer,
         commission: info.commission,
         credits,
+        balance: swallet_core::chain::format_balance(rewards as u128, 9),
     })
 }
 

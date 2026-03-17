@@ -197,10 +197,18 @@ pub async fn query_sol_balance_batch(
             (0u128, None)
         };
 
-        // 判断 staked_balance: 如果地址本身是 Stake 账户，其 lamports 就是质押余额
+        // 判断特殊账户类型
         let is_stake = account_owner.as_deref() == Some(STAKE_PROGRAM);
+        let is_vote = account_owner.as_deref() == Some(VOTE_PROGRAM);
         let staked_balance = if is_stake { native_balance } else { 0 };
-        let display_native = if is_stake { 0 } else { native_balance };
+        // Vote 账户: 减去最低租金 (3762+128)*2*3480 = 27,074,400 lamports
+        let display_native = if is_stake {
+            0
+        } else if is_vote {
+            native_balance.saturating_sub(27_074_400)
+        } else {
+            native_balance
+        };
 
         // 解析 ATA 代币余额
         let mut tokens: Vec<TokenBalance> = Vec::new();

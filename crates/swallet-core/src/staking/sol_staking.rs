@@ -650,6 +650,8 @@ pub async fn fetch_vote_account(
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
+    let lamports = value.get("lamports").and_then(|v| v.as_u64()).unwrap_or(0);
+
     Ok(VoteAccountInfo {
         address: address.to_string(),
         validator_identity: identity,
@@ -658,6 +660,7 @@ pub async fn fetch_vote_account(
         commission,
         epoch_credits,
         last_timestamp_slot,
+        lamports,
     })
 }
 
