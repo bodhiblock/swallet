@@ -1272,7 +1272,7 @@ fn render_create_input_members(
     )));
 
     append_status(&mut lines, state);
-    append_hint(&mut lines, " Enter添加  D完成  Esc返回");
+    append_hint(&mut lines, " Enter添加(空行完成)  Esc返回");
 
     let block = Block::default()
         .title(" 创建多签 - 添加成员 ")

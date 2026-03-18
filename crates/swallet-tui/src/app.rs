@@ -3622,18 +3622,6 @@ impl App {
 
     fn handle_ms_create_input_members_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('d') | KeyCode::Char('D')
-                if self.ui.ms_create_member_input.is_empty() =>
-            {
-                // 完成添加成员，进入阈值设置
-                if self.ui.ms_create_members.len() < 2 {
-                    self.ui.set_status("至少需要 2 个成员");
-                    return;
-                }
-                self.ui.ms_create_threshold_input.clear();
-                self.ui.ms_step = MultisigStep::CreateInputThreshold;
-                self.ui.clear_status();
-            }
             KeyCode::Char(c) => {
                 self.ui.clear_status();
                 self.ui.ms_create_member_input.push(c);
@@ -3645,6 +3633,14 @@ impl App {
             KeyCode::Enter => {
                 let addr = self.ui.ms_create_member_input.trim().to_string();
                 if addr.is_empty() {
+                    // 输入为空时 Enter = 完成添加成员
+                    if self.ui.ms_create_members.len() < 2 {
+                        self.ui.set_status("至少需要 2 个成员");
+                        return;
+                    }
+                    self.ui.ms_create_threshold_input.clear();
+                    self.ui.ms_step = MultisigStep::CreateInputThreshold;
+                    self.ui.clear_status();
                     return;
                 }
                 // 验证 base58
