@@ -452,6 +452,50 @@ pub fn get_multisig_rpc_url(
     Ok(service.get_current_ms_rpc_url(wallet_index, 0))
 }
 
+#[tauri::command]
+pub async fn get_multisig_detail(
+    state: tauri::State<'_, AppState>,
+    wallet_index: usize,
+) -> CommandResult<MultisigDetailDto> {
+    let (rpc_url, ms_address) = {
+        let service = state.service.lock().unwrap();
+        let rpc = service.get_current_ms_rpc_url(wallet_index, 0);
+        let store = service.store.as_ref().ok_or("钱包未解锁")?;
+        let wallet = store.wallets.get(wallet_index).ok_or("无效的钱包")?;
+        let addr = match &wallet.wallet_type {
+            swallet_core::storage::data::WalletType::Multisig { multisig_address, .. } => multisig_address.clone(),
+            _ => return Err("不是多签钱包".into()),
+        };
+        (rpc, addr)
+    };
+
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
+        .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
+    let info = multisig::squads::fetch_multisig(&client, &rpc_url, &ms_address).await
+        .map_err(|e| format!("获取多签详情失败: {e}"))?;
+
+    // 同步更新本地存储
+    {
+        let mut service = state.service.lock().unwrap();
+        if let Some(store) = service.store.as_mut() {
+            if let Some(wallet) = store.wallets.get_mut(wallet_index) {
+                if let swallet_core::storage::data::WalletType::Multisig { threshold, member_addresses, .. } = &mut wallet.wallet_type {
+                    *threshold = info.threshold;
+                    *member_addresses = info.members.iter().map(|m| m.address()).collect();
+                }
+            }
+            let _ = service.save_store();
+        }
+    }
+
+    Ok(MultisigDetailDto {
+        address: info.address.to_string(),
+        threshold: info.threshold,
+        members: info.members.iter().map(|m| MemberDto { address: m.address() }).collect(),
+        transaction_index: info.transaction_index,
+    })
+}
+
 fn get_ms_info(service: &swallet_core::service::WalletService, wallet_index: usize) -> CommandResult<(String, Vec<String>)> {
     let store = service.store.as_ref().ok_or("钱包未解锁")?;
     let wallet = store.wallets.get(wallet_index).ok_or("无效的钱包")?;

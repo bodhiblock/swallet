@@ -1,12 +1,18 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { ProposalDto, FeePayerDto, PresetProgramDto, BalanceDto, VoteAccountDto, StakeAccountDto } from '$lib/types';
+	import type { ProposalDto, FeePayerDto, PresetProgramDto, BalanceDto, VoteAccountDto, StakeAccountDto, MultisigDetailDto } from '$lib/types';
 
 	import type { WalletDto, AccountDto } from '$lib/types';
 	let { walletIndex, balances, wallets, onClose, onToast }: { walletIndex: number; balances: BalanceDto[]; wallets: WalletDto[]; onClose: () => void; onToast: (msg: string) => void } = $props();
 
 	let msChainName = $derived(wallets[walletIndex]?.chain_name || 'SOL');
-	let tab: 'proposals' | 'create-proposal' = $state('proposals');
+	let tab: 'detail' | 'proposals' | 'create-proposal' = $state('detail');
+
+	// Multisig detail
+	let msDetail: MultisigDetailDto | null = $state(null);
+	async function loadDetail() {
+		try { msDetail = await api.getMultisigDetail(walletIndex); } catch (e: any) { onToast(e?.message || '加载详情失败'); }
+	}
 	let proposals: ProposalDto[] = $state([]);
 	let feePayers: FeePayerDto[] = $state([]);
 	let loadingProposals = $state(false);
@@ -92,7 +98,7 @@
 	let dialogPassword = $state('');
 	let voteDialog: { action: 'approve' | 'reject' | 'execute'; proposal: ProposalDto } | null = $state(null);
 
-	$effect(() => { loadProposals(); loadFeePayers(); loadLocalAddresses(); });
+	$effect(() => { loadDetail(); loadProposals(); loadFeePayers(); loadLocalAddresses(); });
 
 	async function loadLocalAddresses() {
 		try { localAddresses = await api.getLocalSolAddresses(); } catch (_) {}
@@ -259,11 +265,41 @@
 	</header>
 
 	<div class="tabs">
+		<button class:active={tab === 'detail'} onclick={() => tab = 'detail'}>详情</button>
 		<button class:active={tab === 'proposals'} onclick={() => tab = 'proposals'}>提案列表</button>
 		<button class:active={tab === 'create-proposal'} onclick={() => { tab = 'create-proposal'; loadPresets(); }}>创建提案</button>
 	</div>
 
-	{#if tab === 'proposals'}
+	{#if tab === 'detail'}
+		{#if msDetail}
+			<div class="detail-section">
+				<div class="detail-row">
+					<span class="dim">多签地址</span>
+					<span class="mono">{msDetail.address}</span>
+				</div>
+				<div class="detail-row">
+					<span class="dim">阈值</span>
+					<span>{msDetail.threshold} / {msDetail.members.length}</span>
+				</div>
+				<div class="detail-row">
+					<span class="dim">成员 ({msDetail.members.length})</span>
+				</div>
+				{#each msDetail.members as member, i}
+					<div class="member-row">
+						<span class="member-index">{i + 1}</span>
+						<span class="mono">{member.address}</span>
+						{#if localAddresses.includes(member.address)}
+							<span class="tag-self">本地</span>
+						{/if}
+					</div>
+				{/each}
+			</div>
+			<button class="btn-refresh" onclick={loadDetail}>刷新详情</button>
+		{:else}
+			<p class="dim center-text">加载中...</p>
+		{/if}
+
+	{:else if tab === 'proposals'}
 		{#if loadingProposals}<p class="dim center-text">加载中...</p>
 		{:else if proposals.length === 0}<p class="dim center-text">暂无提案</p>
 		{:else}
@@ -423,6 +459,14 @@
 	.dim { color: var(--text-dim); font-size: 14px; }
 	.center-text { text-align: center; padding: 24px 0; }
 
+	.detail-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+	.detail-row { display: flex; flex-direction: column; margin-bottom: 8px; }
+	.detail-row .dim { font-size: 12px; margin-bottom: 2px; }
+	.detail-row .mono { font-family: monospace; font-size: 12px; word-break: break-all; }
+	.member-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+	.member-index { color: var(--text-dim); min-width: 20px; }
+	.member-row .mono { font-family: monospace; word-break: break-all; flex: 1; }
+	.tag-self { background: var(--accent); color: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: 10px; }
 	.proposal-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
 	.proposal-header { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
 	.proposal-summary { font-size: 12px; color: var(--accent); margin-bottom: 4px; }
