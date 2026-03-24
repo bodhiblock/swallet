@@ -446,6 +446,15 @@ fn agent_registry_program() -> PresetProgram {
                 ],
                 build: build_agent_withdraw_twitter_verify_fees,
             },
+            PresetInstruction {
+                name: "update_tweet_verify_config",
+                label: "更新推文验证配置",
+                args: vec![
+                    PresetArg { name: "reward", label: "验证奖励 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "points", label: "验证积分", arg_type: ArgType::U64 },
+                ],
+                build: build_agent_update_tweet_verify_config,
+            },
         ],
     }
 }
@@ -627,6 +636,22 @@ fn build_agent_withdraw_twitter_verify_fees(vault: &[u8; 32], pid: &[u8; 32], ar
         },
         agent_client::args::WithdrawTwitterVerifyFees {
             amount: parse_u64(&args[0])?,
+        },
+    )])
+}
+
+fn build_agent_update_tweet_verify_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.len() < 2 { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        agent_client::accounts::UpdateTweetVerifyConfig {
+            admin: pk(vault),
+            config: derive_pda(&[b"config"], &program_id),
+        },
+        agent_client::args::UpdateTweetVerifyConfig {
+            reward: parse_u64(&args[0])?,
+            points: parse_u64(&args[1])?,
         },
     )])
 }
