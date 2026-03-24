@@ -7,6 +7,8 @@ fn main() {
     // 1. 命令行: swallet --load /path/data.dat --config /path/config.toml
     // 2. 环境变量: SWALLET_DATA=/path/data.dat SWALLET_CONFIG=/path/config.toml
     let args: Vec<String> = std::env::args().collect();
+    eprintln!("[main] args: {:?}", args);
+    eprintln!("[main] SWALLET_DATA={:?}", std::env::var("SWALLET_DATA"));
     let mut data_path: Option<PathBuf> = None;
     let mut config_path: Option<PathBuf> = None;
 
@@ -34,5 +36,6 @@ fn main() {
         if let Ok(p) = std::env::var("SWALLET_CONFIG") { config_path = Some(PathBuf::from(p)); }
     }
 
+    eprintln!("[main] data_path={:?}, config_path={:?}", data_path, config_path);
     swallet_tauri_lib::run(data_path, config_path);
 }

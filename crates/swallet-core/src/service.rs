@@ -985,6 +985,15 @@ pub async fn execute_create_proposal(
                 .try_into().map_err(|_| "Buffer 地址长度无效".to_string())?;
             verify_upgrade_authority(&client, rpc_url, &program_bytes, &vault_pda).await?;
             verify_buffer_exists(&client, rpc_url, upgrade_buffer).await?;
+
+            // 检查是否需要扩容 ProgramData（ExtendProgram 不能通过 Squads CPI 执行，需直接交易）
+            let extend_bytes = check_program_extend_needed(&client, rpc_url, &program_bytes, upgrade_buffer).await?;
+            if extend_bytes > 0 {
+                eprintln!("[upgrade] 需要先扩容 ProgramData {} 字节，由 fee payer 直接执行", extend_bytes);
+                extend_program_direct(&client, rpc_url, fee_payer_key, &program_bytes, extend_bytes).await?;
+                eprintln!("[upgrade] 扩容完成，继续创建升级提案");
+            }
+
             crate::multisig::proposals::build_program_upgrade_instructions(
                 &program_bytes, &buffer_bytes, &vault_pda.to_bytes(), &vault_pda.to_bytes(),
             )
@@ -1099,6 +1108,122 @@ pub async fn verify_buffer_exists(
     if value.is_none() || value.unwrap().is_null() {
         return Err(format!("Buffer 账户 {} 不存在，请先执行 solana program write-buffer", buffer_address));
     }
+    Ok(())
+}
+
+/// 检查 ProgramData 是否需要扩容，返回需要扩展的字节数（0 表示无需扩容）
+///
+/// Buffer 账户布局: variant(4) + Option<authority>(1+32) + program_data
+/// ProgramData 账户布局: variant(4) + slot(8) + Option<authority>(1+32) + program_data
+/// ProgramData 头部比 Buffer 多 8 字节（slot），所以实际可用空间 = data_len - 45
+/// Buffer 中程序大小 = data_len - 37
+pub async fn check_program_extend_needed(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    program_bytes: &[u8; 32],
+    buffer_address: &str,
+) -> Result<u32, String> {
+    use solana_sdk::pubkey::Pubkey;
+
+    let program_pk = Pubkey::new_from_array(*program_bytes);
+    let bpf_loader_id: Pubkey = "BPFLoaderUpgradeab1e11111111111111111111111".parse().unwrap();
+    let (programdata_pda, _) = Pubkey::find_program_address(&[program_pk.as_ref()], &bpf_loader_id);
+
+    // 获取 ProgramData 账户大小
+    let pd_size = get_account_data_len(client, rpc_url, &programdata_pda.to_string()).await
+        .map_err(|e| format!("获取 ProgramData 大小失败: {e}"))?;
+
+    // 获取 Buffer 账户大小
+    let buf_size = get_account_data_len(client, rpc_url, buffer_address).await
+        .map_err(|e| format!("获取 Buffer 大小失败: {e}"))?;
+
+    // Buffer 中程序二进制大小 = buf_size - 37 (4 variant + 1 option flag + 32 authority)
+    // ProgramData 中可用空间 = pd_size - 45 (4 variant + 8 slot + 1 option flag + 32 authority)
+    let buffer_program_len = buf_size.saturating_sub(37);
+    let programdata_capacity = pd_size.saturating_sub(45);
+
+    if buffer_program_len > programdata_capacity {
+        let extend = (buffer_program_len - programdata_capacity) as u32;
+        eprintln!("[extend] ProgramData 需要扩容 {} 字节 (buffer程序={}，当前容量={})",
+            extend, buffer_program_len, programdata_capacity);
+        Ok(extend)
+    } else {
+        Ok(0)
+    }
+}
+
+/// 获取账户数据长度（使用 dataSlice 避免下载大账户全部数据）
+async fn get_account_data_len(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    address: &str,
+) -> Result<usize, String> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "getAccountInfo",
+        "params": [address, {"encoding": "base64", "dataSlice": {"offset": 0, "length": 0}, "commitment": "confirmed"}],
+        "id": 1
+    });
+    let resp = crate::transfer::sol_transfer::rpc_call(client, rpc_url, &body).await?;
+    let value = resp.get("result").and_then(|r| r.get("value"))
+        .ok_or_else(|| format!("账户 {} 不存在", address))?;
+    if value.is_null() {
+        return Err(format!("账户 {} 不存在", address));
+    }
+    value.get("space").and_then(|s| s.as_u64())
+        .map(|s| s as usize)
+        .ok_or_else(|| format!("账户 {} 缺少 space 字段", address))
+}
+
+/// 直接执行 ExtendProgram 交易（不经过多签，由 fee payer 付费）
+async fn extend_program_direct(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    payer_key: &[u8],
+    program_bytes: &[u8; 32],
+    additional_len: u32,
+) -> Result<(), String> {
+    use solana_sdk::pubkey::Pubkey;
+
+    let payer_bytes: [u8; 32] = payer_key.try_into()
+        .map_err(|_| "payer 私钥长度无效".to_string())?;
+    let payer_kp = solana_sdk::signer::keypair::Keypair::new_from_array(payer_bytes);
+    use solana_sdk::signer::Signer;
+    let payer_pk = payer_kp.pubkey();
+
+    let bpf_loader: Pubkey = "BPFLoaderUpgradeab1e11111111111111111111111".parse().unwrap();
+    let program_pk = Pubkey::new_from_array(*program_bytes);
+    let (programdata_pda, _) = Pubkey::find_program_address(&[program_pk.as_ref()], &bpf_loader);
+
+    // ExtendProgram: discriminator=6(u32 LE) + additional_len(u32 LE)
+    let mut ix_data = vec![6u8, 0, 0, 0];
+    ix_data.extend_from_slice(&additional_len.to_le_bytes());
+
+    use crate::transfer::sol_transfer::{Instruction, AccountMeta};
+    let ix = Instruction {
+        program_id: bpf_loader.to_bytes(),
+        accounts: vec![
+            AccountMeta { pubkey: programdata_pda.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: program_pk.to_bytes(), is_signer: false, is_writable: true },
+            AccountMeta { pubkey: solana_sdk::system_program::ID.to_bytes(), is_signer: false, is_writable: false },
+            AccountMeta { pubkey: payer_pk.to_bytes(), is_signer: true, is_writable: true },
+        ],
+        data: ix_data,
+    };
+
+    let recent_blockhash = crate::transfer::sol_transfer::get_latest_blockhash(client, rpc_url).await?;
+    let message_bytes = crate::transfer::sol_transfer::build_and_serialize_message(
+        &payer_pk.to_bytes(), &recent_blockhash, &[ix],
+    );
+    let sig = payer_kp.sign_message(&message_bytes);
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(sig.as_ref());
+    let tx_bytes = crate::transfer::sol_transfer::build_transaction(&[sig_bytes], &message_bytes);
+    let tx_sig = crate::transfer::sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await?;
+    eprintln!("[extend] ExtendProgram tx: {}", tx_sig);
+
+    // 等待确认
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     Ok(())
 }
 

@@ -152,19 +152,8 @@ pub async fn create_sol_transfer_proposal(
     fee_payer_wi: usize,
     fee_payer_ai: usize,
 ) -> CommandResult<String> {
-    let (private_key, fee_payer_key, rpc_url, ms_address) = {
-        let service = state.service.lock().unwrap();
-        if !service.verify_password(password.as_bytes()) { return Err("密码错误".into()); }
-        let (ms_addr, member_addresses) = get_ms_info(&service, wallet_index)?;
-        let mut pk = None;
-        for addr in &member_addresses {
-            if let Some(key) = service.get_sol_private_key(addr) { pk = Some(key); break; }
-        }
-        let pk = pk.ok_or("未找到签名私钥")?;
-        let fp = service.get_sol_private_key_by_index(fee_payer_wi, fee_payer_ai).ok_or("无法获取 Fee Payer 私钥")?;
-        let rpc = service.get_current_ms_rpc_url(wallet_index, 0);
-        (pk, fp, rpc, ms_addr)
-    };
+    let (private_key, fee_payer_key, rpc_url, ms_address) =
+        get_vote_params(&state, wallet_index, &password, fee_payer_wi, fee_payer_ai)?;
 
     swallet_core::service::execute_create_proposal(
         &rpc_url, &private_key, &fee_payer_key, &ms_address,
@@ -284,19 +273,8 @@ pub async fn create_proposal(
     fee_payer_wi: usize,
     fee_payer_ai: usize,
 ) -> CommandResult<String> {
-    let (private_key, fee_payer_key, rpc_url, ms_address) = {
-        let service = state.service.lock().unwrap();
-        if !service.verify_password(password.as_bytes()) { return Err("密码错误".into()); }
-        let (ms_addr, member_addresses) = get_ms_info(&service, wallet_index)?;
-        let mut pk = None;
-        for addr in &member_addresses {
-            if let Some(key) = service.get_sol_private_key(addr) { pk = Some(key); break; }
-        }
-        let pk = pk.ok_or("未找到签名私钥")?;
-        let fp = service.get_sol_private_key_by_index(fee_payer_wi, fee_payer_ai).ok_or("无法获取 Fee Payer 私钥")?;
-        let rpc = service.get_current_ms_rpc_url(wallet_index, 0);
-        (pk, fp, rpc, ms_addr)
-    };
+    let (private_key, fee_payer_key, rpc_url, ms_address) =
+        get_vote_params(&state, wallet_index, &password, fee_payer_wi, fee_payer_ai)?;
 
     // Map vs_op_idx to MsVoteStakeOp
     let vs_ops = [
@@ -399,18 +377,25 @@ fn get_vote_params(
     let service = state.service.lock().unwrap();
     if !service.verify_password(password.as_bytes()) { return Err("密码错误".into()); }
 
-    let (ms_addr, member_addresses) = get_ms_info(&service, wallet_index)?;
+    let (ms_addr, _member_addresses) = get_ms_info(&service, wallet_index)?;
 
-    // 遍历成员地址找到本地的签名私钥
-    let mut pk = None;
-    for addr in &member_addresses {
-        if let Some(key) = service.get_sol_private_key(addr) {
-            pk = Some(key);
-            break;
-        }
-    }
-    let pk = pk.ok_or("未找到匹配的签名私钥")?;
+    // 优先用 fee payer 作为 member（如果它也是多签成员），避免引入额外 signer
     let fp = service.get_sol_private_key_by_index(fee_payer_wi, fee_payer_ai).ok_or("无法获取 Fee Payer 私钥")?;
+    let fp_address = service.get_sol_address(fee_payer_wi, fee_payer_ai);
+
+    // 直接用 fee payer 作为 member（用户选的地址就是签名地址）
+    // 不依赖本地可能过期的成员列表，链上 Squads 会验证成员身份
+    let pk = fp.clone();
+
+    {
+        use solana_sdk::signer::Signer;
+        let member_kp = solana_sdk::signer::keypair::Keypair::new_from_array(
+            pk[..32].try_into().unwrap()
+        );
+        eprintln!("[get_vote_params] member={}, fee_payer={:?}, multisig={}",
+            member_kp.pubkey(), fp_address, ms_addr);
+    }
+
     let rpc = service.get_current_ms_rpc_url(wallet_index, 0);
 
     Ok((pk, fp, rpc, ms_addr))

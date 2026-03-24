@@ -256,6 +256,59 @@ struct CompiledVaultInstruction {
     data: Vec<u8>,
 }
 
+/// 构建 BPF Loader Upgradeable 的 ExtendProgram 指令
+///
+/// discriminator = 6 (u32 LE), 参数: additional_len (u32 LE)
+/// 账户: ProgramData(writable), Program(writable), SystemProgram, Payer(signer, writable, optional)
+pub fn build_extend_program_instruction(
+    program_pubkey: &[u8; 32],
+    payer_pubkey: &[u8; 32],
+    additional_len: u32,
+) -> VaultInstruction {
+    use solana_sdk::pubkey::Pubkey;
+
+    let bpf_loader_upgradeable: [u8; 32] =
+        bs58::decode("BPFLoaderUpgradeab1e11111111111111111111111")
+            .into_vec()
+            .unwrap()
+            .try_into()
+            .unwrap();
+
+    let program_pk = Pubkey::new_from_array(*program_pubkey);
+    let bpf_pk = Pubkey::new_from_array(bpf_loader_upgradeable);
+    let (programdata_pda, _) = Pubkey::find_program_address(&[program_pk.as_ref()], &bpf_pk);
+
+    let mut data = vec![6, 0, 0, 0]; // ExtendProgram discriminator
+    data.extend_from_slice(&additional_len.to_le_bytes());
+
+    VaultInstruction {
+        program_id: bpf_loader_upgradeable,
+        accounts: vec![
+            VaultAccountMeta {
+                pubkey: programdata_pda.to_bytes(),
+                is_signer: false,
+                is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: *program_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: solana_sdk::system_program::ID.to_bytes(),
+                is_signer: false,
+                is_writable: false,
+            },
+            VaultAccountMeta {
+                pubkey: *payer_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+        ],
+        data,
+    }
+}
+
 /// 构建 BPF Loader Upgradeable 的 Upgrade + Close 指令
 ///
 /// 返回两条指令：

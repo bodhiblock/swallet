@@ -412,6 +412,40 @@ fn agent_registry_program() -> PresetProgram {
                 ],
                 build: build_agent_withdraw_fees,
             },
+            PresetInstruction {
+                name: "expand_config",
+                label: "扩展配置账户",
+                args: vec![
+                    PresetArg { name: "extend_size", label: "扩展大小 (bytes)", arg_type: ArgType::U64 },
+                ],
+                build: build_agent_expand_config,
+            },
+            PresetInstruction {
+                name: "update_twitter_verification_config",
+                label: "更新推特验证配置",
+                args: vec![
+                    PresetArg { name: "fee", label: "验证费 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "reward", label: "验证奖励 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "points", label: "验证积分", arg_type: ArgType::U64 },
+                ],
+                build: build_agent_update_twitter_verification_config,
+            },
+            PresetInstruction {
+                name: "update_twitter_verifier",
+                label: "更新推特验证者",
+                args: vec![
+                    PresetArg { name: "new_verifier", label: "新验证者地址", arg_type: ArgType::Pubkey },
+                ],
+                build: build_agent_update_twitter_verifier,
+            },
+            PresetInstruction {
+                name: "withdraw_twitter_verify_fees",
+                label: "提取推特验证手续费",
+                args: vec![
+                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64 },
+                ],
+                build: build_agent_withdraw_twitter_verify_fees,
+            },
         ],
     }
 }
@@ -527,6 +561,71 @@ fn build_agent_withdraw_fees(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) 
             system_program: solana_sdk::system_program::ID,
         },
         agent_client::args::WithdrawFees {
+            amount: parse_u64(&args[0])?,
+        },
+    )])
+}
+
+fn build_agent_expand_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        agent_client::accounts::ExpandConfig {
+            admin: pk(vault),
+            config: derive_pda(&[b"config"], &program_id),
+            system_program: solana_sdk::system_program::ID,
+        },
+        agent_client::args::ExpandConfig {
+            extend_size: parse_u64(&args[0])?,
+        },
+    )])
+}
+
+fn build_agent_update_twitter_verification_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.len() < 3 { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        agent_client::accounts::UpdateTwitterVerificationConfig {
+            admin: pk(vault),
+            config: derive_pda(&[b"config"], &program_id),
+        },
+        agent_client::args::UpdateTwitterVerificationConfig {
+            fee: parse_u64(&args[0])?,
+            reward: parse_u64(&args[1])?,
+            points: parse_u64(&args[2])?,
+        },
+    )])
+}
+
+fn build_agent_update_twitter_verifier(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        agent_client::accounts::UpdateTwitterVerifier {
+            admin: pk(vault),
+            config: derive_pda(&[b"config"], &program_id),
+        },
+        agent_client::args::UpdateTwitterVerifier {
+            new_verifier: parse_pubkey(&args[0])?,
+        },
+    )])
+}
+
+fn build_agent_withdraw_twitter_verify_fees(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        agent_client::accounts::WithdrawTwitterVerifyFees {
+            admin: pk(vault),
+            config: derive_pda(&[b"config"], &program_id),
+            twitter_verify_vault: derive_pda(&[b"twitter_verify_vault"], &program_id),
+            system_program: solana_sdk::system_program::ID,
+        },
+        agent_client::args::WithdrawTwitterVerifyFees {
             amount: parse_u64(&args[0])?,
         },
     )])

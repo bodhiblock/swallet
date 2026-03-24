@@ -87,7 +87,7 @@
 	});
 
 	// Fee payer
-	let selectedFeePayer = $state(0);
+	let selectedFeePayer: number = $state(-1);
 	let submitting = $state(false);
 
 	// Local addresses for vote check
@@ -197,10 +197,12 @@
 			if (!ok) return;
 		}
 		dialogPassword = '';
+		selectedFeePayer = -1;
 		passwordDialog = 'create';
 	}
 
 	async function confirmCreateProposal() {
+		if (selectedFeePayer < 0) { onToast('请选择 Fee Payer'); return; }
 		if (!dialogPassword) { onToast('请输入密码'); return; }
 		submitting = true;
 		const fp = feePayers[selectedFeePayer];
@@ -231,10 +233,12 @@
 	function startVote(action: 'approve' | 'reject' | 'execute', proposal: ProposalDto) {
 		voteDialog = { action, proposal };
 		dialogPassword = '';
+		selectedFeePayer = -1;
 		passwordDialog = 'vote';
 	}
 
 	async function confirmVote() {
+		if (selectedFeePayer < 0) { onToast('请选择 Fee Payer'); return; }
 		if (!voteDialog || !dialogPassword) { onToast('请输入密码'); return; }
 		if (feePayers.length === 0) { onToast('没有可用的 Fee Payer'); return; }
 		submitting = true;
@@ -434,6 +438,7 @@
 			{#if feePayers.length > 0}
 				<label class="dim">Fee Payer</label>
 				<select bind:value={selectedFeePayer}>
+					<option value={-1}>-- 请选择 Fee Payer --</option>
 					{#each feePayers as fp, i}<option value={i}>{fp.address.slice(0,8)}... ({fp.balance})</option>{/each}
 				</select>
 			{/if}
