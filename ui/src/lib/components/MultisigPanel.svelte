@@ -218,7 +218,7 @@
 				upgradeProgram, upgradeBuffer,
 				presetProgramIdx: selectedProgram, presetInstructionIdx: selectedInstruction, presetArgs: presetArgValues,
 				vsOpIdx: vsOpMap[vsOp] ?? 0, vsTarget, vsParam, vsAmount,
-				chainId: '', password: dialogPassword, feePayerWi: fp.wallet_index, feePayerAi: fp.account_index,
+				chainId: wallets[walletIndex]?.chain_id || '', password: dialogPassword, feePayerWi: fp.wallet_index, feePayerAi: fp.account_index,
 			});
 			onToast(`提案已创建: ${sig.slice(0, 16)}...`);
 			passwordDialog = null;
