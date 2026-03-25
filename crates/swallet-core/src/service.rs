@@ -1176,7 +1176,7 @@ async fn get_account_data_len(
 }
 
 /// 直接执行 ExtendProgram 交易（不经过多签，由 fee payer 付费）
-async fn extend_program_direct(
+pub async fn extend_program_direct(
     client: &reqwest::Client,
     rpc_url: &str,
     payer_key: &[u8],

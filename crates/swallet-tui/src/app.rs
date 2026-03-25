@@ -4291,6 +4291,13 @@ async fn execute_create_proposal_async(
             // 检查 buffer 账户是否存在
             verify_buffer_exists(&client, rpc_url, upgrade_buffer).await?;
 
+            // 检查是否需要扩容 ProgramData（ExtendProgram 不能通过 Squads CPI 执行，需直接交易）
+            let extend_bytes = swallet_core::service::check_program_extend_needed(&client, rpc_url, &program_bytes, upgrade_buffer).await?;
+            if extend_bytes > 0 {
+                eprintln!("[upgrade] 需要先扩容 ProgramData {} 字节，由 fee payer 直接执行", extend_bytes);
+                swallet_core::service::extend_program_direct(&client, rpc_url, fee_payer_key, &program_bytes, extend_bytes).await?;
+            }
+
             multisig::proposals::build_program_upgrade_instructions(
                 &program_bytes,
                 &buffer_bytes,
