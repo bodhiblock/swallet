@@ -852,6 +852,15 @@ fn render_input_program_args(frame: &mut Frame, area: ratatui::layout::Rect, sta
                 format!(" 请输入 {} / {} ({}/{}):", current_arg.label, current_arg.name, state.ms_program_arg_index + 1, ix.args.len()),
                 Style::default().fg(Color::White),
             )));
+            // 显示当前链上值提示
+            if let Some(field) = current_arg.config_field {
+                if let Some(current_val) = state.ms_program_config_hints.get(field) {
+                    lines.push(Line::from(Span::styled(
+                        format!("   当前链上值: {}", current_val),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+            }
             lines.push(Line::from(Span::styled(
                 format!(" > {}", state.ms_program_arg_input),
                 Style::default().fg(Color::Yellow),

@@ -31,6 +31,8 @@ pub struct PresetArg {
     pub name: &'static str,
     pub label: &'static str,
     pub arg_type: ArgType,
+    /// 对应的链上 config 字段名，用于显示当前值提示
+    pub config_field: Option<&'static str>,
 }
 
 /// 指令构建函数类型
@@ -144,9 +146,9 @@ fn quest_program() -> PresetProgram {
                 name: "create_question",
                 label: "创建问题",
                 args: vec![
-                    PresetArg { name: "answer_hash", label: "答案哈希 (bs58)", arg_type: ArgType::Pubkey },
-                    PresetArg { name: "deadline", label: "截止时间 (Unix时间戳)", arg_type: ArgType::I64 },
-                    PresetArg { name: "difficulty", label: "难度", arg_type: ArgType::U32 },
+                    PresetArg { name: "answer_hash", label: "答案哈希 (bs58)", arg_type: ArgType::Pubkey, config_field: None },
+                    PresetArg { name: "deadline", label: "截止时间 (Unix时间戳)", arg_type: ArgType::I64, config_field: None },
+                    PresetArg { name: "difficulty", label: "难度", arg_type: ArgType::U32, config_field: None },
                 ],
                 build: build_quest_create_question,
             },
@@ -154,8 +156,8 @@ fn quest_program() -> PresetProgram {
                 name: "set_reward_config",
                 label: "设置奖励配置",
                 args: vec![
-                    PresetArg { name: "min_reward_count", label: "最小奖励人数", arg_type: ArgType::U32 },
-                    PresetArg { name: "max_reward_count", label: "最大奖励人数", arg_type: ArgType::U32 },
+                    PresetArg { name: "min_reward_count", label: "最小奖励人数", arg_type: ArgType::U32, config_field: Some("min_reward_count") },
+                    PresetArg { name: "max_reward_count", label: "最大奖励人数", arg_type: ArgType::U32, config_field: Some("max_reward_count") },
                 ],
                 build: build_quest_set_reward_config,
             },
@@ -163,8 +165,8 @@ fn quest_program() -> PresetProgram {
                 name: "set_reward_per_share",
                 label: "设置每份奖励",
                 args: vec![
-                    PresetArg { name: "reward_per_share", label: "每份奖励 (lamports)", arg_type: ArgType::U64 },
-                    PresetArg { name: "extra_reward", label: "额外奖励 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "reward_per_share", label: "每份奖励 (lamports)", arg_type: ArgType::U64, config_field: Some("reward_per_share") },
+                    PresetArg { name: "extra_reward", label: "额外奖励 (lamports)", arg_type: ArgType::U64, config_field: Some("extra_reward") },
                 ],
                 build: build_quest_set_reward_per_share,
             },
@@ -172,9 +174,9 @@ fn quest_program() -> PresetProgram {
                 name: "set_stake_config",
                 label: "设置质押配置",
                 args: vec![
-                    PresetArg { name: "bps_high", label: "质押倍率上限 (bps)", arg_type: ArgType::U64 },
-                    PresetArg { name: "bps_low", label: "质押倍率下限 (bps)", arg_type: ArgType::U64 },
-                    PresetArg { name: "decay_ms", label: "衰减时间 (毫秒)", arg_type: ArgType::I64 },
+                    PresetArg { name: "bps_high", label: "质押倍率上限 (bps)", arg_type: ArgType::U64, config_field: Some("stake_bps_high") },
+                    PresetArg { name: "bps_low", label: "质押倍率下限 (bps)", arg_type: ArgType::U64, config_field: Some("stake_bps_low") },
+                    PresetArg { name: "decay_ms", label: "衰减时间 (毫秒)", arg_type: ArgType::I64, config_field: Some("decay_ms") },
                 ],
                 build: build_quest_set_stake_config,
             },
@@ -182,7 +184,7 @@ fn quest_program() -> PresetProgram {
                 name: "set_quest_authority",
                 label: "设置出题权限",
                 args: vec![
-                    PresetArg { name: "new_quest_authority", label: "新出题地址", arg_type: ArgType::Pubkey },
+                    PresetArg { name: "new_quest_authority", label: "新出题地址", arg_type: ArgType::Pubkey, config_field: Some("quest_authority") },
                 ],
                 build: build_quest_set_quest_authority,
             },
@@ -190,7 +192,7 @@ fn quest_program() -> PresetProgram {
                 name: "set_quest_interval",
                 label: "设置出题间隔",
                 args: vec![
-                    PresetArg { name: "min_quest_interval", label: "最小间隔 (秒)", arg_type: ArgType::I64 },
+                    PresetArg { name: "min_quest_interval", label: "最小间隔 (秒)", arg_type: ArgType::I64, config_field: Some("min_quest_interval") },
                 ],
                 build: build_quest_set_quest_interval,
             },
@@ -198,7 +200,7 @@ fn quest_program() -> PresetProgram {
                 name: "transfer_authority",
                 label: "转移管理权",
                 args: vec![
-                    PresetArg { name: "new_authority", label: "新管理员地址", arg_type: ArgType::Pubkey },
+                    PresetArg { name: "new_authority", label: "新管理员地址", arg_type: ArgType::Pubkey, config_field: Some("authority") },
                 ],
                 build: build_quest_transfer_authority,
             },
@@ -364,7 +366,7 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_admin",
                 label: "更新管理员",
                 args: vec![
-                    PresetArg { name: "new_admin", label: "新管理员地址", arg_type: ArgType::Pubkey },
+                    PresetArg { name: "new_admin", label: "新管理员地址", arg_type: ArgType::Pubkey, config_field: Some("admin") },
                 ],
                 build: build_agent_update_admin,
             },
@@ -372,7 +374,7 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_register_fee",
                 label: "更新注册费",
                 args: vec![
-                    PresetArg { name: "new_fee", label: "新注册费 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "new_fee", label: "新注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("register_fee") },
                 ],
                 build: build_agent_update_register_fee,
             },
@@ -380,8 +382,8 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_activity_config",
                 label: "更新活动配置",
                 args: vec![
-                    PresetArg { name: "activity_reward", label: "活动奖励 (lamports)", arg_type: ArgType::U64 },
-                    PresetArg { name: "referral_activity_reward", label: "推荐活动奖励 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "activity_reward", label: "活动奖励 (lamports)", arg_type: ArgType::U64, config_field: Some("activity_reward") },
+                    PresetArg { name: "referral_activity_reward", label: "推荐活动奖励 (lamports)", arg_type: ArgType::U64, config_field: Some("referral_activity_reward") },
                 ],
                 build: build_agent_update_activity_config,
             },
@@ -389,8 +391,8 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_points_config",
                 label: "更新积分配置",
                 args: vec![
-                    PresetArg { name: "points_self", label: "自身积分", arg_type: ArgType::U64 },
-                    PresetArg { name: "points_referral", label: "推荐积分", arg_type: ArgType::U64 },
+                    PresetArg { name: "points_self", label: "自身积分", arg_type: ArgType::U64, config_field: Some("points_self") },
+                    PresetArg { name: "points_referral", label: "推荐积分", arg_type: ArgType::U64, config_field: Some("points_referral") },
                 ],
                 build: build_agent_update_points_config,
             },
@@ -398,9 +400,9 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_referral_config",
                 label: "更新推荐配置",
                 args: vec![
-                    PresetArg { name: "referral_register_fee", label: "推荐注册费 (lamports)", arg_type: ArgType::U64 },
-                    PresetArg { name: "referral_fee_share", label: "推荐费分成 (lamports)", arg_type: ArgType::U64 },
-                    PresetArg { name: "referral_register_points", label: "推荐注册积分", arg_type: ArgType::U64 },
+                    PresetArg { name: "referral_register_fee", label: "推荐注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("referral_register_fee") },
+                    PresetArg { name: "referral_fee_share", label: "推荐费分成 (lamports)", arg_type: ArgType::U64, config_field: Some("referral_fee_share") },
+                    PresetArg { name: "referral_register_points", label: "推荐注册积分", arg_type: ArgType::U64, config_field: Some("referral_register_points") },
                 ],
                 build: build_agent_update_referral_config,
             },
@@ -408,7 +410,7 @@ fn agent_registry_program() -> PresetProgram {
                 name: "withdraw_fees",
                 label: "提取手续费",
                 args: vec![
-                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64, config_field: None },
                 ],
                 build: build_agent_withdraw_fees,
             },
@@ -416,7 +418,7 @@ fn agent_registry_program() -> PresetProgram {
                 name: "expand_config",
                 label: "扩展配置账户",
                 args: vec![
-                    PresetArg { name: "extend_size", label: "扩展大小 (bytes)", arg_type: ArgType::U64 },
+                    PresetArg { name: "extend_size", label: "扩展大小 (bytes)", arg_type: ArgType::U64, config_field: None },
                 ],
                 build: build_agent_expand_config,
             },
@@ -424,9 +426,9 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_twitter_verification_config",
                 label: "更新推特验证配置",
                 args: vec![
-                    PresetArg { name: "fee", label: "验证费 (lamports)", arg_type: ArgType::U64 },
-                    PresetArg { name: "reward", label: "验证奖励 (lamports)", arg_type: ArgType::U64 },
-                    PresetArg { name: "points", label: "验证积分", arg_type: ArgType::U64 },
+                    PresetArg { name: "fee", label: "验证费 (lamports)", arg_type: ArgType::U64, config_field: Some("twitter_verification_fee") },
+                    PresetArg { name: "reward", label: "验证奖励 (lamports)", arg_type: ArgType::U64, config_field: Some("twitter_verification_reward") },
+                    PresetArg { name: "points", label: "验证积分", arg_type: ArgType::U64, config_field: Some("twitter_verification_points") },
                 ],
                 build: build_agent_update_twitter_verification_config,
             },
@@ -434,7 +436,7 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_twitter_verifier",
                 label: "更新推特验证者",
                 args: vec![
-                    PresetArg { name: "new_verifier", label: "新验证者地址", arg_type: ArgType::Pubkey },
+                    PresetArg { name: "new_verifier", label: "新验证者地址", arg_type: ArgType::Pubkey, config_field: Some("twitter_verifier") },
                 ],
                 build: build_agent_update_twitter_verifier,
             },
@@ -442,7 +444,7 @@ fn agent_registry_program() -> PresetProgram {
                 name: "withdraw_twitter_verify_fees",
                 label: "提取推特验证手续费",
                 args: vec![
-                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64, config_field: None },
                 ],
                 build: build_agent_withdraw_twitter_verify_fees,
             },
@@ -450,8 +452,8 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_tweet_verify_config",
                 label: "更新推文验证配置",
                 args: vec![
-                    PresetArg { name: "reward", label: "验证奖励 (lamports)", arg_type: ArgType::U64 },
-                    PresetArg { name: "points", label: "验证积分", arg_type: ArgType::U64 },
+                    PresetArg { name: "reward", label: "验证奖励 (lamports)", arg_type: ArgType::U64, config_field: Some("tweet_verify_reward") },
+                    PresetArg { name: "points", label: "验证积分", arg_type: ArgType::U64, config_field: Some("tweet_verify_points") },
                 ],
                 build: build_agent_update_tweet_verify_config,
             },
@@ -677,7 +679,7 @@ fn skills_hub_program() -> PresetProgram {
                 name: "update_admin",
                 label: "更新管理员",
                 args: vec![
-                    PresetArg { name: "new_admin", label: "新管理员地址", arg_type: ArgType::Pubkey },
+                    PresetArg { name: "new_admin", label: "新管理员地址", arg_type: ArgType::Pubkey, config_field: Some("admin") },
                 ],
                 build: build_skills_update_admin,
             },
@@ -685,7 +687,7 @@ fn skills_hub_program() -> PresetProgram {
                 name: "update_register_fee",
                 label: "更新注册费",
                 args: vec![
-                    PresetArg { name: "new_fee", label: "新注册费 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "new_fee", label: "新注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("register_fee") },
                 ],
                 build: build_skills_update_register_fee,
             },
@@ -693,7 +695,7 @@ fn skills_hub_program() -> PresetProgram {
                 name: "withdraw_fees",
                 label: "提取手续费",
                 args: vec![
-                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64, config_field: None },
                 ],
                 build: build_skills_withdraw_fees,
             },
@@ -776,7 +778,7 @@ fn zk_program() -> PresetProgram {
                 name: "initialize_config",
                 label: "初始化配置",
                 args: vec![
-                    PresetArg { name: "fee_amount", label: "手续费 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "fee_amount", label: "手续费 (lamports)", arg_type: ArgType::U64, config_field: None },
                 ],
                 build: build_zk_initialize_config,
             },
@@ -784,8 +786,8 @@ fn zk_program() -> PresetProgram {
                 name: "update_config",
                 label: "更新配置",
                 args: vec![
-                    PresetArg { name: "new_admin", label: "新管理员地址", arg_type: ArgType::Pubkey },
-                    PresetArg { name: "new_fee_amount", label: "新手续费 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "new_admin", label: "新管理员地址", arg_type: ArgType::Pubkey, config_field: Some("admin") },
+                    PresetArg { name: "new_fee_amount", label: "新手续费 (lamports)", arg_type: ArgType::U64, config_field: Some("fee_amount") },
                 ],
                 build: build_zk_update_config,
             },
@@ -793,7 +795,7 @@ fn zk_program() -> PresetProgram {
                 name: "initialize",
                 label: "初始化 Merkle Tree",
                 args: vec![
-                    PresetArg { name: "denomination", label: "面额 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "denomination", label: "面额 (lamports)", arg_type: ArgType::U64, config_field: None },
                 ],
                 build: build_zk_initialize,
             },
@@ -801,7 +803,7 @@ fn zk_program() -> PresetProgram {
                 name: "withdraw_fees",
                 label: "提取手续费",
                 args: vec![
-                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64 },
+                    PresetArg { name: "amount", label: "提取数量 (lamports)", arg_type: ArgType::U64, config_field: None },
                 ],
                 build: build_zk_withdraw_fees,
             },
@@ -877,6 +879,155 @@ fn build_zk_withdraw_fees(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> 
             amount: parse_u64(&args[0])?,
         },
     )])
+}
+
+// ==================== 链上 Config 值解析 ====================
+
+use std::collections::HashMap;
+
+/// 从原始账户数据中解析 config 字段值
+/// 返回 field_name -> display_value 的映射
+pub fn parse_config_values(program_id: &[u8; 32], data: &[u8]) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let quest_id = crate::nara_quest::ID.to_bytes();
+    let agent_id = crate::nara_agent_registry::ID.to_bytes();
+    let skills_id = crate::nara_skills_hub::ID.to_bytes();
+    let zk_id = crate::nara_zk::ID.to_bytes();
+
+    if program_id == &quest_id {
+        // GameConfig (Borsh, packed after 8-byte discriminator)
+        // authority(32) min_reward_count(4) max_reward_count(4)
+        // stake_bps_high(8) stake_bps_low(8) decay_ms(8)
+        // treasury(32) quest_authority(32) min_quest_interval(8)
+        // reward_per_share(8) extra_reward(8)
+        read_pubkey(data, 8, "authority", &mut map);
+        read_u32(data, 40, "min_reward_count", &mut map);
+        read_u32(data, 44, "max_reward_count", &mut map);
+        read_u64(data, 48, "stake_bps_high", &mut map);
+        read_u64(data, 56, "stake_bps_low", &mut map);
+        read_i64(data, 64, "decay_ms", &mut map);
+        read_pubkey(data, 72, "treasury", &mut map);
+        read_pubkey(data, 104, "quest_authority", &mut map);
+        read_i64(data, 136, "min_quest_interval", &mut map);
+        read_u64(data, 144, "reward_per_share", &mut map);
+        read_u64(data, 152, "extra_reward", &mut map);
+    } else if program_id == &agent_id {
+        // ProgramConfig (bytemuck repr(C), after 8-byte discriminator)
+        read_pubkey(data, 8, "admin", &mut map);
+        read_pubkey(data, 40, "fee_vault", &mut map);
+        read_pubkey(data, 72, "point_mint", &mut map);
+        read_pubkey(data, 104, "referee_mint", &mut map);
+        read_pubkey(data, 136, "referee_activity_mint", &mut map);
+        read_u64(data, 168, "register_fee", &mut map);
+        read_u64(data, 176, "points_self", &mut map);
+        read_u64(data, 184, "points_referral", &mut map);
+        read_u64(data, 192, "referral_register_fee", &mut map);
+        read_u64(data, 200, "referral_fee_share", &mut map);
+        read_u64(data, 208, "referral_register_points", &mut map);
+        read_u64(data, 216, "activity_reward", &mut map);
+        read_u64(data, 224, "referral_activity_reward", &mut map);
+        read_pubkey(data, 232, "twitter_verifier", &mut map);
+        read_u64(data, 264, "twitter_verification_fee", &mut map);
+        read_u64(data, 272, "twitter_verification_reward", &mut map);
+        read_u64(data, 280, "twitter_verification_points", &mut map);
+        read_u64(data, 288, "tweet_verify_reward", &mut map);
+        read_u64(data, 296, "tweet_verify_points", &mut map);
+    } else if program_id == &skills_id {
+        // ProgramConfig (bytemuck repr(C))
+        read_pubkey(data, 8, "admin", &mut map);
+        read_u64(data, 40, "register_fee", &mut map);
+        read_pubkey(data, 48, "fee_vault", &mut map);
+    } else if program_id == &zk_id {
+        // ConfigAccount (bytemuck repr(C))
+        read_pubkey(data, 8, "admin", &mut map);
+        read_pubkey(data, 40, "fee_vault", &mut map);
+        read_u64(data, 72, "fee_amount", &mut map);
+    }
+
+    map
+}
+
+fn read_pubkey(data: &[u8], offset: usize, name: &str, map: &mut HashMap<String, String>) {
+    if data.len() >= offset + 32 {
+        let bytes: [u8; 32] = data[offset..offset + 32].try_into().unwrap();
+        map.insert(name.to_string(), bs58::encode(bytes).into_string());
+    }
+}
+
+fn read_u64_val(data: &[u8], offset: usize) -> Option<u64> {
+    if data.len() >= offset + 8 {
+        Some(u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap()))
+    } else {
+        None
+    }
+}
+
+fn read_u64(data: &[u8], offset: usize, name: &str, map: &mut HashMap<String, String>) {
+    if let Some(v) = read_u64_val(data, offset) {
+        map.insert(name.to_string(), v.to_string());
+    }
+}
+
+fn read_i64(data: &[u8], offset: usize, name: &str, map: &mut HashMap<String, String>) {
+    if data.len() >= offset + 8 {
+        let v = i64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+        map.insert(name.to_string(), v.to_string());
+    }
+}
+
+fn read_u32(data: &[u8], offset: usize, name: &str, map: &mut HashMap<String, String>) {
+    if data.len() >= offset + 4 {
+        let v = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+        map.insert(name.to_string(), v.to_string());
+    }
+}
+
+/// 获取程序 config PDA 的种子
+fn config_seeds(program_id: &[u8; 32]) -> &'static [u8] {
+    let quest_id = crate::nara_quest::ID.to_bytes();
+    if program_id == &quest_id {
+        b"quest_config"
+    } else {
+        b"config"
+    }
+}
+
+/// 从链上获取程序 config 的当前值
+pub async fn fetch_program_config_values(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    program_id: &[u8; 32],
+) -> Result<HashMap<String, String>, String> {
+    let pid = Pubkey::new_from_array(*program_id);
+    let seeds = config_seeds(program_id);
+    let (config_pda, _) = Pubkey::find_program_address(&[seeds], &pid);
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "getAccountInfo",
+        "params": [config_pda.to_string(), {"encoding": "base64", "commitment": "confirmed"}],
+    });
+
+    let resp: serde_json::Value = client
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("RPC 请求失败: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败: {e}"))?;
+
+    let data_arr = resp["result"]["value"]["data"]
+        .as_array()
+        .ok_or("无法获取 config 账户数据")?;
+    let b64 = data_arr[0].as_str().ok_or("无效的 base64 数据")?;
+    use base64::Engine;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("base64 解码失败: {e}"))?;
+
+    Ok(parse_config_values(program_id, &raw))
 }
 
 #[cfg(test)]

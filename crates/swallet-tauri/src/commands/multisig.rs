@@ -232,6 +232,7 @@ pub struct PresetArgDto {
     pub name: String,
     pub label: String,
     pub arg_type: String,
+    pub config_field: Option<String>,
 }
 
 #[tauri::command]
@@ -245,9 +246,38 @@ pub fn get_preset_programs(chain_id: String) -> Vec<PresetProgramDto> {
                 name: a.name.to_string(),
                 label: a.label.to_string(),
                 arg_type: format!("{:?}", a.arg_type),
+                config_field: a.config_field.map(|s| s.to_string()),
             }).collect(),
         }).collect(),
     }).collect()
+}
+
+#[tauri::command]
+pub async fn fetch_preset_config_values(
+    state: tauri::State<'_, crate::AppState>,
+    chain_id: String,
+    program_idx: usize,
+) -> CommandResult<std::collections::HashMap<String, String>> {
+    let programs = multisig::presets::programs_for_chain(&chain_id);
+    let program = programs.get(program_idx)
+        .ok_or_else(|| "无效的程序索引".to_string())?;
+
+    let rpc_url = {
+        let svc = state.service.lock().map_err(|e| e.to_string())?;
+        svc.config.chains.solana.iter()
+            .find(|c| c.id == chain_id)
+            .map(|c| c.rpc_url.clone())
+            .ok_or_else(|| format!("未找到链 {} 的 RPC", chain_id))?
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
+
+    multisig::presets::fetch_program_config_values(&client, &rpc_url, &program.program_id)
+        .await
+        .map_err(|e| e.into())
 }
 
 #[tauri::command]

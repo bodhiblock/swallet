@@ -110,6 +110,7 @@ export interface PresetArgDto {
 	name: string;
 	label: string;
 	arg_type: string;
+	config_field: string | null;
 }
 
 export interface StakeAccountDto {

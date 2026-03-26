@@ -39,6 +39,7 @@
 	let selectedProgram = $state(0);
 	let selectedInstruction = $state(0);
 	let presetArgValues: string[] = $state([]);
+	let configHints: Record<string, string> = $state({});
 
 	// Vote/Stake ops
 	type VsOp = 'vote-auth-voter' | 'vote-auth-withdrawer' | 'vote-withdraw' | 'stake-auth-staker' | 'stake-auth-withdrawer' | 'stake-delegate' | 'stake-deactivate' | 'stake-withdraw';
@@ -121,7 +122,14 @@
 			selectedProgram = 0;
 			selectedInstruction = 0;
 			updateArgValues();
+			loadConfigHints();
 		} catch (_) { presetPrograms = []; }
+	}
+
+	async function loadConfigHints() {
+		try {
+			configHints = await api.fetchPresetConfigValues('nara-mainnet', selectedProgram);
+		} catch (_) { configHints = {}; }
 	}
 
 	function updateArgValues() {
@@ -383,7 +391,7 @@
 					<p class="dim">当前链没有可用的预制程序</p>
 				{:else}
 					<p class="dim">选择程序</p>
-					<select bind:value={selectedProgram} onchange={() => { selectedInstruction = 0; updateArgValues(); }}>
+					<select bind:value={selectedProgram} onchange={() => { selectedInstruction = 0; updateArgValues(); loadConfigHints(); }}>
 						{#each presetPrograms as prog, i}<option value={i}>{prog.name}</option>{/each}
 					</select>
 					<p class="dim">选择指令</p>
@@ -393,7 +401,12 @@
 						{/each}
 					</select>
 					{#each (presetPrograms[selectedProgram]?.instructions[selectedInstruction]?.args ?? []) as arg, i}
-						<input bind:value={presetArgValues[i]} placeholder="{arg.label} ({arg.name})" />
+						<div class="arg-row">
+							<input bind:value={presetArgValues[i]} placeholder="{arg.label} ({arg.name})" />
+							{#if arg.config_field && configHints[arg.config_field]}
+								<span class="config-hint">当前值: {configHints[arg.config_field]}</span>
+							{/if}
+						</div>
 					{/each}
 				{/if}
 
@@ -462,6 +475,8 @@
 	.tabs button { flex: 1; padding: 8px; border-radius: 6px; border: 1px solid var(--border); color: var(--text-dim); font-size: 13px; background: none; cursor: pointer; }
 	.tabs button.active { border-color: var(--accent); color: var(--accent); background: rgba(34,211,238,0.1); }
 	.dim { color: var(--text-dim); font-size: 14px; }
+	.arg-row { display: flex; flex-direction: column; }
+	.config-hint { color: var(--text-dim); font-size: 12px; margin-top: 2px; font-family: monospace; }
 	.center-text { text-align: center; padding: 24px 0; }
 
 	.detail-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; }

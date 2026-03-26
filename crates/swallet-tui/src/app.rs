@@ -2600,11 +2600,17 @@ impl App {
                         .timeout(std::time::Duration::from_secs(10))
                         .build()
                         .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
-                    verify_program_authority(&client, &rpc_url, &pid, &vault_pda).await
+                    verify_program_authority(&client, &rpc_url, &pid, &vault_pda).await?;
+                    // 获取 config 当前值用于显示提示
+                    let hints = swallet_core::multisig::presets::fetch_program_config_values(
+                        &client, &rpc_url, &pid,
+                    ).await.unwrap_or_default();
+                    Ok::<_, String>(hints)
                 });
 
                 match check_result {
-                    Ok(()) => {
+                    Ok(hints) => {
+                        self.ui.ms_program_config_hints = hints;
                         self.ui.clear_status();
                         let has_args = program
                             .instructions

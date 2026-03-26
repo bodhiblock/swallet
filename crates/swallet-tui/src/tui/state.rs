@@ -436,6 +436,7 @@ pub struct UiState {
     pub ms_program_args: Vec<String>,     // 已收集的参数值
     pub ms_program_arg_index: usize,      // 当前输入的参数索引
     pub ms_program_arg_input: String,     // 当前参数输入缓冲
+    pub ms_program_config_hints: std::collections::HashMap<String, String>, // config 当前链上值
     pub ms_confirm_password: String,
     pub ms_vote_action: Option<VoteAction>,
     pub ms_result: Option<(bool, String)>,
@@ -587,6 +588,7 @@ impl UiState {
             ms_program_args: Vec::new(),
             ms_program_arg_index: 0,
             ms_program_arg_input: String::new(),
+            ms_program_config_hints: std::collections::HashMap::new(),
             ms_confirm_password: String::new(),
             ms_vote_action: None,
             ms_result: None,
