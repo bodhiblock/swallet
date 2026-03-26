@@ -2694,6 +2694,15 @@ impl App {
                                 return;
                             }
                         }
+                        multisig::presets::ArgType::I32 => {
+                            if input.parse::<i32>().is_err() {
+                                self.ui.set_status("无效的数值");
+                                return;
+                            }
+                        }
+                        multisig::presets::ArgType::String => {
+                            // 字符串无需验证
+                        }
                     }
                 }
 

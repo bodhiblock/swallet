@@ -22,6 +22,10 @@ pub enum ArgType {
     U32,
     /// i64 数值
     I64,
+    /// i32 数值
+    I32,
+    /// 字符串
+    String,
 }
 
 /// 预制参数定义
@@ -93,6 +97,10 @@ fn parse_u32(s: &str) -> Result<u32, String> {
 
 fn parse_i64(s: &str) -> Result<i64, String> {
     s.parse::<i64>().map_err(|_| format!("无效的数值: {s}"))
+}
+
+fn parse_i32(s: &str) -> Result<i32, String> {
+    s.parse::<i32>().map_err(|_| format!("无效的数值: {s}"))
 }
 
 fn pk(bytes: &[u8; 32]) -> Pubkey {
@@ -203,6 +211,24 @@ fn quest_program() -> PresetProgram {
                     PresetArg { name: "new_authority", label: "新管理员地址", arg_type: ArgType::Pubkey, config_field: Some("authority") },
                 ],
                 build: build_quest_transfer_authority,
+            },
+            PresetInstruction {
+                name: "set_stake_authority",
+                label: "设置质押权限",
+                args: vec![
+                    PresetArg { name: "new_stake_authority", label: "新质押权限地址", arg_type: ArgType::Pubkey, config_field: Some("stake_authority") },
+                ],
+                build: build_quest_set_stake_authority,
+            },
+            PresetInstruction {
+                name: "adjust_free_stake",
+                label: "调整免费质押",
+                args: vec![
+                    PresetArg { name: "user", label: "用户地址", arg_type: ArgType::Pubkey, config_field: None },
+                    PresetArg { name: "delta", label: "调整量 (正增负减)", arg_type: ArgType::I32, config_field: None },
+                    PresetArg { name: "reason", label: "原因", arg_type: ArgType::String, config_field: None },
+                ],
+                build: build_quest_adjust_free_stake,
             },
         ],
     }
@@ -341,6 +367,45 @@ fn build_quest_transfer_authority(vault: &[u8; 32], pid: &[u8; 32], args: &[Stri
         },
         quest_client::args::TransferAuthority {
             new_authority: parse_pubkey(&args[0])?,
+        },
+    )])
+}
+
+fn build_quest_set_stake_authority(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        quest_client::accounts::SetStakeAuthority {
+            game_config: derive_pda(&[b"quest_config"], &program_id),
+            authority: pk(vault),
+        },
+        quest_client::args::SetStakeAuthority {
+            new_stake_authority: parse_pubkey(&args[0])?,
+        },
+    )])
+}
+
+fn build_quest_adjust_free_stake(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.len() < 3 { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    let user = parse_pubkey(&args[0])?;
+    let (stake_record, _) = Pubkey::find_program_address(
+        &[b"stake_record", user.as_ref()],
+        &program_id,
+    );
+    Ok(vec![to_vault_ix(
+        pid,
+        quest_client::accounts::AdjustFreeStake {
+            game_config: derive_pda(&[b"quest_config"], &program_id),
+            stake_record,
+            user,
+            caller: pk(vault),
+            system_program: solana_sdk::system_program::ID,
+        },
+        quest_client::args::AdjustFreeStake {
+            delta: parse_i32(&args[1])?,
+            reason: args[2].clone(),
         },
     )])
 }
@@ -911,6 +976,7 @@ pub fn parse_config_values(program_id: &[u8; 32], data: &[u8]) -> HashMap<String
         read_i64(data, 136, "min_quest_interval", &mut map);
         read_u64(data, 144, "reward_per_share", &mut map);
         read_u64(data, 152, "extra_reward", &mut map);
+        read_pubkey(data, 160, "stake_authority", &mut map);
     } else if program_id == &agent_id {
         // ProgramConfig (bytemuck repr(C), after 8-byte discriminator)
         read_pubkey(data, 8, "admin", &mut map);

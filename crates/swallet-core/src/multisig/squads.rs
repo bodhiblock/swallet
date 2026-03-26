@@ -600,6 +600,22 @@ fn decode_anchor_args(data: &[u8], args: &[super::presets::PresetArg]) -> String
                 parts.push(format!("{}={}", arg.name, v));
                 off += 8;
             }
+            ArgType::I32 => {
+                if off + 4 > data.len() { break; }
+                let v = i32::from_le_bytes(data[off..off + 4].try_into().unwrap_or_default());
+                parts.push(format!("{}={}", arg.name, v));
+                off += 4;
+            }
+            ArgType::String => {
+                // Borsh string: u32 len prefix + utf8 bytes
+                if off + 4 > data.len() { break; }
+                let len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap_or_default()) as usize;
+                off += 4;
+                if off + len > data.len() { break; }
+                let s = std::str::from_utf8(&data[off..off + len]).unwrap_or("<invalid>");
+                parts.push(format!("{}=\"{}\"", arg.name, s));
+                off += len;
+            }
         }
     }
     parts.join(", ")
