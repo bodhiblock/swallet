@@ -94,6 +94,35 @@
           }
         },
         {
+          "name": "tweet_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  119,
+                  101,
+                  101,
+                  116,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "tweet_id"
+              }
+            ]
+          }
+        },
+        {
           "name": "authority",
           "writable": true
         },
@@ -305,6 +334,10 @@
         {
           "name": "agent_id",
           "type": "string"
+        },
+        {
+          "name": "tweet_id",
+          "type": "u128"
         }
       ]
     },
@@ -2805,6 +2838,34 @@
           }
         },
         {
+          "name": "tweet_record",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  119,
+                  101,
+                  101,
+                  116,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "tweet_id"
+              }
+            ]
+          }
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -2815,12 +2876,8 @@
           "type": "string"
         },
         {
-          "name": "username",
-          "type": "string"
-        },
-        {
-          "name": "tweet_url",
-          "type": "string"
+          "name": "tweet_id",
+          "type": "u128"
         }
       ]
     },
@@ -3233,11 +3290,11 @@
       ],
       "args": [
         {
-          "name": "referral_register_fee",
+          "name": "referral_discount_bps",
           "type": "u64"
         },
         {
-          "name": "referral_fee_share",
+          "name": "referral_share_bps",
           "type": "u64"
         },
         {
@@ -3288,7 +3345,19 @@
       ],
       "args": [
         {
-          "name": "new_fee",
+          "name": "fee",
+          "type": "u64"
+        },
+        {
+          "name": "fee_7",
+          "type": "u64"
+        },
+        {
+          "name": "fee_6",
+          "type": "u64"
+        },
+        {
+          "name": "fee_5",
           "type": "u64"
         }
       ]
@@ -4045,6 +4114,19 @@
       ]
     },
     {
+      "name": "TweetRecord",
+      "discriminator": [
+        13,
+        25,
+        5,
+        236,
+        64,
+        149,
+        72,
+        215
+      ]
+    },
+    {
       "name": "TweetVerify",
       "discriminator": [
         6,
@@ -4083,6 +4165,32 @@
         197,
         74,
         39
+      ]
+    },
+    {
+      "name": "TwitterBindRequested",
+      "discriminator": [
+        251,
+        254,
+        188,
+        154,
+        25,
+        126,
+        76,
+        169
+      ]
+    },
+    {
+      "name": "TwitterBindResult",
+      "discriminator": [
+        4,
+        160,
+        91,
+        219,
+        142,
+        73,
+        75,
+        215
       ]
     }
   ],
@@ -4299,8 +4407,28 @@
     },
     {
       "code": 6042,
-      "name": "TwitterUsernameMismatch",
-      "msg": "Twitter username does not match verified account"
+      "name": "TwitterHandleAlreadyTaken",
+      "msg": "Twitter handle is already bound to another agent"
+    },
+    {
+      "code": 6043,
+      "name": "TwitterAlreadyVerified",
+      "msg": "Twitter is already verified, unbind first"
+    },
+    {
+      "code": 6044,
+      "name": "InvalidTweetUrlFormat",
+      "msg": "Invalid tweet URL format"
+    },
+    {
+      "code": 6045,
+      "name": "TweetAlreadyApproved",
+      "msg": "Tweet has already been approved"
+    },
+    {
+      "code": 6046,
+      "name": "AgentIdReserved",
+      "msg": "Agent ID length <= 4 is reserved for admin only"
     }
   ],
   "types": [
@@ -4436,6 +4564,19 @@
         "kind": "struct",
         "fields": [
           {
+            "name": "agent_id_len",
+            "type": "u64"
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
             "name": "status",
             "type": "u64"
           },
@@ -4474,7 +4615,16 @@
             "type": {
               "array": [
                 "u8",
-                64
+                128
+              ]
+            }
+          },
+          {
+            "name": "_reserved2",
+            "type": {
+              "array": [
+                "u8",
+                128
               ]
             }
           }
@@ -4568,11 +4718,11 @@
             "type": "u64"
           },
           {
-            "name": "referral_register_fee",
+            "name": "referral_discount_bps",
             "type": "u64"
           },
           {
-            "name": "referral_fee_share",
+            "name": "referral_share_bps",
             "type": "u64"
           },
           {
@@ -4612,6 +4762,18 @@
             "type": "u64"
           },
           {
+            "name": "register_fee_7",
+            "type": "u64"
+          },
+          {
+            "name": "register_fee_6",
+            "type": "u64"
+          },
+          {
+            "name": "register_fee_5",
+            "type": "u64"
+          },
+          {
             "name": "_reserved",
             "type": {
               "array": [
@@ -4628,13 +4790,51 @@
                 96
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "TweetRecord",
+      "docs": [
+        "Records an approved tweet to prevent duplicate submissions.",
+        "Seeds: [SEED_TWEET_RECORD, &tweet_id.to_le_bytes()]"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c",
+        "packed": true
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent",
+            "docs": [
+              "The agent PDA that submitted this tweet"
+            ],
+            "type": "pubkey"
           },
           {
-            "name": "_reserved3",
+            "name": "approved_at",
+            "docs": [
+              "Unix timestamp when this tweet was approved"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "tweet_id",
+            "docs": [
+              "Tweet ID (Twitter snowflake ID)"
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "_reserved",
             "type": {
               "array": [
                 "u8",
-                24
+                64
               ]
             }
           }
@@ -4649,11 +4849,25 @@
       ],
       "serialization": "bytemuck",
       "repr": {
-        "kind": "c"
+        "kind": "c",
+        "packed": true
       },
       "type": {
         "kind": "struct",
         "fields": [
+          {
+            "name": "agent_id_len",
+            "type": "u64"
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
           {
             "name": "status",
             "docs": [
@@ -4676,17 +4890,14 @@
             "type": "i64"
           },
           {
-            "name": "tweet_url_len",
+            "name": "tweet_id",
             "docs": [
-              "Actual byte length of tweet_url"
+              "Tweet ID (Twitter snowflake ID)"
             ],
-            "type": "u64"
+            "type": "u128"
           },
           {
-            "name": "tweet_url",
-            "docs": [
-              "Tweet URL (max 256 bytes)"
-            ],
+            "name": "_reserved",
             "type": {
               "array": [
                 "u8",
@@ -4695,13 +4906,121 @@
             }
           },
           {
-            "name": "_reserved",
+            "name": "_reserved2",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "_reserved3",
             "type": {
               "array": [
                 "u8",
                 64
               ]
             }
+          },
+          {
+            "name": "_reserved4",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "_reserved5",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "_reserved6",
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "TwitterBindRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "string"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "username",
+            "type": "string"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "is_first_bind",
+            "type": "bool"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TwitterBindResult",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "string"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "username",
+            "type": "string"
+          },
+          {
+            "name": "approved",
+            "type": "bool"
+          },
+          {
+            "name": "fee_refunded",
+            "type": "u64"
+          },
+          {
+            "name": "reward",
+            "type": "u64"
+          },
+          {
+            "name": "points",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
           }
         ]
       }

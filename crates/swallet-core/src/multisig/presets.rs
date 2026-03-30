@@ -439,7 +439,10 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_register_fee",
                 label: "更新注册费",
                 args: vec![
-                    PresetArg { name: "new_fee", label: "新注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("register_fee") },
+                    PresetArg { name: "fee", label: "注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("register_fee") },
+                    PresetArg { name: "fee_7", label: "7位注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("register_fee_7") },
+                    PresetArg { name: "fee_6", label: "6位注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("register_fee_6") },
+                    PresetArg { name: "fee_5", label: "5位注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("register_fee_5") },
                 ],
                 build: build_agent_update_register_fee,
             },
@@ -465,8 +468,8 @@ fn agent_registry_program() -> PresetProgram {
                 name: "update_referral_config",
                 label: "更新推荐配置",
                 args: vec![
-                    PresetArg { name: "referral_register_fee", label: "推荐注册费 (lamports)", arg_type: ArgType::U64, config_field: Some("referral_register_fee") },
-                    PresetArg { name: "referral_fee_share", label: "推荐费分成 (lamports)", arg_type: ArgType::U64, config_field: Some("referral_fee_share") },
+                    PresetArg { name: "referral_discount_bps", label: "推荐折扣 (bps)", arg_type: ArgType::U64, config_field: Some("referral_discount_bps") },
+                    PresetArg { name: "referral_share_bps", label: "推荐分成 (bps)", arg_type: ArgType::U64, config_field: Some("referral_share_bps") },
                     PresetArg { name: "referral_register_points", label: "推荐注册积分", arg_type: ArgType::U64, config_field: Some("referral_register_points") },
                 ],
                 build: build_agent_update_referral_config,
@@ -562,7 +565,7 @@ fn build_agent_update_admin(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -
 }
 
 fn build_agent_update_register_fee(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
-    if args.is_empty() { return Err("参数不足".into()); }
+    if args.len() < 4 { return Err("参数不足".into()); }
     let program_id = pk(pid);
     Ok(vec![to_vault_ix(
         pid,
@@ -571,7 +574,10 @@ fn build_agent_update_register_fee(vault: &[u8; 32], pid: &[u8; 32], args: &[Str
             config: derive_pda(&[b"config"], &program_id),
         },
         agent_client::args::UpdateRegisterFee {
-            new_fee: parse_u64(&args[0])?,
+            fee: parse_u64(&args[0])?,
+            fee_7: parse_u64(&args[1])?,
+            fee_6: parse_u64(&args[2])?,
+            fee_5: parse_u64(&args[3])?,
         },
     )])
 }
@@ -618,8 +624,8 @@ fn build_agent_update_referral_config(vault: &[u8; 32], pid: &[u8; 32], args: &[
             config: derive_pda(&[b"config"], &program_id),
         },
         agent_client::args::UpdateReferralConfig {
-            referral_register_fee: parse_u64(&args[0])?,
-            referral_fee_share: parse_u64(&args[1])?,
+            referral_discount_bps: parse_u64(&args[0])?,
+            referral_share_bps: parse_u64(&args[1])?,
             referral_register_points: parse_u64(&args[2])?,
         },
     )])
@@ -987,8 +993,8 @@ pub fn parse_config_values(program_id: &[u8; 32], data: &[u8]) -> HashMap<String
         read_u64(data, 168, "register_fee", &mut map);
         read_u64(data, 176, "points_self", &mut map);
         read_u64(data, 184, "points_referral", &mut map);
-        read_u64(data, 192, "referral_register_fee", &mut map);
-        read_u64(data, 200, "referral_fee_share", &mut map);
+        read_u64(data, 192, "referral_discount_bps", &mut map);
+        read_u64(data, 200, "referral_share_bps", &mut map);
         read_u64(data, 208, "referral_register_points", &mut map);
         read_u64(data, 216, "activity_reward", &mut map);
         read_u64(data, 224, "referral_activity_reward", &mut map);
@@ -998,6 +1004,9 @@ pub fn parse_config_values(program_id: &[u8; 32], data: &[u8]) -> HashMap<String
         read_u64(data, 280, "twitter_verification_points", &mut map);
         read_u64(data, 288, "tweet_verify_reward", &mut map);
         read_u64(data, 296, "tweet_verify_points", &mut map);
+        read_u64(data, 304, "register_fee_7", &mut map);
+        read_u64(data, 312, "register_fee_6", &mut map);
+        read_u64(data, 320, "register_fee_5", &mut map);
     } else if program_id == &skills_id {
         // ProgramConfig (bytemuck repr(C))
         read_pubkey(data, 8, "admin", &mut map);
