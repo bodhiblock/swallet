@@ -97,6 +97,136 @@
       ]
     },
     {
+      "name": "claim_airdrop",
+      "discriminator": [
+        137,
+        50,
+        122,
+        111,
+        89,
+        254,
+        8,
+        20
+      ],
+      "accounts": [
+        {
+          "name": "game_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  101,
+                  115,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  101,
+                  115,
+                  116,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "winner_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  101,
+                  115,
+                  116,
+                  95,
+                  119,
+                  105,
+                  110,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "airdrop_fund",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  101,
+                  115,
+                  116,
+                  95,
+                  97,
+                  105,
+                  114,
+                  100,
+                  114,
+                  111,
+                  112
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "create_question",
       "discriminator": [
         222,
@@ -245,6 +375,61 @@
       ]
     },
     {
+      "name": "expand_config",
+      "discriminator": [
+        120,
+        201,
+        195,
+        128,
+        35,
+        202,
+        73,
+        161
+      ],
+      "accounts": [
+        {
+          "name": "game_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  101,
+                  115,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "additional_size",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "initialize",
       "discriminator": [
         175,
@@ -342,6 +527,60 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "set_airdrop_config",
+      "discriminator": [
+        255,
+        181,
+        252,
+        34,
+        155,
+        230,
+        65,
+        227
+      ],
+      "accounts": [
+        {
+          "name": "game_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  101,
+                  115,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "airdrop_amount",
+          "type": "u64"
+        },
+        {
+          "name": "max_airdrop_count",
+          "type": "u32"
+        }
+      ]
     },
     {
       "name": "set_quest_authority",
@@ -1618,6 +1857,31 @@
       "code": 6017,
       "name": "FreeCreditsOverflow",
       "msg": "Free credits overflow"
+    },
+    {
+      "code": 6018,
+      "name": "AirdropNotEligible",
+      "msg": "Not eligible: must answer current round first"
+    },
+    {
+      "code": 6019,
+      "name": "AirdropMaxReached",
+      "msg": "Max airdrop count reached for this address"
+    },
+    {
+      "code": 6020,
+      "name": "AirdropCooldown",
+      "msg": "Must wait 24 hours between airdrop claims"
+    },
+    {
+      "code": 6021,
+      "name": "AirdropDisabled",
+      "msg": "Airdrop is disabled (amount = 0)"
+    },
+    {
+      "code": 6022,
+      "name": "InsufficientAirdrop",
+      "msg": "Airdrop fund has insufficient balance"
     }
   ],
   "types": [
@@ -1707,11 +1971,19 @@
             "type": "pubkey"
           },
           {
+            "name": "airdrop_amount",
+            "type": "u64"
+          },
+          {
+            "name": "max_airdrop_count",
+            "type": "u32"
+          },
+          {
             "name": "_padding",
             "type": {
               "array": [
                 "u8",
-                32
+                20
               ]
             }
           }
@@ -1827,11 +2099,19 @@
             "type": "u64"
           },
           {
+            "name": "airdrop_count",
+            "type": "u32"
+          },
+          {
+            "name": "last_airdrop_ts",
+            "type": "i64"
+          },
+          {
             "name": "_padding",
             "type": {
               "array": [
                 "u8",
-                64
+                52
               ]
             }
           }

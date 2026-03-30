@@ -221,6 +221,23 @@ fn quest_program() -> PresetProgram {
                 build: build_quest_set_stake_authority,
             },
             PresetInstruction {
+                name: "expand_config",
+                label: "扩展配置账户",
+                args: vec![
+                    PresetArg { name: "additional_size", label: "扩展大小 (bytes)", arg_type: ArgType::U32, config_field: None },
+                ],
+                build: build_quest_expand_config,
+            },
+            PresetInstruction {
+                name: "set_airdrop_config",
+                label: "设置空投配置",
+                args: vec![
+                    PresetArg { name: "airdrop_amount", label: "空投数量 (lamports)", arg_type: ArgType::U64, config_field: Some("airdrop_amount") },
+                    PresetArg { name: "max_airdrop_count", label: "最大空投次数", arg_type: ArgType::U32, config_field: Some("max_airdrop_count") },
+                ],
+                build: build_quest_set_airdrop_config,
+            },
+            PresetInstruction {
                 name: "adjust_free_stake",
                 label: "调整免费质押",
                 args: vec![
@@ -382,6 +399,38 @@ fn build_quest_set_stake_authority(vault: &[u8; 32], pid: &[u8; 32], args: &[Str
         },
         quest_client::args::SetStakeAuthority {
             new_stake_authority: parse_pubkey(&args[0])?,
+        },
+    )])
+}
+
+fn build_quest_expand_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        quest_client::accounts::ExpandConfig {
+            game_config: derive_pda(&[b"quest_config"], &program_id),
+            authority: pk(vault),
+            system_program: solana_sdk::system_program::ID,
+        },
+        quest_client::args::ExpandConfig {
+            additional_size: parse_u32(&args[0])?,
+        },
+    )])
+}
+
+fn build_quest_set_airdrop_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
+    if args.len() < 2 { return Err("参数不足".into()); }
+    let program_id = pk(pid);
+    Ok(vec![to_vault_ix(
+        pid,
+        quest_client::accounts::SetAirdropConfig {
+            game_config: derive_pda(&[b"quest_config"], &program_id),
+            authority: pk(vault),
+        },
+        quest_client::args::SetAirdropConfig {
+            airdrop_amount: parse_u64(&args[0])?,
+            max_airdrop_count: parse_u32(&args[1])?,
         },
     )])
 }
@@ -983,6 +1032,8 @@ pub fn parse_config_values(program_id: &[u8; 32], data: &[u8]) -> HashMap<String
         read_u64(data, 144, "reward_per_share", &mut map);
         read_u64(data, 152, "extra_reward", &mut map);
         read_pubkey(data, 160, "stake_authority", &mut map);
+        read_u64(data, 192, "airdrop_amount", &mut map);
+        read_u32(data, 200, "max_airdrop_count", &mut map);
     } else if program_id == &agent_id {
         // ProgramConfig (bytemuck repr(C), after 8-byte discriminator)
         read_pubkey(data, 8, "admin", &mut map);
