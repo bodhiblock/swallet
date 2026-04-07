@@ -3104,6 +3104,11 @@ impl App {
         let rpc_url = self.get_current_ms_rpc_url();
         let address = info.address.to_string();
         let tx = self.bg_tx.clone();
+        let chain_id = self.ui.ms_selected_chain_id.clone();
+        let native_symbol = self.service.config.chains.solana.iter()
+            .find(|c| c.id == chain_id)
+            .map(|c| c.native_symbol.clone())
+            .unwrap_or_else(|| "SOL".to_string());
 
         self.ui.set_status("正在获取提案...");
 
@@ -3119,7 +3124,7 @@ impl App {
                 Err(_) => info, // 刷新失败则用缓存
             };
 
-            match multisig::squads::fetch_active_proposals(&client, &rpc_url, &latest_info).await {
+            match multisig::squads::fetch_active_proposals(&client, &rpc_url, &latest_info, &native_symbol).await {
                 Ok(proposals) => {
                     let _ = tx.send(BgMessage::ProposalsFetched(proposals));
                 }

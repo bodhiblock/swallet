@@ -68,31 +68,39 @@ pub async fn fetch_active_proposals(
     client: &Client,
     rpc_url: &str,
     multisig: &MultisigInfo,
+    native_symbol: &str,
 ) -> Result<Vec<ProposalInfo>, String> {
-    let mut proposals = Vec::new();
-
     // 从最新的交易开始向前查找，最多查找 20 个
     let start = multisig.transaction_index;
     let end = if start > 20 { start - 20 } else { 1 };
+    let indices: Vec<u64> = (end..=start).rev().collect();
+    let count = indices.len();
 
-    for idx in (end..=start).rev() {
-        let (proposal_pda, _) = derive_proposal_pda(&multisig.address, idx);
-        let proposal_addr = proposal_pda.to_string();
+    // 一次性批量获取所有 proposal 和 vault transaction 账户
+    // 先放 proposals 再放 vault txs，便于切片分离
+    let mut addresses: Vec<String> = Vec::with_capacity(count * 2);
+    let mut proposal_pdas: Vec<Pubkey> = Vec::with_capacity(count);
+    for &idx in &indices {
+        let (pda, _) = derive_proposal_pda(&multisig.address, idx);
+        proposal_pdas.push(pda);
+        addresses.push(pda.to_string());
+    }
+    for &idx in &indices {
+        let (pda, _) = derive_transaction_pda(&multisig.address, idx);
+        addresses.push(pda.to_string());
+    }
 
-        match fetch_proposal(client, rpc_url, &proposal_addr).await {
-            Ok(mut proposal) => {
-                // 尝试获取 VaultTransaction 解析摘要
-                let (tx_pda, _) = derive_transaction_pda(&multisig.address, idx);
-                if let Ok(tx_data) = fetch_account_data(client, rpc_url, &tx_pda.to_string()).await {
-                    proposal.summary = decode_vault_tx_summary(&tx_data).ok();
-                }
-                proposals.push(proposal);
-            }
-            Err(_) => {
-                // 提案不存在或解析失败，跳过
-                continue;
-            }
+    let raw = fetch_multiple_accounts(client, rpc_url, &addresses).await?;
+    let (proposal_data, tx_data) = raw.split_at(count);
+
+    let mut proposals = Vec::with_capacity(count);
+    for i in 0..count {
+        let Some(p_bytes) = &proposal_data[i] else { continue };
+        let Ok(mut proposal) = parse_proposal_account(p_bytes, proposal_pdas[i]) else { continue };
+        if let Some(tx_bytes) = &tx_data[i] {
+            proposal.summary = decode_vault_tx_summary(tx_bytes, native_symbol).ok();
         }
+        proposals.push(proposal);
     }
 
     Ok(proposals)
@@ -552,7 +560,7 @@ struct ParsedMessage {
 }
 
 /// 解码 VaultTransaction 原始数据为人类可读摘要
-pub fn decode_vault_tx_summary(data: &[u8]) -> Result<String, String> {
+pub fn decode_vault_tx_summary(data: &[u8], native_symbol: &str) -> Result<String, String> {
     let msg = parse_vault_tx_message_borsh(data)?;
     if msg.instructions.is_empty() {
         return Ok("空交易".into());
@@ -562,7 +570,7 @@ pub fn decode_vault_tx_summary(data: &[u8]) -> Result<String, String> {
         let program_id = msg.account_keys.get(ix.program_id_index as usize)
             .copied()
             .unwrap_or_default();
-        decode_instruction_summary(&program_id, &ix.data, &ix.account_indices, &msg.account_keys)
+        decode_instruction_summary(&program_id, &ix.data, &ix.account_indices, &msg.account_keys, native_symbol)
     }).collect();
 
     Ok(summaries.join(" + "))
@@ -626,6 +634,7 @@ fn decode_instruction_summary(
     data: &[u8],
     account_indices: &[u8],
     account_keys: &[Pubkey],
+    native_symbol: &str,
 ) -> String {
     let pid = program_id.to_string();
     let short = |pk: &Pubkey| { let s = pk.to_string(); format!("{}..{}", &s[..4], &s[s.len()-4..]) };
@@ -642,8 +651,9 @@ fn decode_instruction_summary(
     if *program_id == Pubkey::default() {
         if data.len() >= 12 && data[..4] == [2, 0, 0, 0] {
             let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
+            let from = get_account(0).map(|p| p.to_string()).unwrap_or_default();
             let to = get_account(1).map(|p| p.to_string()).unwrap_or_default();
-            return format!("SOL 转账\n目标: {to}\n金额: {} SOL", format_sol(lamports));
+            return format!("{sym} 转账\n源: {from}\n目标: {to}\n金额: {} {sym}", format_sol(lamports), sym = native_symbol);
         }
         return "System 调用".into();
     }
@@ -666,7 +676,7 @@ fn decode_instruction_summary(
                     if data.len() >= 12 {
                         let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
                         let to = get_account(1).map(|p| p.to_string()).unwrap_or_default();
-                        return format!("Vote 提取 (Withdraw)\nVote: {vote_account}\n目标: {to}\n金额: {} SOL", format_sol(lamports));
+                        return format!("Vote 提取 (Withdraw)\nVote: {vote_account}\n目标: {to}\n金额: {} {}", format_sol(lamports), native_symbol);
                     }
                 }
                 _ => {}
@@ -697,7 +707,7 @@ fn decode_instruction_summary(
                     if data.len() >= 12 {
                         let lamports = u64::from_le_bytes(data[4..12].try_into().unwrap_or_default());
                         let to = get_account(1).map(|p| p.to_string()).unwrap_or_default();
-                        return format!("Stake 提取 (Withdraw)\nStake: {stake_account}\n目标: {to}\n金额: {} SOL", format_sol(lamports));
+                        return format!("Stake 提取 (Withdraw)\nStake: {stake_account}\n目标: {to}\n金额: {} {}", format_sol(lamports), native_symbol);
                     }
                 }
                 5 => {
@@ -897,6 +907,49 @@ async fn fetch_account_data(
     base64::engine::general_purpose::STANDARD
         .decode(base64_str)
         .map_err(|e| format!("Base64 解码失败: {e}"))
+}
+
+/// 批量获取账户数据，返回与输入相同顺序的 Vec<Option<Vec<u8>>>
+/// 账户不存在返回 None。自动分批（每批最多 100 个）。
+async fn fetch_multiple_accounts(
+    client: &Client,
+    rpc_url: &str,
+    addresses: &[String],
+) -> Result<Vec<Option<Vec<u8>>>, String> {
+    use base64::Engine;
+    let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(addresses.len());
+
+    for chunk in addresses.chunks(100) {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "method": "getMultipleAccounts",
+            "params": [chunk, {"encoding": "base64", "commitment": "confirmed"}],
+            "id": 1
+        });
+
+        let resp = sol_transfer::rpc_call(client, rpc_url, &body).await?;
+        let values = resp
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_array())
+            .ok_or("getMultipleAccounts 响应格式错误")?;
+
+        for val in values {
+            if val.is_null() {
+                results.push(None);
+                continue;
+            }
+            let data = val
+                .get("data")
+                .and_then(|d| d.as_array())
+                .and_then(|a| a.first())
+                .and_then(|s| s.as_str())
+                .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok());
+            results.push(data);
+        }
+    }
+
+    Ok(results)
 }
 
 use super::proposals;

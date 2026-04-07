@@ -110,23 +110,28 @@ pub async fn fetch_proposals(
     state: tauri::State<'_, AppState>,
     wallet_index: usize,
 ) -> CommandResult<Vec<ProposalDto>> {
-    let (rpc_url, ms_address) = {
+    let (rpc_url, ms_address, native_symbol) = {
         let service = state.service.lock().unwrap();
         let rpc = service.get_current_ms_rpc_url(wallet_index, 0);
         let store = service.store.as_ref().ok_or("钱包未解锁")?;
         let wallet = store.wallets.get(wallet_index).ok_or("无效的钱包")?;
-        let addr = match &wallet.wallet_type {
-            swallet_core::storage::data::WalletType::Multisig { multisig_address, .. } => multisig_address.clone(),
+        let (addr, chain_id) = match &wallet.wallet_type {
+            swallet_core::storage::data::WalletType::Multisig { multisig_address, chain_id, .. } =>
+                (multisig_address.clone(), chain_id.clone()),
             _ => return Err("不是多签钱包".into()),
         };
-        (rpc, addr)
+        let sym = service.config.chains.solana.iter()
+            .find(|c| c.id == chain_id)
+            .map(|c| c.native_symbol.clone())
+            .unwrap_or_else(|| "SOL".to_string());
+        (rpc, addr, sym)
     };
 
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
         .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
     let info = multisig::squads::fetch_multisig(&client, &rpc_url, &ms_address).await
         .map_err(|e| format!("获取多签失败: {e}"))?;
-    let proposals = multisig::squads::fetch_active_proposals(&client, &rpc_url, &info).await
+    let proposals = multisig::squads::fetch_active_proposals(&client, &rpc_url, &info, &native_symbol).await
         .map_err(|e| format!("获取提案失败: {e}"))?;
 
     Ok(proposals.iter().enumerate().map(|(i, p)| ProposalDto {
