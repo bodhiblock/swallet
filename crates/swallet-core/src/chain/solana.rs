@@ -245,10 +245,122 @@ pub async fn query_sol_balance_batch(
         ));
     }
 
+    // 扫描 stake 账户：包含 System Program 拥有的地址，以及链上不存在的地址
+    // （后者也可能是某个 stake 账户的 staker authority）
+    // 跳过本身就是 Stake/Vote 账户的地址，避免无意义查询
+    let stake_query_indices: Vec<usize> = results
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            match r.2.as_deref() {
+                Some(STAKE_PROGRAM) | Some(VOTE_PROGRAM) => None,
+                _ => Some(i),
+            }
+        })
+        .collect();
+
+    if !stake_query_indices.is_empty() {
+        use std::sync::Arc;
+        use tokio::sync::Semaphore;
+        let semaphore = Arc::new(Semaphore::new(5));
+
+        let stake_futures = stake_query_indices.iter().map(|&i| {
+            let client = client.clone();
+            let rpc_url = config.rpc_url.clone();
+            let addr = results[i].0.clone();
+            let sem = semaphore.clone();
+            async move {
+                let _permit = sem.acquire().await.ok();
+                let res = get_stake_balance_with_retry(&client, &rpc_url, &addr, 3).await;
+                (i, res)
+            }
+        });
+        let stake_results = futures::future::join_all(stake_futures).await;
+        for (i, res) in stake_results {
+            if let Ok(extra_staked) = res
+                && extra_staked > 0
+            {
+                results[i].1.staked_balance = extra_staked;
+            }
+        }
+    }
+
     SolBalanceBatchResult { balances: results }
 }
 
+/// 查询某地址作为 staker authority 的所有外部 stake 账户余额总和
+async fn get_stake_balance(
+    client: &Client,
+    rpc_url: &str,
+    address: &str,
+) -> Result<u128, String> {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": "getProgramAccounts",
+        "params": [
+            STAKE_PROGRAM,
+            {
+                "encoding": "base64",
+                "commitment": "confirmed",
+                "dataSlice": {"offset": 0, "length": 0},
+                "filters": [
+                    {"dataSize": 200},
+                    {"memcmp": {"offset": 12, "bytes": address}}
+                ]
+            }
+        ],
+        "id": 1
+    });
 
+    let resp: Value = rpc_call(client, rpc_url, &body).await?;
+
+    // 检查 JSON-RPC 错误（包括 429 转换的错误）
+    if let Some(err) = resp.get("error") {
+        return Err(format!("RPC error: {err}"));
+    }
+
+    let accounts = resp
+        .get("result")
+        .and_then(|r| r.as_array())
+        .ok_or("解析质押账户失败")?;
+
+    let mut total: u128 = 0;
+    for account in accounts {
+        if let Some(lamports) = account
+            .get("account")
+            .and_then(|a| a.get("lamports"))
+            .and_then(|l| l.as_u64())
+        {
+            total += lamports as u128;
+        }
+    }
+    Ok(total)
+}
+
+/// 带指数退避重试的 stake 查询，专门处理 429 / 网络错误
+async fn get_stake_balance_with_retry(
+    client: &Client,
+    rpc_url: &str,
+    address: &str,
+    max_attempts: u32,
+) -> Result<u128, String> {
+    let mut attempt = 0u32;
+    let mut delay_ms = 200u64;
+    loop {
+        attempt += 1;
+        match get_stake_balance(client, rpc_url, address).await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if attempt >= max_attempts {
+                    return Err(e);
+                }
+                // 429 / 限流 / 超时 → 指数退避
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                delay_ms = (delay_ms * 2).min(2000);
+            }
+        }
+    }
+}
 
 /// 通用 RPC 调用
 pub async fn rpc_call(client: &Client, rpc_url: &str, body: &Value) -> Result<Value, String> {
