@@ -245,69 +245,10 @@ pub async fn query_sol_balance_batch(
         ));
     }
 
-    // 对 System 程序拥有的地址，额外查询外部 stake 账户
-    for result in &mut results {
-        let owner = result.2.as_deref().unwrap_or(SYSTEM_PROGRAM_STR);
-        if owner == SYSTEM_PROGRAM_STR
-            && let Ok(extra_staked) = get_stake_balance(client, &config.rpc_url, &result.0).await
-            && extra_staked > 0
-        {
-            result.1.staked_balance = extra_staked;
-        }
-    }
-
     SolBalanceBatchResult { balances: results }
 }
 
 
-
-/// 查询质押余额（遍历 stake 账户，查找以该地址为 staker authority 的外部 stake 账户）
-async fn get_stake_balance(
-    client: &Client,
-    rpc_url: &str,
-    address: &str,
-) -> Result<u128, String> {
-    let body = json!({
-        "jsonrpc": "2.0",
-        "method": "getProgramAccounts",
-        "params": [
-            STAKE_PROGRAM,
-            {
-                "encoding": "jsonParsed",
-                "commitment": "confirmed",
-                "filters": [
-                    {
-                        "memcmp": {
-                            "offset": 12,
-                            "bytes": address
-                        }
-                    }
-                ]
-            }
-        ],
-        "id": 1
-    });
-
-    let resp: Value = rpc_call(client, rpc_url, &body).await?;
-
-    let accounts = resp
-        .get("result")
-        .and_then(|r| r.as_array())
-        .ok_or("解析质押账户失败")?;
-
-    let mut total_staked: u128 = 0;
-    for account in accounts {
-        if let Some(lamports) = account
-            .get("account")
-            .and_then(|a| a.get("lamports"))
-            .and_then(|l| l.as_u64())
-        {
-            total_staked += lamports as u128;
-        }
-    }
-
-    Ok(total_staked)
-}
 
 /// 通用 RPC 调用
 pub async fn rpc_call(client: &Client, rpc_url: &str, body: &Value) -> Result<Value, String> {
