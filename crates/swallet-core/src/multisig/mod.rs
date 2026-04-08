@@ -1,3 +1,4 @@
+pub mod hyperlane;
 pub mod presets;
 pub mod proposals;
 pub mod squads;

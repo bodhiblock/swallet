@@ -436,6 +436,8 @@ pub struct UiState {
     pub ms_program_args: Vec<String>,     // 已收集的参数值
     pub ms_program_arg_index: usize,      // 当前输入的参数索引
     pub ms_program_arg_input: String,     // 当前参数输入缓冲
+    pub ms_program_arg_select: usize,     // 当前参数为选择型时的选中索引
+    pub ms_program_arg_collected: Vec<String>, // 列表型参数已收集的项
     pub ms_program_config_hints: std::collections::HashMap<String, String>, // config 当前链上值
     pub ms_confirm_password: String,
     pub ms_vote_action: Option<VoteAction>,
@@ -588,6 +590,8 @@ impl UiState {
             ms_program_args: Vec::new(),
             ms_program_arg_index: 0,
             ms_program_arg_input: String::new(),
+            ms_program_arg_select: 0,
+            ms_program_arg_collected: Vec::new(),
             ms_program_config_hints: std::collections::HashMap::new(),
             ms_confirm_password: String::new(),
             ms_vote_action: None,

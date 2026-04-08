@@ -1236,6 +1236,12 @@ pub async fn verify_program_authority(
 ) -> Result<(), String> {
     use solana_sdk::pubkey::Pubkey;
 
+    // Hyperlane 程序的 authority 存储在不同 PDA 里（Outbox/AccessControl/TokenPDA），
+    // 不是 Anchor 的 config 模式，跳过本地预检，让链上 execute 时验证。
+    if crate::multisig::hyperlane::is_hyperlane_program(program_id) {
+        return Ok(());
+    }
+
     let pid = Pubkey::new_from_array(*program_id);
     let config_pda = Pubkey::find_program_address(&[b"config"], &pid).0;
     let quest_config_pda = Pubkey::find_program_address(&[b"quest_config"], &pid).0;

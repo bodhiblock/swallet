@@ -285,6 +285,47 @@ pub async fn fetch_preset_config_values(
         .map_err(|e| e.into())
 }
 
+/// 动态 hints：根据当前指令名和已输入参数拉取 domain-specific 字段的当前链上值
+#[tauri::command]
+pub async fn fetch_preset_dynamic_hints(
+    state: tauri::State<'_, crate::AppState>,
+    chain_id: String,
+    program_idx: usize,
+    instruction_name: String,
+    args: Vec<String>,
+) -> CommandResult<std::collections::HashMap<String, String>> {
+    let programs = multisig::presets::programs_for_chain(&chain_id);
+    let program = programs
+        .get(program_idx)
+        .ok_or_else(|| "无效的程序索引".to_string())?;
+
+    let rpc_url = {
+        let svc = state.service.lock().map_err(|e| e.to_string())?;
+        svc.config
+            .chains
+            .solana
+            .iter()
+            .find(|c| c.id == chain_id)
+            .map(|c| c.rpc_url.clone())
+            .ok_or_else(|| format!("未找到链 {} 的 RPC", chain_id))?
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
+
+    multisig::hyperlane::fetch_dynamic_hints(
+        &client,
+        &rpc_url,
+        &program.program_id,
+        &instruction_name,
+        &args,
+    )
+    .await
+    .map_err(|e| e.into())
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn create_proposal(

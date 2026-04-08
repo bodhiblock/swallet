@@ -82,6 +82,7 @@ pub fn run(data_path: Option<std::path::PathBuf>, config_path: Option<std::path:
             commands::multisig::execute_proposal,
             commands::multisig::get_preset_programs,
             commands::multisig::fetch_preset_config_values,
+            commands::multisig::fetch_preset_dynamic_hints,
             commands::multisig::create_proposal,
             commands::multisig::create_multisig,
             commands::multisig::get_multisig_vault_address,

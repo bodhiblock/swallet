@@ -624,6 +624,30 @@ fn decode_anchor_args(data: &[u8], args: &[super::presets::PresetArg]) -> String
                 parts.push(format!("{}=\"{}\"", arg.name, s));
                 off += len;
             }
+            ArgType::HyperlaneDomain => {
+                // 串行 u32, 按已知 domain 值反查 label
+                if off + 4 > data.len() { break; }
+                let v = u32::from_le_bytes(data[off..off + 4].try_into().unwrap_or_default());
+                let label = super::presets::HYPERLANE_DOMAINS
+                    .iter()
+                    .find(|(_, val)| *val == v)
+                    .map(|(l, _)| *l)
+                    .unwrap_or("?");
+                parts.push(format!("{}={}({})", arg.name, label, v));
+                off += 4;
+            }
+            ArgType::EvmAddressList => {
+                // Borsh Vec<H160>: u32 LE len + 20*N bytes
+                if off + 4 > data.len() { break; }
+                let len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap_or_default()) as usize;
+                off += 4;
+                if off + 20 * len > data.len() { break; }
+                let addrs: Vec<String> = (0..len)
+                    .map(|i| format!("0x{}", hex::encode(&data[off + i * 20..off + (i + 1) * 20])))
+                    .collect();
+                parts.push(format!("{}=[{}]", arg.name, addrs.join(",")));
+                off += 20 * len;
+            }
         }
     }
     parts.join(", ")

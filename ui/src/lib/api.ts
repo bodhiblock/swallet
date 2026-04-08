@@ -56,6 +56,8 @@ export const api = {
 	}) => invoke<string>('create_proposal', params),
 	getPresetPrograms: (chainId: string) => invoke<PresetProgramDto[]>('get_preset_programs', { chainId }),
 	fetchPresetConfigValues: (chainId: string, programIdx: number) => invoke<Record<string, string>>('fetch_preset_config_values', { chainId, programIdx }),
+	fetchPresetDynamicHints: (chainId: string, programIdx: number, instructionName: string, args: string[]) =>
+		invoke<Record<string, string>>('fetch_preset_dynamic_hints', { chainId, programIdx, instructionName, args }),
 	approveProposal: (walletIndex: number, txIndex: number, password: string, feePayerWi: number, feePayerAi: number) =>
 		invoke<string>('approve_proposal', { walletIndex, txIndex, password, feePayerWi, feePayerAi }),
 	rejectProposal: (walletIndex: number, txIndex: number, password: string, feePayerWi: number, feePayerAi: number) =>

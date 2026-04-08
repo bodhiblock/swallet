@@ -132,6 +132,16 @@
 		} catch (_) { configHints = {}; }
 	}
 
+	async function refreshDynamicHints() {
+		const ix = presetPrograms[selectedProgram]?.instructions[selectedInstruction];
+		if (!ix) return;
+		try {
+			const extra = await api.fetchPresetDynamicHints('nara-mainnet', selectedProgram, ix.name, presetArgValues);
+			// 合并到 configHints（不覆盖静态 hints）
+			configHints = { ...configHints, ...extra };
+		} catch (_) {}
+	}
+
 	function updateArgValues() {
 		const ix = presetPrograms[selectedProgram]?.instructions[selectedInstruction];
 		presetArgValues = ix ? ix.args.map(() => '') : [];
@@ -402,9 +412,43 @@
 					</select>
 					{#each (presetPrograms[selectedProgram]?.instructions[selectedInstruction]?.args ?? []) as arg, i}
 						<div class="arg-row">
-							<input bind:value={presetArgValues[i]} placeholder="{arg.label} ({arg.name})" />
+							{#if arg.arg_type === 'HyperlaneDomain'}
+								<select bind:value={presetArgValues[i]} onchange={refreshDynamicHints}>
+									<option value="" disabled>-- 选择 {arg.label} --</option>
+									<option value="4077895904">Nara (4077895904)</option>
+									<option value="1399811149">Solana (1399811149)</option>
+								</select>
+							{:else if arg.arg_type === 'EvmAddressList'}
+								<textarea
+									bind:value={presetArgValues[i]}
+									placeholder="每行一个 0x... EVM 地址"
+									rows="4"
+									onblur={() => {
+										// 规范化：每行 trim，验证 H160，最终用逗号 join 给 build 函数
+										const lines = (presetArgValues[i] || '').split(/[\n,]+/).map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+										const valid: string[] = [];
+										for (const line of lines) {
+											const stripped = line.replace(/^0x/i, '');
+											if (/^[0-9a-fA-F]{40}$/.test(stripped)) {
+												valid.push('0x' + stripped.toLowerCase());
+											}
+										}
+										presetArgValues[i] = valid.join(',');
+									}}
+								></textarea>
+							{:else}
+								<input bind:value={presetArgValues[i]} placeholder="{arg.label} ({arg.name})" />
+							{/if}
 							{#if arg.config_field && configHints[arg.config_field]}
-								<span class="config-hint">当前值: {configHints[arg.config_field]}</span>
+								{@const _hint = configHints[arg.config_field]}
+								{#if _hint.includes('\n')}
+									<span class="config-hint">当前值:</span>
+									{#each _hint.split('\n') as line}
+										<span class="config-hint-line">{line}</span>
+									{/each}
+								{:else}
+									<span class="config-hint">当前值: {_hint}</span>
+								{/if}
 							{/if}
 						</div>
 					{/each}
@@ -477,6 +521,7 @@
 	.dim { color: var(--text-dim); font-size: 14px; }
 	.arg-row { display: flex; flex-direction: column; }
 	.config-hint { color: var(--text-dim); font-size: 12px; margin-top: 2px; font-family: monospace; }
+	.config-hint-line { color: var(--text-dim); font-size: 12px; font-family: monospace; padding-left: 12px; word-break: break-all; }
 	.center-text { text-align: center; padding: 24px 0; }
 
 	.detail-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; }

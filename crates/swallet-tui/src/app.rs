@@ -2641,6 +2641,163 @@ impl App {
     }
 
     fn handle_ms_input_program_args_key(&mut self, key: KeyEvent) {
+        // 判断当前 arg 类型
+        let current_arg_type = {
+            let programs = multisig::presets::programs_for_chain(&self.ui.ms_selected_chain_id);
+            programs
+                .get(self.ui.ms_preset_program_selected)
+                .and_then(|p| p.instructions.get(self.ui.ms_preset_instruction_selected))
+                .and_then(|ix| ix.args.get(self.ui.ms_program_arg_index))
+                .map(|a| a.arg_type.clone())
+        };
+        let is_domain_select = matches!(current_arg_type, Some(multisig::presets::ArgType::HyperlaneDomain));
+        let is_address_list = matches!(current_arg_type, Some(multisig::presets::ArgType::EvmAddressList));
+
+        // EvmAddressList: 逐行输入，每行验证 H160，空行确认
+        if is_address_list {
+            match key.code {
+                KeyCode::Char(c) => {
+                    self.ui.clear_status();
+                    self.ui.ms_program_arg_input.push(c);
+                    return;
+                }
+                KeyCode::Backspace => {
+                    self.ui.clear_status();
+                    self.ui.ms_program_arg_input.pop();
+                    return;
+                }
+                KeyCode::Enter => {
+                    let line = self.ui.ms_program_arg_input.trim().to_string();
+                    if line.is_empty() {
+                        // 空行：确认整个列表
+                        if self.ui.ms_program_arg_collected.is_empty() {
+                            self.ui.set_status("至少需要一个地址");
+                            return;
+                        }
+                        let joined = self.ui.ms_program_arg_collected.join(",");
+                        self.ui.ms_program_args.push(joined);
+                        self.ui.ms_program_arg_collected.clear();
+                        self.ui.ms_program_arg_index += 1;
+                        self.ui.ms_program_arg_input.clear();
+                        self.ui.clear_status();
+
+                        self.refresh_dynamic_hints();
+
+                        let programs = multisig::presets::programs_for_chain(&self.ui.ms_selected_chain_id);
+                        let total_args = programs
+                            .get(self.ui.ms_preset_program_selected)
+                            .and_then(|p| p.instructions.get(self.ui.ms_preset_instruction_selected))
+                            .map(|ix| ix.args.len())
+                            .unwrap_or(0);
+                        if self.ui.ms_program_arg_index >= total_args {
+                            self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
+                        }
+                        return;
+                    }
+                    // 非空：验证 H160 并加入列表
+                    let stripped = line.trim_start_matches("0x").trim_start_matches("0X");
+                    let bytes = match hex::decode(stripped) {
+                        Ok(b) => b,
+                        Err(_) => {
+                            self.ui.set_status("无效的 hex");
+                            return;
+                        }
+                    };
+                    if bytes.len() != 20 {
+                        self.ui.set_status("EVM 地址必须 20 字节");
+                        return;
+                    }
+                    // 规范化为 0x 前缀小写
+                    let normalized = format!("0x{}", hex::encode(&bytes));
+                    self.ui.ms_program_arg_collected.push(normalized);
+                    self.ui.ms_program_arg_input.clear();
+                    self.ui.clear_status();
+                    return;
+                }
+                KeyCode::Esc => {
+                    // 已收集非空：清空当前列表，回到列表模式重新开始
+                    if !self.ui.ms_program_arg_collected.is_empty() {
+                        self.ui.ms_program_arg_collected.clear();
+                        self.ui.ms_program_arg_input.clear();
+                        return;
+                    }
+                    // 否则回退上一个参数
+                    if self.ui.ms_program_arg_index > 0 {
+                        self.ui.ms_program_arg_index -= 1;
+                        self.ui.ms_program_args.pop();
+                        self.ui.ms_program_arg_input.clear();
+                    } else {
+                        self.ui.ms_step = MultisigStep::SelectProgramInstruction;
+                        self.ui.ms_program_args.clear();
+                        self.ui.ms_program_arg_index = 0;
+                        self.ui.ms_program_arg_input.clear();
+                        self.ui.ms_program_arg_collected.clear();
+                    }
+                    return;
+                }
+                _ => return,
+            }
+        }
+
+        // HyperlaneDomain: 只接受 Up/Down/Enter/Esc，屏蔽文本输入
+        if is_domain_select {
+            use multisig::presets::HYPERLANE_DOMAINS;
+            let n = HYPERLANE_DOMAINS.len();
+            match key.code {
+                KeyCode::Up | KeyCode::Left => {
+                    if self.ui.ms_program_arg_select == 0 {
+                        self.ui.ms_program_arg_select = n - 1;
+                    } else {
+                        self.ui.ms_program_arg_select -= 1;
+                    }
+                    return;
+                }
+                KeyCode::Down | KeyCode::Right => {
+                    self.ui.ms_program_arg_select = (self.ui.ms_program_arg_select + 1) % n;
+                    return;
+                }
+                KeyCode::Enter => {
+                    let (_, value) = HYPERLANE_DOMAINS[self.ui.ms_program_arg_select];
+                    self.ui.ms_program_args.push(value.to_string());
+                    self.ui.ms_program_arg_index += 1;
+                    self.ui.ms_program_arg_input.clear();
+                    self.ui.ms_program_arg_select = 0;
+                    self.ui.clear_status();
+
+                    // 触发动态 hints 拉取（domain 已确认）
+                    self.refresh_dynamic_hints();
+
+                    // 检查是否所有参数已收集完
+                    let programs = multisig::presets::programs_for_chain(&self.ui.ms_selected_chain_id);
+                    let total_args = programs
+                        .get(self.ui.ms_preset_program_selected)
+                        .and_then(|p| p.instructions.get(self.ui.ms_preset_instruction_selected))
+                        .map(|ix| ix.args.len())
+                        .unwrap_or(0);
+                    if self.ui.ms_program_arg_index >= total_args {
+                        self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
+                    }
+                    return;
+                }
+                KeyCode::Esc => {
+                    if self.ui.ms_program_arg_index > 0 {
+                        self.ui.ms_program_arg_index -= 1;
+                        self.ui.ms_program_args.pop();
+                        self.ui.ms_program_arg_input.clear();
+                        self.ui.ms_program_arg_select = 0;
+                    } else {
+                        self.ui.ms_step = MultisigStep::SelectProgramInstruction;
+                        self.ui.ms_program_args.clear();
+                        self.ui.ms_program_arg_index = 0;
+                        self.ui.ms_program_arg_input.clear();
+                        self.ui.ms_program_arg_select = 0;
+                    }
+                    return;
+                }
+                _ => return,
+            }
+        }
+
         match key.code {
             KeyCode::Char(c) => {
                 self.ui.clear_status();
@@ -2703,6 +2860,21 @@ impl App {
                         multisig::presets::ArgType::String => {
                             // 字符串无需验证
                         }
+                        multisig::presets::ArgType::HyperlaneDomain => {
+                            // HyperlaneDomain 由独立的键处理分支写入 ms_program_arg_input
+                            // 校验是否为已知 domain 值
+                            if input.parse::<u32>().ok()
+                                .and_then(|v| multisig::presets::HYPERLANE_DOMAINS.iter().find(|(_, val)| *val == v))
+                                .is_none()
+                            {
+                                self.ui.set_status("无效的 Hyperlane domain");
+                                return;
+                            }
+                        }
+                        multisig::presets::ArgType::EvmAddressList => {
+                            // EvmAddressList 由独立的键处理分支写入 ms_program_args
+                            // 不会走到此分支
+                        }
                     }
                 }
 
@@ -2711,7 +2883,11 @@ impl App {
                 self.ui.ms_program_arg_input.clear();
                 self.ui.clear_status();
 
+                // 触发动态 hints 拉取（某些参数确认后可能需要显示后续字段的当前值）
+                self.refresh_dynamic_hints();
+
                 // 检查是否所有参数已收集完
+                let programs = multisig::presets::programs_for_chain(&self.ui.ms_selected_chain_id);
                 let total_args = programs
                     .get(self.ui.ms_preset_program_selected)
                     .and_then(|p| p.instructions.get(self.ui.ms_preset_instruction_selected))
@@ -4072,6 +4248,39 @@ impl App {
     }
 
     /// 获取当前多签的 RPC URL（从 config 按 chain_id 查）
+    /// 已确认的参数变化时，触发动态 hints 拉取（domain-specific 字段的当前值）
+    fn refresh_dynamic_hints(&mut self) {
+        let programs = multisig::presets::programs_for_chain(&self.ui.ms_selected_chain_id);
+        let Some(program) = programs.get(self.ui.ms_preset_program_selected) else {
+            return;
+        };
+        let Some(instruction) = program.instructions.get(self.ui.ms_preset_instruction_selected)
+        else {
+            return;
+        };
+        let pid = program.program_id;
+        let ix_name = instruction.name.to_string();
+        let args_so_far = self.ui.ms_program_args.clone();
+        let rpc_url = self.get_current_ms_rpc_url();
+
+        let result = self.runtime.block_on(async {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .ok()?;
+            swallet_core::multisig::hyperlane::fetch_dynamic_hints(
+                &client, &rpc_url, &pid, &ix_name, &args_so_far,
+            )
+            .await
+            .ok()
+        });
+        if let Some(extra) = result {
+            for (k, v) in extra {
+                self.ui.ms_program_config_hints.insert(k, v);
+            }
+        }
+    }
+
     fn get_current_ms_rpc_url(&self) -> String {
         // 先尝试新格式（WalletType::Multisig）
         if let Some(ref store) = self.service.store
@@ -4537,6 +4746,12 @@ async fn verify_program_authority(
     vault_pda: &solana_sdk::pubkey::Pubkey,
 ) -> Result<(), String> {
     use solana_sdk::pubkey::Pubkey;
+
+    // Hyperlane 程序的 authority 存储在不同 PDA 里（Outbox/AccessControl/TokenPDA），
+    // 不是 Anchor 的 config 模式，跳过本地预检，让链上 execute 时验证。
+    if swallet_core::multisig::hyperlane::is_hyperlane_program(program_id) {
+        return Ok(());
+    }
 
     let pid = Pubkey::new_from_array(*program_id);
 

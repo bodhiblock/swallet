@@ -725,13 +725,15 @@ fn render_select_program(frame: &mut Frame, area: ratatui::layout::Rect, state: 
     let items: Vec<ListItem> = programs
         .iter()
         .map(|p| {
+            let program_id = bs58::encode(p.program_id).into_string();
             ListItem::new(Line::from(vec![
                 Span::styled("  ", Style::default()),
                 Span::styled(p.name, Style::default().fg(Color::White)),
                 Span::styled(
-                    format!("  ({} 个指令)", p.instructions.len()),
+                    format!(" ({}) ", p.instructions.len()),
                     Style::default().fg(Color::DarkGray),
                 ),
+                Span::styled(program_id, Style::default().fg(Color::Cyan)),
             ]))
         })
         .collect();
@@ -852,24 +854,91 @@ fn render_input_program_args(frame: &mut Frame, area: ratatui::layout::Rect, sta
                 format!(" 请输入 {} / {} ({}/{}):", current_arg.label, current_arg.name, state.ms_program_arg_index + 1, ix.args.len()),
                 Style::default().fg(Color::White),
             )));
-            // 显示当前链上值提示
+            // 显示当前链上值提示（含换行的值多行显示）
             if let Some(field) = current_arg.config_field {
                 if let Some(current_val) = state.ms_program_config_hints.get(field) {
-                    lines.push(Line::from(Span::styled(
-                        format!("   当前链上值: {}", current_val),
-                        Style::default().fg(Color::DarkGray),
-                    )));
+                    let style = Style::default().fg(Color::DarkGray);
+                    let parts: Vec<&str> = current_val.split('\n').collect();
+                    if parts.len() == 1 {
+                        lines.push(Line::from(Span::styled(
+                            format!("   当前链上值: {}", current_val),
+                            style,
+                        )));
+                    } else {
+                        lines.push(Line::from(Span::styled(
+                            "   当前链上值:".to_string(),
+                            style,
+                        )));
+                        for p in parts {
+                            lines.push(Line::from(Span::styled(
+                                format!("     {}", p),
+                                style,
+                            )));
+                        }
+                    }
                 }
             }
-            lines.push(Line::from(Span::styled(
-                format!(" > {}", state.ms_program_arg_input),
-                Style::default().fg(Color::Yellow),
-            )));
+            // HyperlaneDomain: 渲染选择列表而不是文本输入
+            if matches!(current_arg.arg_type, presets::ArgType::HyperlaneDomain) {
+                for (i, (label, value)) in presets::HYPERLANE_DOMAINS.iter().enumerate() {
+                    let marker = if i == state.ms_program_arg_select { ">" } else { " " };
+                    let style = if i == state.ms_program_arg_select {
+                        Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("  {} {} ({})", marker, label, value),
+                        style,
+                    )));
+                }
+            } else if matches!(current_arg.arg_type, presets::ArgType::EvmAddressList) {
+                // 显示已收集的地址
+                if !state.ms_program_arg_collected.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        format!("   已添加 {}:", state.ms_program_arg_collected.len()),
+                        Style::default().fg(Color::Green),
+                    )));
+                    for (i, addr) in state.ms_program_arg_collected.iter().enumerate() {
+                        lines.push(Line::from(Span::styled(
+                            format!("     {}. {}", i + 1, addr),
+                            Style::default().fg(Color::Green),
+                        )));
+                    }
+                }
+                // 当前输入行
+                lines.push(Line::from(Span::styled(
+                    format!(" > {}", state.ms_program_arg_input),
+                    Style::default().fg(Color::Yellow),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "   (输入一个 EVM 地址按 Enter 添加；空行 Enter 确认完成)".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!(" > {}", state.ms_program_arg_input),
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
         }
     }
 
+    let is_select = state
+        .ms_program_arg_index
+        .checked_sub(0)
+        .and_then(|_| instruction.map(|ix| ix))
+        .and_then(|ix| ix.args.get(state.ms_program_arg_index))
+        .map(|a| matches!(a.arg_type, presets::ArgType::HyperlaneDomain))
+        .unwrap_or(false);
+
     append_status(&mut lines, state);
-    append_hint(&mut lines, " Enter确认  Esc返回");
+    let hint = if is_select {
+        " ↑↓选择  Enter确认  Esc返回"
+    } else {
+        " Enter确认  Esc返回"
+    };
+    append_hint(&mut lines, hint);
 
     let block = Block::default()
         .title(title)

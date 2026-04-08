@@ -26,7 +26,18 @@ pub enum ArgType {
     I32,
     /// 字符串
     String,
+    /// Hyperlane chain domain 选择（固定两个值：Nara / Solana）
+    HyperlaneDomain,
+    /// EVM 地址列表（用户逐行输入，每行一个 0x... H160；空行回车确认）
+    /// 最终在 ms_program_args 里以逗号分隔字符串存储，与 String 兼容
+    EvmAddressList,
 }
+
+/// Hyperlane 支持的 chain domain 列表 (label, u32 value)
+pub const HYPERLANE_DOMAINS: &[(&str, u32)] = &[
+    ("Nara", 4_077_895_904),
+    ("Solana", 1_399_811_149),
+];
 
 /// 预制参数定义
 #[derive(Debug, Clone)]
@@ -64,12 +75,14 @@ pub struct PresetProgram {
 
 /// 获取所有预制程序
 pub fn all_programs() -> Vec<PresetProgram> {
-    vec![
+    let mut programs = vec![
         quest_program(),
         agent_registry_program(),
         skills_hub_program(),
         zk_program(),
-    ]
+    ];
+    programs.extend(hyperlane_programs());
+    programs
 }
 
 /// 获取指定链的预制程序
@@ -1001,6 +1014,152 @@ fn build_zk_withdraw_fees(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> 
     )])
 }
 
+// ==================== Hyperlane (Mailbox / Multisig ISM / Warp Routes) ====================
+//
+// Hyperlane 是原生 Solana 程序（非 Anchor），通过 multisig::hyperlane 模块手动 borsh 编码。
+// 同一份 build 函数可复用于 Nara 和 Solana 两条链上的同名部署。
+
+use super::hyperlane as hl;
+
+fn pubkey_bytes_from_str(s: &str) -> [u8; 32] {
+    bs58::decode(s)
+        .into_vec()
+        .expect("invalid bs58")
+        .try_into()
+        .expect("expected 32 bytes")
+}
+
+/// Mailbox 管理指令列表（共享给所有 mailbox 部署）
+fn hyperlane_mailbox_instructions() -> Vec<PresetInstruction> {
+    vec![
+        PresetInstruction {
+            name: "transfer_ownership",
+            label: "转移 Mailbox 所有权",
+            args: vec![
+                PresetArg { name: "new_owner", label: "新所有者地址 (留空=放弃)", arg_type: ArgType::String, config_field: Some("owner") },
+            ],
+            build: hl::build_mailbox_transfer_ownership,
+        },
+        PresetInstruction {
+            name: "inbox_set_default_ism",
+            label: "设置 Inbox 默认 ISM",
+            args: vec![
+                PresetArg { name: "default_ism", label: "默认 ISM 地址", arg_type: ArgType::Pubkey, config_field: Some("default_ism") },
+            ],
+            build: hl::build_mailbox_set_default_ism,
+        },
+    ]
+}
+
+/// Multisig ISM 管理指令列表
+fn hyperlane_ism_instructions() -> Vec<PresetInstruction> {
+    vec![
+        PresetInstruction {
+            name: "set_validators_and_threshold",
+            label: "设置 Validator 集合与阈值",
+            args: vec![
+                // domain / validators / threshold 均为 domain-specific，无法静态预取
+                PresetArg { name: "domain", label: "源链 domain", arg_type: ArgType::HyperlaneDomain, config_field: None },
+                PresetArg { name: "validators", label: "Validator 列表 (每行一个 0x... EVM 地址，空行确认)", arg_type: ArgType::EvmAddressList, config_field: Some("validators") },
+                PresetArg { name: "threshold", label: "阈值 (1 ≤ t ≤ N)", arg_type: ArgType::U32, config_field: Some("threshold") },
+            ],
+            build: hl::build_ism_set_validators_and_threshold,
+        },
+        PresetInstruction {
+            name: "transfer_ownership",
+            label: "转移 ISM 所有权",
+            args: vec![
+                PresetArg { name: "new_owner", label: "新所有者地址 (留空=放弃)", arg_type: ArgType::String, config_field: Some("owner") },
+            ],
+            build: hl::build_ism_transfer_ownership,
+        },
+    ]
+}
+
+/// Warp Route 管理指令列表（USDC/SOL/native/synthetic 共用同一套）
+fn hyperlane_warp_instructions() -> Vec<PresetInstruction> {
+    vec![
+        PresetInstruction {
+            name: "set_interchain_security_module",
+            label: "设置 ISM",
+            args: vec![
+                PresetArg { name: "ism", label: "ISM 地址 (留空=清除)", arg_type: ArgType::String, config_field: Some("interchain_security_module") },
+            ],
+            build: hl::build_warp_set_ism,
+        },
+        PresetInstruction {
+            name: "transfer_ownership",
+            label: "转移 Warp Route 所有权",
+            args: vec![
+                PresetArg { name: "new_owner", label: "新所有者地址 (留空=放弃)", arg_type: ArgType::String, config_field: Some("owner") },
+            ],
+            build: hl::build_warp_transfer_ownership,
+        },
+        PresetInstruction {
+            name: "enroll_remote_router",
+            label: "注册远程 Router",
+            args: vec![
+                // domain-specific，无法静态预取
+                PresetArg { name: "domain", label: "目标链 domain", arg_type: ArgType::HyperlaneDomain, config_field: None },
+                PresetArg { name: "router", label: "远程 Router 地址 (32 字节 hex, 留空=注销)", arg_type: ArgType::String, config_field: Some("router") },
+            ],
+            build: hl::build_warp_enroll_remote_router,
+        },
+    ]
+}
+
+/// 注册所有 Hyperlane 部署（每个 Program ID 一个 PresetProgram）
+fn hyperlane_programs() -> Vec<PresetProgram> {
+    vec![
+        // Mailbox: 文档只列了 Nara 的 Program ID
+        PresetProgram {
+            name: "Hyperlane Mailbox",
+            program_id: pubkey_bytes_from_str("EjtLD3MCBJregFKAce2pQqPtSnnmBWK5oAZ3wBifHnaH"),
+            chain_id: "nara-mainnet",
+            instructions: hyperlane_mailbox_instructions(),
+        },
+        // Multisig ISM
+        PresetProgram {
+            name: "Hyperlane Multisig ISM",
+            program_id: pubkey_bytes_from_str("2XenrKdmacQqSn3VAF9nbZNfhbe6YR2Way1WJmSL5Yrj"),
+            chain_id: "nara-mainnet",
+            instructions: hyperlane_ism_instructions(),
+        },
+        PresetProgram {
+            name: "Hyperlane Multisig ISM",
+            program_id: pubkey_bytes_from_str("6ExBzNNba9vAKMZyXfwE9CsTJmKsXPpdaQC4HxeUUQEJ"),
+            chain_id: "solana-mainnet",
+            instructions: hyperlane_ism_instructions(),
+        },
+        // USDC Warp Route
+        PresetProgram {
+            name: "Hyperlane USDC Warp",
+            program_id: pubkey_bytes_from_str("BC2j6WrdPs9xhU9CfBwJsYSnJrGq5Tcm4SEen9ENv7go"),
+            chain_id: "nara-mainnet",
+            instructions: hyperlane_warp_instructions(),
+        },
+        PresetProgram {
+            name: "Hyperlane USDC Warp",
+            program_id: pubkey_bytes_from_str("4GcZJTa8s9vxtTz97Vj1RrwKMqPkT3DiiJkvUQDwsuZP"),
+            chain_id: "solana-mainnet",
+            instructions: hyperlane_warp_instructions(),
+        },
+        // SOL Warp Route
+        PresetProgram {
+            name: "Hyperlane SOL Warp",
+            program_id: pubkey_bytes_from_str("6bKmjEMbjcJUnqAiNw7AXuMvUALzw5XRKiV9dBsterxg"),
+            chain_id: "nara-mainnet",
+            instructions: hyperlane_warp_instructions(),
+        },
+        PresetProgram {
+            name: "Hyperlane SOL Warp",
+            program_id: pubkey_bytes_from_str("46MmAWwKRAt9uvn7m44NXbVq2DCWBQE2r1TDw25nyXrt"),
+            chain_id: "solana-mainnet",
+            instructions: hyperlane_warp_instructions(),
+        },
+    ]
+}
+
 // ==================== 链上 Config 值解析 ====================
 
 use std::collections::HashMap;
@@ -1124,6 +1283,11 @@ pub async fn fetch_program_config_values(
     rpc_url: &str,
     program_id: &[u8; 32],
 ) -> Result<HashMap<String, String>, String> {
+    // Hyperlane 程序用专门的 PDA 解析器
+    if super::hyperlane::is_hyperlane_program(program_id) {
+        return super::hyperlane::fetch_hyperlane_config_values(client, rpc_url, program_id).await;
+    }
+
     let pid = Pubkey::new_from_array(*program_id);
     let seeds = config_seeds(program_id);
     let (config_pda, _) = Pubkey::find_program_address(&[seeds], &pid);
@@ -1163,7 +1327,8 @@ mod tests {
     #[test]
     fn test_all_programs_not_empty() {
         let programs = all_programs();
-        assert_eq!(programs.len(), 4);
+        // 4 anchor programs (quest, agent_registry, skills_hub, zk) + 7 hyperlane deployments
+        assert_eq!(programs.len(), 11);
         for p in &programs {
             assert!(!p.instructions.is_empty(), "{} should have instructions", p.name);
         }
