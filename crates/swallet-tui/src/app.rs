@@ -184,15 +184,15 @@ impl App {
                 }
                 BgMessage::MultisigFetchError(err) => {
                     self.ui.set_status(format!("获取多签信息失败: {err}"));
-                    // 导入失败回到输入页，详情页失败留在详情页
+                    // 导入流程失败 → 回到输入页
+                    // 详情页加载失败 → 留在详情页（显示错误，允许用户 Esc 退出）
                     if matches!(
                         self.ui.ms_step,
                         MultisigStep::InputAddress | MultisigStep::Submitting
                     ) {
                         self.ui.ms_step = MultisigStep::InputAddress;
-                    } else {
-                        self.ui.ms_step = MultisigStep::List;
                     }
+                    // ViewDetail 等其他步骤：保持当前步骤不变
                 }
                 BgMessage::ProposalsFetched(proposals) => {
                     self.ui.ms_proposals = proposals;

@@ -31,6 +31,9 @@ const HYPERLANE_PROGRAM_IDS: &[&str] = &[
     // USDC Warp
     "BC2j6WrdPs9xhU9CfBwJsYSnJrGq5Tcm4SEen9ENv7go", // Nara
     "4GcZJTa8s9vxtTz97Vj1RrwKMqPkT3DiiJkvUQDwsuZP", // Solana
+    // USDT Warp
+    "2q5HJaaagMxBM7GD5yR55xHN4tDZMh1gYraG1Y4wbry6", // Nara
+    "DCTt9H3pwwU89qC3Z4voYNThZypV68AwhYNzMNBxWXoy", // Solana
     // SOL Warp
     "6bKmjEMbjcJUnqAiNw7AXuMvUALzw5XRKiV9dBsterxg", // Nara
     "46MmAWwKRAt9uvn7m44NXbVq2DCWBQE2r1TDw25nyXrt", // Solana
@@ -162,16 +165,29 @@ fn parse_h160_list(s: &str) -> Result<Vec<[u8; 20]>, String> {
         .collect()
 }
 
-/// 解析 H256（32 字节，hex）—— Warp Route remote router 地址
+/// 解析 H256（32 字节）—— 支持 base58 地址或 0x hex
 fn parse_h256(s: &str) -> Result<[u8; 32], String> {
-    let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
-    let bytes = hex::decode(s).map_err(|e| format!("无效的 32 字节 hex: {e}"))?;
-    if bytes.len() != 32 {
-        return Err(format!("H256 必须 32 字节，收到 {}", bytes.len()));
+    let s = s.trim();
+    // 带 0x 前缀 → hex 解析
+    if s.starts_with("0x") || s.starts_with("0X") {
+        let hex_str = &s[2..];
+        let bytes = hex::decode(hex_str).map_err(|e| format!("无效的 hex: {e}"))?;
+        if bytes.len() != 32 {
+            return Err(format!("H256 必须 32 字节，收到 {}", bytes.len()));
+        }
+        return Ok(bytes.try_into().unwrap());
     }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Ok(out)
+    // 尝试 base58（Solana Pubkey 格式）
+    if let Ok(pk) = s.parse::<Pubkey>() {
+        return Ok(pk.to_bytes());
+    }
+    // 最后尝试纯 hex
+    if let Ok(bytes) = hex::decode(s) {
+        if bytes.len() == 32 {
+            return Ok(bytes.try_into().unwrap());
+        }
+    }
+    Err(format!("无效的地址: {s} (支持 base58 或 0x hex)"))
 }
 
 fn parse_u32(s: &str) -> Result<u32, String> {
@@ -242,6 +258,35 @@ pub fn build_mailbox_transfer_ownership(
         vec![
             meta(outbox.to_bytes(), false, true),
             meta(*vault, true, true),
+        ],
+        data,
+    )])
+}
+
+/// Mailbox.UpdateLocalDomain(u32) — variant 12
+///
+/// args: [new_local_domain: u32]
+pub fn build_mailbox_update_local_domain(
+    vault: &[u8; 32],
+    program_id: &[u8; 32],
+    args: &[String],
+) -> Result<Vec<VaultInstruction>, String> {
+    if args.is_empty() {
+        return Err("参数不足".into());
+    }
+    let new_domain = parse_u32(&args[0])?;
+    let pid = Pubkey::new_from_array(*program_id);
+    let outbox = mailbox_outbox_pda(&pid);
+    let inbox = mailbox_inbox_pda(&pid);
+
+    let data = encode_rule_b(12, &new_domain.to_le_bytes());
+
+    Ok(vec![ix(
+        program_id,
+        vec![
+            meta(outbox.to_bytes(), false, true),
+            meta(inbox.to_bytes(), false, true),
+            meta(*vault, true, false),
         ],
         data,
     )])
@@ -455,7 +500,7 @@ pub fn build_warp_enroll_remote_router(
         vec![
             meta(SYSTEM_PROGRAM, false, false),
             meta(token.to_bytes(), false, true),
-            meta(*vault, true, false),
+            meta(*vault, true, true), // owner_payer: signer + writable
         ],
         data,
     )])
@@ -472,6 +517,8 @@ fn program_type(program_id: &[u8; 32]) -> Option<HlProgramType> {
         | "6ExBzNNba9vAKMZyXfwE9CsTJmKsXPpdaQC4HxeUUQEJ" => Some(HlProgramType::Ism),
         "BC2j6WrdPs9xhU9CfBwJsYSnJrGq5Tcm4SEen9ENv7go"
         | "4GcZJTa8s9vxtTz97Vj1RrwKMqPkT3DiiJkvUQDwsuZP"
+        | "2q5HJaaagMxBM7GD5yR55xHN4tDZMh1gYraG1Y4wbry6"
+        | "DCTt9H3pwwU89qC3Z4voYNThZypV68AwhYNzMNBxWXoy"
         | "6bKmjEMbjcJUnqAiNw7AXuMvUALzw5XRKiV9dBsterxg"
         | "46MmAWwKRAt9uvn7m44NXbVq2DCWBQE2r1TDw25nyXrt" => Some(HlProgramType::Warp),
         _ => None,
@@ -569,9 +616,15 @@ pub async fn fetch_hyperlane_config_values(
             let outbox = mailbox_outbox_pda(&pid);
             if let Ok(Some(data)) =
                 fetch_account_base64(client, rpc_url, &outbox.to_string()).await
-                && let Some(owner) = read_option_pubkey(&data, 6)
             {
-                map.insert("owner".to_string(), owner);
+                // local_domain at offset 1..5
+                if data.len() >= 5 {
+                    let domain = u32::from_le_bytes(data[1..5].try_into().unwrap());
+                    map.insert("local_domain".to_string(), domain.to_string());
+                }
+                if let Some(owner) = read_option_pubkey(&data, 6) {
+                    map.insert("owner".to_string(), owner);
+                }
             }
 
             // Inbox: init(1) + local_domain(4) + bump(1) + default_ism(32) + processed_count(8)
@@ -801,7 +854,7 @@ mod tests {
 
     /// 验证 SetValidatorsAndThreshold 编码与文档示例 hex 一致
     /// 文档 section 2.1 示例:
-    /// - domain = 4077895904 (Nara)
+    /// - domain = 40778959 (Nara)
     /// - validators = 3 个 EVM 地址
     /// - threshold = 2
     #[test]
@@ -809,7 +862,7 @@ mod tests {
         let vault = [0u8; 32];
         let program_id = [0u8; 32];
         let args = vec![
-            "4077895904".to_string(),
+            "40778959".to_string(),
             "0x8707e152a0824335a60e57161cf8d138201527ae,0x952a8a35dca62d857183644897e1700b35f2511f,0xe305aac5b48ecaf730b997128ddcaf12905fc280".to_string(),
             "2".to_string(),
         ];
@@ -824,9 +877,9 @@ mod tests {
         assert_eq!(&data[0..8], &[0x01u8; 8]);
         assert_eq!(data[8], 0x01); // variant 1
 
-        // 检查 domain LE
+        // 检查 domain LE: 40778959 = 0x026E3CCF
         let domain_bytes = &data[9..13];
-        assert_eq!(domain_bytes, &[0xe0, 0xc0, 0x0f, 0xf3]);
+        assert_eq!(domain_bytes, &[0xCF, 0x3C, 0x6E, 0x02]);
 
         // Vec len = 3
         assert_eq!(&data[13..17], &[0x03, 0x00, 0x00, 0x00]);

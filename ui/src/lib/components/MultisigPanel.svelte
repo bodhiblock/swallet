@@ -415,7 +415,7 @@
 							{#if arg.arg_type === 'HyperlaneDomain'}
 								<select bind:value={presetArgValues[i]} onchange={refreshDynamicHints}>
 									<option value="" disabled>-- 选择 {arg.label} --</option>
-									<option value="4077895904">Nara (4077895904)</option>
+									<option value="40778959">Nara (40778959)</option>
 									<option value="1399811149">Solana (1399811149)</option>
 								</select>
 							{:else if arg.arg_type === 'EvmAddressList'}

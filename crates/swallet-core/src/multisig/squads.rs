@@ -952,6 +952,13 @@ async fn fetch_multiple_accounts(
         });
 
         let resp = sol_transfer::rpc_call(client, rpc_url, &body).await?;
+
+        // 检查 JSON-RPC error
+        if let Some(err) = resp.get("error") {
+            let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown");
+            return Err(format!("getMultipleAccounts RPC error: {msg}"));
+        }
+
         let values = resp
             .get("result")
             .and_then(|r| r.get("value"))

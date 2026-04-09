@@ -35,7 +35,7 @@ pub enum ArgType {
 
 /// Hyperlane 支持的 chain domain 列表 (label, u32 value)
 pub const HYPERLANE_DOMAINS: &[(&str, u32)] = &[
-    ("Nara", 4_077_895_904),
+    ("Nara", 40_778_959),
     ("Solana", 1_399_811_149),
 ];
 
@@ -1048,6 +1048,14 @@ fn hyperlane_mailbox_instructions() -> Vec<PresetInstruction> {
             ],
             build: hl::build_mailbox_set_default_ism,
         },
+        PresetInstruction {
+            name: "update_local_domain",
+            label: "更新 Local Domain",
+            args: vec![
+                PresetArg { name: "new_local_domain", label: "新 Local Domain (u32)", arg_type: ArgType::U32, config_field: Some("local_domain") },
+            ],
+            build: hl::build_mailbox_update_local_domain,
+        },
     ]
 }
 
@@ -1101,7 +1109,7 @@ fn hyperlane_warp_instructions() -> Vec<PresetInstruction> {
             args: vec![
                 // domain-specific，无法静态预取
                 PresetArg { name: "domain", label: "目标链 domain", arg_type: ArgType::HyperlaneDomain, config_field: None },
-                PresetArg { name: "router", label: "远程 Router 地址 (32 字节 hex, 留空=注销)", arg_type: ArgType::String, config_field: Some("router") },
+                PresetArg { name: "router", label: "远程 Router 地址 (base58 或 0x hex, 留空=注销)", arg_type: ArgType::String, config_field: Some("router") },
             ],
             build: hl::build_warp_enroll_remote_router,
         },
@@ -1141,6 +1149,19 @@ fn hyperlane_programs() -> Vec<PresetProgram> {
         PresetProgram {
             name: "Hyperlane USDC Warp",
             program_id: pubkey_bytes_from_str("4GcZJTa8s9vxtTz97Vj1RrwKMqPkT3DiiJkvUQDwsuZP"),
+            chain_id: "solana-mainnet",
+            instructions: hyperlane_warp_instructions(),
+        },
+        // USDT Warp Route
+        PresetProgram {
+            name: "Hyperlane USDT Warp",
+            program_id: pubkey_bytes_from_str("2q5HJaaagMxBM7GD5yR55xHN4tDZMh1gYraG1Y4wbry6"),
+            chain_id: "nara-mainnet",
+            instructions: hyperlane_warp_instructions(),
+        },
+        PresetProgram {
+            name: "Hyperlane USDT Warp",
+            program_id: pubkey_bytes_from_str("DCTt9H3pwwU89qC3Z4voYNThZypV68AwhYNzMNBxWXoy"),
             chain_id: "solana-mainnet",
             instructions: hyperlane_warp_instructions(),
         },
@@ -1327,8 +1348,8 @@ mod tests {
     #[test]
     fn test_all_programs_not_empty() {
         let programs = all_programs();
-        // 4 anchor programs (quest, agent_registry, skills_hub, zk) + 7 hyperlane deployments
-        assert_eq!(programs.len(), 11);
+        // 4 anchor programs (quest, agent_registry, skills_hub, zk) + 9 hyperlane deployments
+        assert_eq!(programs.len(), 13);
         for p in &programs {
             assert!(!p.instructions.is_empty(), "{} should have instructions", p.name);
         }
