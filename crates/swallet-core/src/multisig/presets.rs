@@ -179,6 +179,7 @@ fn quest_program() -> PresetProgram {
                 args: vec![
                     PresetArg { name: "min_reward_count", label: "最小奖励人数", arg_type: ArgType::U32, config_field: Some("min_reward_count") },
                     PresetArg { name: "max_reward_count", label: "最大奖励人数", arg_type: ArgType::U32, config_field: Some("max_reward_count") },
+                    PresetArg { name: "free_stake_multiplier", label: "免费质押倍率", arg_type: ArgType::U32, config_field: Some("free_stake_multiplier") },
                 ],
                 build: build_quest_set_reward_config,
             },
@@ -308,7 +309,7 @@ fn build_quest_create_question(vault: &[u8; 32], pid: &[u8; 32], args: &[String]
 }
 
 fn build_quest_set_reward_config(vault: &[u8; 32], pid: &[u8; 32], args: &[String]) -> Result<Vec<VaultInstruction>, String> {
-    if args.len() < 2 { return Err("参数不足".into()); }
+    if args.len() < 3 { return Err("参数不足".into()); }
     let program_id = pk(pid);
     Ok(vec![to_vault_ix(
         pid,
@@ -319,6 +320,7 @@ fn build_quest_set_reward_config(vault: &[u8; 32], pid: &[u8; 32], args: &[Strin
         quest_client::args::SetRewardConfig {
             min_reward_count: parse_u32(&args[0])?,
             max_reward_count: parse_u32(&args[1])?,
+            free_stake_multiplier: parse_u32(&args[2])?,
         },
     )])
 }
@@ -1214,6 +1216,7 @@ pub fn parse_config_values(program_id: &[u8; 32], data: &[u8]) -> HashMap<String
         read_pubkey(data, 160, "stake_authority", &mut map);
         read_u64(data, 192, "airdrop_amount", &mut map);
         read_u32(data, 200, "max_airdrop_count", &mut map);
+        read_u32(data, 204, "free_stake_multiplier", &mut map);
     } else if program_id == &agent_id {
         // ProgramConfig (bytemuck repr(C), after 8-byte discriminator)
         read_pubkey(data, 8, "admin", &mut map);
@@ -1359,13 +1362,13 @@ mod tests {
     fn test_build_quest_set_reward_config() {
         let vault = [1u8; 32];
         let pid = crate::nara_quest::ID.to_bytes();
-        let args = vec!["5".to_string(), "10".to_string()];
+        let args = vec!["5".to_string(), "10".to_string(), "2".to_string()];
         let ixs = build_quest_set_reward_config(&vault, &pid, &args).unwrap();
         assert_eq!(ixs.len(), 1);
         assert_eq!(ixs[0].program_id, pid);
         assert_eq!(ixs[0].accounts.len(), 2);
-        // discriminator (8) + u32 (4) + u32 (4) = 16
-        assert_eq!(ixs[0].data.len(), 16);
+        // discriminator (8) + u32 (4) + u32 (4) + u32 (4) = 20
+        assert_eq!(ixs[0].data.len(), 20);
     }
 
     #[test]
