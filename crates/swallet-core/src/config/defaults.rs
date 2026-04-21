@@ -83,7 +83,26 @@ fn default_solana_chains() -> Vec<SolanaChainConfig> {
             native_symbol: "NARA".into(),
             native_decimals: 9,
             explorer_url: None,
-            tokens: vec![],
+            tokens: vec![
+                SplTokenConfig {
+                    mint_address: "7fKh7DqPZmsYPHdGvt9Qw2rZkSEGp9F5dBa3XuuuhavU".into(),
+                    symbol: "SOL".into(),
+                    decimals: 9,
+                    is_token_2022: true,
+                },
+                SplTokenConfig {
+                    mint_address: "8yQSyqC85A9Vcqz8gTU2Bk5Y63bnC5378sgx1biTKsjd".into(),
+                    symbol: "USDT".into(),
+                    decimals: 6,
+                    is_token_2022: true,
+                },
+                SplTokenConfig {
+                    mint_address: "8P7UGWjq86N3WUmwEgKeGHJZLcoMJqr5jnRUmeBN7YwR".into(),
+                    symbol: "USDC".into(),
+                    decimals: 6,
+                    is_token_2022: true,
+                },
+            ],
             is_default: true,
         },
     ]
