@@ -211,21 +211,26 @@ pub async fn query_sol_balance_batch(
         };
 
         // 解析 ATA 代币余额
+        // SPL Token 和 Token-2022 账户的前 72 字节布局相同：
+        //   mint(32) + owner(32) + amount(u64 LE, 8)
+        // Token-2022 账户可能带扩展数据（总长 > 165），直接手动读 amount 避免 unpack 尺寸校验失败
         let mut tokens: Vec<TokenBalance> = Vec::new();
         for &(wallet_i, token_i, ata_idx) in &ata_mappings {
             if wallet_i != i {
                 continue;
             }
             if let Some(Some(ata_info)) = account_infos.get(ata_idx)
-                && let Ok(token_account) = spl_token::state::Account::unpack(&ata_info.data)
-                && token_account.amount > 0
+                && ata_info.data.len() >= 72
             {
-                let tc = &config.tokens[token_i];
-                tokens.push(TokenBalance {
-                    symbol: tc.symbol.clone(),
-                    decimals: tc.decimals,
-                    balance: token_account.amount as u128,
-                });
+                let amount = u64::from_le_bytes(ata_info.data[64..72].try_into().unwrap_or_default());
+                if amount > 0 {
+                    let tc = &config.tokens[token_i];
+                    tokens.push(TokenBalance {
+                        symbol: tc.symbol.clone(),
+                        decimals: tc.decimals,
+                        balance: amount as u128,
+                    });
+                }
             }
         }
 
