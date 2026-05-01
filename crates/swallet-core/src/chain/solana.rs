@@ -1,7 +1,6 @@
 use reqwest::Client;
 use serde_json::{json, Value};
 use solana_sdk::pubkey::Pubkey;
-use spl_token::solana_program::program_pack::Pack;
 use std::str::FromStr;
 
 use crate::config::SolanaChainConfig;
