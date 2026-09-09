@@ -181,6 +181,8 @@ pub enum MultisigStep {
     ViewProposal,
     /// 选择提案类型
     SelectProposalType,
+    SelectTransferToken,
+    PreparingTransfer,
     /// 输入转账地址
     InputTransferTo,
     /// 输入转账数量
@@ -427,7 +429,10 @@ pub struct UiState {
     pub ms_selected_rpc_url: String,
     pub ms_transfer_to: String,
     pub ms_transfer_amount: String,
-    pub ms_transfer_mint: String, // SPL token mint (空=SOL)
+    pub ms_transfer_assets: Vec<(TransferableAsset, Option<String>)>,
+    pub ms_transfer_selected: usize,
+    pub ms_spl_request: u64,
+    pub ms_content_scroll: u16,
     pub ms_upgrade_program: String, // 程序升级：程序地址
     pub ms_upgrade_buffer: String,  // 程序升级：buffer 地址
     // 预制程序调用
@@ -582,7 +587,10 @@ impl UiState {
             ms_selected_rpc_url: String::new(),
             ms_transfer_to: String::new(),
             ms_transfer_amount: String::new(),
-            ms_transfer_mint: String::new(),
+            ms_transfer_assets: Vec::new(),
+            ms_transfer_selected: 0,
+            ms_spl_request: 0,
+            ms_content_scroll: 0,
             ms_upgrade_program: String::new(),
             ms_upgrade_buffer: String::new(),
             ms_preset_program_selected: 0,
@@ -739,6 +747,28 @@ impl UiState {
         self.transfer_confirm_password.clear();
         self.transfer_result = None;
         self.clear_status();
+    }
+
+    pub fn ms_transfer_token(&self) -> Option<swallet_core::config::SplTokenConfig> {
+        if swallet_core::multisig::ProposalType::for_chain(&self.ms_selected_chain_id).get(self.ms_proposal_type_selected)
+            != Some(&swallet_core::multisig::ProposalType::TokenTransfer) { return None; }
+        let (asset, error) = self.ms_transfer_assets.get(self.ms_transfer_selected)?;
+        if error.is_some() { return None; }
+        let swallet_core::transfer::AssetKind::SplToken { mint_address, is_token_2022 } = &asset.asset_kind else { return None; };
+        Some(swallet_core::config::SplTokenConfig {
+            mint_address: mint_address.clone(), is_token_2022: *is_token_2022,
+            symbol: asset.symbol.clone(), decimals: asset.decimals,
+        })
+    }
+
+    pub fn ms_transfer_description(&self) -> Option<String> {
+        let token = self.ms_transfer_token()?;
+        let source = swallet_core::chain::solana::derive_ata_address(&self.ms_current_vault_address, &token.mint_address, token.is_token_2022)?;
+        let dest = swallet_core::chain::solana::derive_ata_address(&self.ms_transfer_to, &token.mint_address, token.is_token_2022)?;
+        Some(format!("链: {}\nVault #{}: {}\nSPL 转账: {} {}\nMint: {}\nToken Program: {}\n来源代币账户: {source}\n收款钱包: {}\n目标代币账户: {dest}\n按需创建收款 ATA，租金由 Vault 支付；外层交易费由 Fee Payer 支付。",
+            self.ms_selected_chain_name, self.ms_current_vault_index, self.ms_current_vault_address,
+            self.ms_transfer_amount, token.symbol, token.mint_address,
+            swallet_core::multisig::token::program(&token), self.ms_transfer_to))
     }
 
     /// 返回主界面

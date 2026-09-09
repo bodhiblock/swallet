@@ -69,6 +69,7 @@ pub async fn fetch_active_proposals(
     rpc_url: &str,
     multisig: &MultisigInfo,
     native_symbol: &str,
+    tokens: &[crate::config::SplTokenConfig],
 ) -> Result<Vec<ProposalInfo>, String> {
     // 从最新的交易开始向前查找，最多查找 20 个
     let start = multisig.transaction_index;
@@ -98,7 +99,18 @@ pub async fn fetch_active_proposals(
         let Some(p_bytes) = &proposal_data[i] else { continue };
         let Ok(mut proposal) = parse_proposal_account(p_bytes, proposal_pdas[i]) else { continue };
         if let Some(tx_bytes) = &tx_data[i] {
-            proposal.summary = decode_vault_tx_summary(tx_bytes, native_symbol).ok();
+            match sdk_accounts::VaultTransaction::try_deserialize(&mut &tx_bytes[..]) {
+                Ok(tx) if tx.multisig == proposal.multisig && tx.index == proposal.transaction_index => {
+                    proposal.vault_index = Some(tx.vault_index);
+                    let (vault, _) = derive_vault_pda(&tx.multisig, tx.vault_index);
+                    let (summary, error) = review_transaction(client, rpc_url, tx_bytes, native_symbol, tokens).await;
+                    proposal.summary = Some(format!("Vault #{}: {vault}\n{summary}", tx.vault_index));
+                    proposal.review_error = error;
+                }
+                _ => proposal.review_error = Some("交易账户无效或与提案不匹配".into()),
+            }
+        } else {
+            proposal.review_error = Some("未找到提案的交易账户".into());
         }
         proposals.push(proposal);
     }
@@ -159,6 +171,8 @@ fn parse_proposal_account(data: &[u8], address: Pubkey) -> Result<ProposalInfo, 
         cancelled: p.cancelled,
         bump: p.bump,
         summary: None,
+        vault_index: None,
+        review_error: None,
     })
 }
 
@@ -387,7 +401,7 @@ pub async fn execute_vault_transaction(
     fee_payer_key: &[u8],
     multisig_address: &str,
     transaction_index: u64,
-    vault_index: u8,
+    _vault_index: u8,
 ) -> Result<String, String> {
     let key_bytes: [u8; 32] = private_key
         .try_into()
@@ -401,10 +415,15 @@ pub async fn execute_vault_transaction(
 
     let (transaction_pda, _) = derive_transaction_pda(&multisig_pubkey, transaction_index);
     let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index);
-    let (vault_pda, _) = derive_vault_pda(&multisig_pubkey, vault_index);
 
     // 从链上获取 VaultTransaction，SDK 用标准 Borsh 反序列化（与链上存储格式一致）
     let tx_data = fetch_account_data(client, rpc_url, &transaction_pda.to_string()).await?;
+    let transaction = sdk_accounts::VaultTransaction::try_deserialize(&mut &tx_data[..])
+        .map_err(|e| format!("VaultTransaction 反序列化失败: {e}"))?;
+    if transaction.multisig != multisig_pubkey || transaction.index != transaction_index {
+        return Err("交易不属于当前多签/提案".into());
+    }
+    let (vault_pda, _) = derive_vault_pda(&multisig_pubkey, transaction.vault_index);
     let msg = parse_vault_tx_message_borsh(&tx_data)?;
 
     let ix = sdk_instruction(
@@ -461,85 +480,30 @@ pub async fn execute_vault_transaction(
 ///
 /// 注意: 输入格式是 beet (u8/u16)，但程序在链上以标准 Borsh (u32) 存储
 fn parse_vault_tx_message_borsh(data: &[u8]) -> Result<ParsedMessage, String> {
-    if data.len() < 87 {
-        return Err("VaultTransaction 数据太短".into());
+    let tx = sdk_accounts::VaultTransaction::try_deserialize(&mut &data[..])
+        .map_err(|e| format!("VaultTransaction 反序列化失败: {e}"))?;
+    let msg = tx.message;
+    if !msg.address_table_lookups.is_empty() {
+        return Err("暂不支持含地址查找表的提案，无法完整核对账户".into());
     }
-
-    let mut off = 8 + 32 + 32 + 8 + 1 + 1 + 1; // = 83, skip to esb
-
-    // ephemeral_signer_bumps: Vec<u8> (标准 Borsh u32 前缀)
-    if off + 4 > data.len() {
-        return Err("数据不足: esb length".into());
+    let count = msg.account_keys.len();
+    if msg.num_signers as usize > count || msg.num_writable_signers > msg.num_signers
+        || msg.num_writable_non_signers as usize > count - msg.num_signers as usize {
+        return Err("交易账户权限头无效".into());
     }
-    let esb_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
-    off += 4 + esb_len;
-
-    // message 开始（标准 Borsh 格式: u32 前缀）
-    if off + 3 > data.len() {
-        return Err("数据不足: message header".into());
-    }
-    let num_signers = data[off]; off += 1;
-    let num_writable_signers = data[off]; off += 1;
-    let num_writable_non_signers = data[off]; off += 1;
-
-    // account_keys: 标准 Borsh u32 长度前缀 + N * 32 bytes
-    if off + 4 > data.len() {
-        return Err("数据不足: account_keys length".into());
-    }
-    let ak_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
-    off += 4;
-
-    let mut account_keys = Vec::with_capacity(ak_len);
-    for _ in 0..ak_len {
-        if off + 32 > data.len() {
-            return Err("数据不足: account_key".into());
+    for ix in &msg.instructions {
+        if ix.program_id_index as usize >= count || ix.account_indexes.iter().any(|&i| i as usize >= count) {
+            return Err("交易指令账户索引无效".into());
         }
-        let key = Pubkey::try_from(&data[off..off + 32])
-            .map_err(|_| "无效的 Pubkey")?;
-        off += 32;
-        account_keys.push(key);
     }
-
-    // instructions: Borsh 格式 u32 长度前缀
-    if off + 4 > data.len() {
-        return Ok(ParsedMessage {
-            num_signers, num_writable_signers, num_writable_non_signers,
-            account_keys, instructions: vec![],
-        });
-    }
-    let ix_count = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
-    off += 4;
-
-    let mut instructions = Vec::with_capacity(ix_count);
-    for _ in 0..ix_count {
-        if off >= data.len() { break; }
-        let program_id_index = data[off]; off += 1;
-
-        // account_indices: Borsh u32 长度前缀
-        if off + 4 > data.len() { break; }
-        let ai_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
-        off += 4;
-        if off + ai_len > data.len() { break; }
-        let account_indices = data[off..off + ai_len].to_vec();
-        off += ai_len;
-
-        // data: Borsh u32 长度前缀
-        if off + 4 > data.len() { break; }
-        let d_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
-        off += 4;
-        if off + d_len > data.len() { break; }
-        let ix_data = data[off..off + d_len].to_vec();
-        off += d_len;
-
-        instructions.push(ParsedInstruction { program_id_index, account_indices, data: ix_data });
-    }
-
     Ok(ParsedMessage {
-        num_signers,
-        num_writable_signers,
-        num_writable_non_signers,
-        account_keys,
-        instructions,
+        num_signers: msg.num_signers,
+        num_writable_signers: msg.num_writable_signers,
+        num_writable_non_signers: msg.num_writable_non_signers,
+        account_keys: msg.account_keys,
+        instructions: msg.instructions.into_iter().map(|ix| ParsedInstruction {
+            program_id_index: ix.program_id_index, account_indices: ix.account_indexes, data: ix.data,
+        }).collect(),
     })
 }
 
@@ -574,6 +538,69 @@ pub fn decode_vault_tx_summary(data: &[u8], native_symbol: &str) -> Result<Strin
     }).collect();
 
     Ok(summaries.join(" + "))
+}
+
+/// 从真实指令和链上账户补齐 SPL 审批信息；失败保留原始参数，不伪造金额。
+async fn review_transaction(client: &Client, rpc: &str, data: &[u8], native_symbol: &str,
+    tokens: &[crate::config::SplTokenConfig]) -> (String, Option<String>)
+{
+    use std::collections::HashMap;
+    use super::token;
+    let msg = match parse_vault_tx_message_borsh(data) {
+        Ok(msg) => msg,
+        Err(e) => return (format!("无法解析交易: {e}"), Some(e)),
+    };
+    let has_tokens = msg.instructions.iter().any(|ix| matches!(msg.account_keys[ix.program_id_index as usize].to_string().as_str(), token::TOKEN | token::TOKEN_2022 | token::ATA));
+    let mut accounts = HashMap::new();
+    let mut error = None;
+    if has_tokens {
+        let addresses: Vec<String> = msg.account_keys.iter().map(ToString::to_string).collect();
+        match token::fetch_accounts(client, rpc, &addresses).await {
+            Ok(values) => {
+                accounts.extend(addresses.into_iter().zip(values));
+                let mut mints: Vec<String> = accounts.values().filter_map(|v| v["data"]["parsed"]["info"]["mint"].as_str())
+                    .filter(|m| !accounts.contains_key(*m)).map(str::to_string).collect();
+                mints.sort(); mints.dedup();
+                match token::fetch_accounts(client, rpc, &mints).await {
+                    Ok(values) => accounts.extend(mints.into_iter().zip(values)),
+                    Err(e) => error = Some(format!("查询 Mint 失败: {e}")),
+                }
+            }
+            Err(e) => error = Some(format!("查询代币账户失败: {e}")),
+        }
+    }
+    let account_error = error.clone();
+    let mut created = HashMap::new();
+    let mut summaries = Vec::new();
+    for (i, ix) in msg.instructions.iter().enumerate() {
+        let pid = msg.account_keys[ix.program_id_index as usize].to_string();
+        let keys: Vec<String> = ix.account_indices.iter().map(|&i| msg.account_keys[i as usize].to_string()).collect();
+        let result = match pid.as_str() {
+            token::TOKEN | token::TOKEN_2022 => match &account_error {
+                Some(e) => Err(e.clone()),
+                None => token::describe_transfer(&pid, &ix.data, &keys, &accounts, &created, tokens),
+            },
+            token::ATA => token::describe_ata(&ix.data, &keys).map(|entry| {
+                created.insert(keys[1].clone(), entry);
+                format!("{}收款 ATA\n付款方: {}\n目标代币账户: {}\n收款钱包: {}\nMint: {}\nToken Program: {}",
+                    if ix.data == [1] { "按需创建" } else { "创建" }, keys[0], keys[1], keys[2], keys[3], keys[5])
+            }),
+            _ => Ok(decode_instruction_summary(&msg.account_keys[ix.program_id_index as usize], &ix.data,
+                &ix.account_indices, &msg.account_keys, native_symbol)),
+        };
+        let text = match result {
+            Ok(text) => text,
+            Err(e) => {
+                error.get_or_insert(e.clone());
+                let amount = if matches!(ix.data.first(), Some(3 | 12)) && ix.data.len() >= 9 {
+                    format!("\n原始数量: {}", u64::from_le_bytes(ix.data[1..9].try_into().unwrap()))
+                } else { String::new() };
+                format!("无法完整解析: {e}\nProgram: {pid}\n账户（按指令顺序）:\n{}\n指令数据: {}{amount}", keys.join("\n"), hex::encode(&ix.data))
+            }
+        };
+        summaries.push(format!("指令 {}: {text}", i + 1));
+    }
+    (summaries.join("\n\n"), error)
 }
 
 /// 解码 Anchor Borsh 序列化的参数
@@ -670,6 +697,16 @@ fn decode_instruction_summary(
     let get_account = |idx: usize| -> Option<&Pubkey> {
         account_indices.get(idx).and_then(|&i| account_keys.get(i as usize))
     };
+
+    if matches!(pid.as_str(), super::token::TOKEN | super::token::TOKEN_2022) {
+        let checked = data.first() == Some(&12);
+        if matches!(data.first(), Some(3 | 12)) && data.len() == if checked { 10 } else { 9 } {
+            let amount = u64::from_le_bytes(data[1..9].try_into().unwrap());
+            let mint = if checked { get_account(1).map(ToString::to_string).unwrap_or_default() } else { "需查询来源账户".into() };
+            let accounts = account_indices.iter().filter_map(|&i| account_keys.get(i as usize)).map(ToString::to_string).collect::<Vec<_>>().join("\n");
+            return format!("SPL 转账（未链上核对）\nMint: {mint}\nToken Program: {pid}\n原始数量: {amount}\n账户（按指令顺序）:\n{accounts}");
+        }
+    }
 
     // System Program (全 0 = 11111111111111111111111111111111)
     if *program_id == Pubkey::default() {
@@ -783,7 +820,8 @@ fn decode_instruction_summary(
     }
 
     // 未知程序
-    format!("调用程序 {}", short(program_id))
+    format!("调用程序 {program_id}\n账户（按指令顺序）:\n{}\n指令数据: {}",
+        account_indices.iter().filter_map(|&i| account_keys.get(i as usize)).map(ToString::to_string).collect::<Vec<_>>().join("\n"), hex::encode(data))
 }
 
 /// 创建 Squads v4 多签 (MultisigCreateV2)
@@ -984,3 +1022,105 @@ async fn fetch_multiple_accounts(
 }
 
 use super::proposals;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::token::{self, tests as fixture};
+    use anchor_lang::AccountSerialize;
+
+    fn transaction(instructions: &[proposals::VaultInstruction], vault: Pubkey) -> Vec<u8> {
+        let mut keys = vec![vault];
+        for ix in instructions {
+            for key in ix.accounts.iter().map(|a| Pubkey::new_from_array(a.pubkey)).chain([Pubkey::new_from_array(ix.program_id)]) {
+                if !keys.contains(&key) { keys.push(key); }
+            }
+        }
+        let instructions = instructions.iter().map(|ix| types::MultisigCompiledInstruction {
+            program_id_index: keys.iter().position(|k| k.to_bytes() == ix.program_id).unwrap() as u8,
+            account_indexes: ix.accounts.iter().map(|a| keys.iter().position(|k| k.to_bytes() == a.pubkey).unwrap() as u8).collect(),
+            data: ix.data.clone(),
+        }).collect();
+        let tx = sdk_accounts::VaultTransaction {
+            multisig: Pubkey::new_unique(), creator: Pubkey::new_unique(), index: 7,
+            bump: 0, vault_index: 3, vault_bump: 0, ephemeral_signer_bumps: vec![],
+            message: types::VaultTransactionMessage {
+                num_signers: 1, num_writable_signers: 1, num_writable_non_signers: 2,
+                account_keys: keys, instructions, address_table_lookups: vec![],
+            },
+        };
+        let mut bytes = Vec::new();
+        tx.try_serialize(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[tokio::test]
+    async fn spl_proposal_review_round_trip() {
+        for pid in [token::TOKEN, token::TOKEN_2022] {
+            for checked in [false, true] {
+                let vault = Pubkey::new_unique();
+                let mint = Pubkey::new_unique();
+                let to = Pubkey::new_unique();
+                let source = crate::chain::solana::derive_ata_address(&vault.to_string(), &mint.to_string(), pid == token::TOKEN_2022).unwrap().parse::<Pubkey>().unwrap();
+                let dest = crate::chain::solana::derive_ata_address(&to.to_string(), &mint.to_string(), pid == token::TOKEN_2022).unwrap().parse::<Pubkey>().unwrap();
+                let mut instructions = proposals::build_spl_transfer_instructions(&vault.to_bytes(), &to.to_bytes(), &mint.to_bytes(), 1_230_000, 6,
+                    &pid.parse::<Pubkey>().unwrap().to_bytes(), &source.to_bytes(), &dest.to_bytes(), true);
+                if !checked {
+                    instructions[1].accounts.remove(1);
+                    instructions[1].data = spl_token::instruction::TokenInstruction::Transfer { amount: 1_230_000 }.pack();
+                }
+                let bytes = transaction(&instructions, vault);
+                assert!(decode_vault_tx_summary(&bytes, "SOL").unwrap().contains("1230000"));
+                let msg = parse_vault_tx_message_borsh(&bytes).unwrap();
+                let values: Vec<_> = msg.account_keys.iter().map(|key| {
+                    if key == &source { fixture::account(pid, &mint.to_string(), &vault.to_string(), 9_000_000) }
+                    else if key == &mint { fixture::mint(pid, 6) }
+                    else { serde_json::Value::Null }
+                }).collect();
+                let tokens = [crate::config::SplTokenConfig { mint_address: mint.to_string(), symbol: "USDC".into(), decimals: 6, is_token_2022: pid == token::TOKEN_2022 }];
+                let (url, server) = fixture::rpc(vec![json!({"value": values})]);
+                let (summary, error) = review_transaction(&Client::new(), &url, &bytes, "SOL", &tokens).await;
+                server.join().unwrap();
+                assert_eq!(error, None, "{summary}");
+                for value in ["1.23 USDC", "按需创建", &source.to_string(), &dest.to_string(), &to.to_string(), &mint.to_string(), pid] {
+                    assert!(summary.contains(value), "missing {value}: {summary}");
+                }
+                if !checked {
+                    // Old Transfer without ATA creation carries neither mint nor decimals.
+                    let old_bytes = transaction(&instructions[1..], vault);
+                    let old_msg = parse_vault_tx_message_borsh(&old_bytes).unwrap();
+                    let values: Vec<_> = old_msg.account_keys.iter().map(|key| {
+                        if key == &source { fixture::account(pid, &mint.to_string(), &vault.to_string(), 9_000_000) }
+                        else if key == &dest { fixture::account(pid, &mint.to_string(), &to.to_string(), 0) }
+                        else { serde_json::Value::Null }
+                    }).collect();
+                    let (url, server) = fixture::rpc(vec![json!({"value":values}), json!({"value":[fixture::mint(pid, 6)]})]);
+                    let (summary, error) = review_transaction(&Client::new(), &url, &old_bytes, "SOL", &[]).await;
+                    let requests = server.join().unwrap();
+                    assert_eq!(requests[1]["params"][0], json!([mint.to_string()]));
+                    assert_eq!(error, None);
+                    assert!(summary.contains("1.23 未知代币"));
+                    assert!(summary.contains(&to.to_string()));
+                }
+                // RPC failures preserve raw values and prevent approval instead of inventing decimals.
+                let (url, server) = fixture::rpc(vec![json!({"value": []})]);
+                let (summary, error) = review_transaction(&Client::new(), &url, &bytes, "SOL", &tokens).await;
+                server.join().unwrap();
+                assert!(error.is_some());
+                assert!(summary.contains("原始数量: 1230000"));
+                assert!(summary.contains(&dest.to_string()));
+                assert!(!summary.contains("1.23 USDC"));
+                // Every truncated account is rejected, rather than partially decoding it.
+                for len in 0..bytes.len() { assert!(parse_vault_tx_message_borsh(&bytes[..len]).is_err(), "length {len}"); }
+                let mut bad = sdk_accounts::VaultTransaction::try_deserialize(&mut &bytes[..]).unwrap();
+                bad.message.instructions[0].account_indexes[0] = 255;
+                let mut bytes = Vec::new(); bad.try_serialize(&mut bytes).unwrap();
+                assert!(parse_vault_tx_message_borsh(&bytes).is_err());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "spl_local_test.rs"]
+mod spl_local_test;

@@ -168,7 +168,7 @@ pub fn parse_amount(input: &str, decimals: u8) -> Result<u128, String> {
         padded.parse().map_err(|_| "无效的小数部分".to_string())?
     };
 
-    let divisor = 10u128.pow(decimals as u32);
+    let divisor = 10u128.checked_pow(decimals as u32).ok_or("代币精度超出支持范围")?;
     let total = integer_part
         .checked_mul(divisor)
         .and_then(|v| v.checked_add(fractional_part))

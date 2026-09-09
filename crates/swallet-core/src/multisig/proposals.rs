@@ -49,6 +49,7 @@ pub fn build_spl_transfer_instructions(
     to_wallet_pubkey: &[u8; 32],
     mint_pubkey: &[u8; 32],
     amount: u64,
+    decimals: u8,
     token_program: &[u8; 32],
     source_ata: &[u8; 32],
     dest_ata: &[u8; 32],
@@ -99,13 +100,14 @@ pub fn build_spl_transfer_instructions(
                     is_writable: false,
                 },
             ],
-            data: vec![],
+            data: vec![1], // CreateIdempotent：审批期间 ATA 可能已被创建
         });
     }
 
-    // SPL Token Transfer: instruction index 3 + u64 amount LE
-    let mut transfer_data = vec![3u8];
-    transfer_data.extend_from_slice(&amount.to_le_bytes());
+    let transfer_data = spl_token::instruction::TokenInstruction::TransferChecked {
+        amount,
+        decimals,
+    }.pack();
 
     instructions.push(VaultInstruction {
         program_id: *token_program,
@@ -114,6 +116,11 @@ pub fn build_spl_transfer_instructions(
                 pubkey: *source_ata,
                 is_signer: false,
                 is_writable: true,
+            },
+            VaultAccountMeta {
+                pubkey: *mint_pubkey,
+                is_signer: false,
+                is_writable: false,
             },
             VaultAccountMeta {
                 pubkey: *dest_ata,

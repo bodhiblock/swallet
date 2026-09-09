@@ -110,7 +110,7 @@ pub async fn fetch_proposals(
     state: tauri::State<'_, AppState>,
     wallet_index: usize,
 ) -> CommandResult<Vec<ProposalDto>> {
-    let (rpc_url, ms_address, native_symbol) = {
+    let (rpc_url, ms_address, native_symbol, tokens) = {
         let service = state.service.lock().unwrap();
         let rpc = service.get_current_ms_rpc_url(wallet_index, 0);
         let store = service.store.as_ref().ok_or("钱包未解锁")?;
@@ -124,14 +124,15 @@ pub async fn fetch_proposals(
             .find(|c| c.id == chain_id)
             .map(|c| c.native_symbol.clone())
             .unwrap_or_else(|| "SOL".to_string());
-        (rpc, addr, sym)
+        let tokens = service.config.chains.solana.iter().find(|c| c.id == chain_id).map(|c| c.tokens.clone()).unwrap_or_default();
+        (rpc, addr, sym, tokens)
     };
 
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
         .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
     let info = multisig::squads::fetch_multisig(&client, &rpc_url, &ms_address).await
         .map_err(|e| format!("获取多签失败: {e}"))?;
-    let proposals = multisig::squads::fetch_active_proposals(&client, &rpc_url, &info, &native_symbol).await
+    let proposals = multisig::squads::fetch_active_proposals(&client, &rpc_url, &info, &native_symbol, &tokens).await
         .map_err(|e| format!("获取提案失败: {e}"))?;
 
     Ok(proposals.iter().enumerate().map(|(i, p)| ProposalDto {
@@ -163,7 +164,7 @@ pub async fn create_sol_transfer_proposal(
     swallet_core::service::execute_create_proposal(
         &rpc_url, &private_key, &fee_payer_key, &ms_address,
         0, // SolTransfer index
-        &to_address, &amount, "", "", 0, 0, &[], "", vault_index, None, "", "", "",
+        &to_address, &amount, None, "", "", 0, 0, &[], "", vault_index, None, "", "", "",
     ).await.map_err(|e| e.into())
 }
 
@@ -367,7 +368,7 @@ pub async fn create_proposal(
 
     swallet_core::service::execute_create_proposal(
         &rpc_url, &private_key, &fee_payer_key, &ms_address,
-        proposal_type_idx, &to_address, &amount, &upgrade_program, &upgrade_buffer,
+        proposal_type_idx, &to_address, &amount, None, &upgrade_program, &upgrade_buffer,
         preset_program_idx, preset_instruction_idx, &preset_args, &chain_id, vault_index, vs_op, &vs_target, &vs_param, &vs_amount,
     ).await.map_err(|e| e.into())
 }

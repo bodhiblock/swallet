@@ -2,6 +2,7 @@ pub mod hyperlane;
 pub mod presets;
 pub mod proposals;
 pub mod squads;
+pub mod token;
 
 pub use solana_sdk::pubkey::Pubkey;
 
@@ -115,6 +116,9 @@ pub struct ProposalInfo {
     pub bump: u8,
     /// 提案内容摘要（从 VaultTransaction 解析）
     pub summary: Option<String>,
+    pub vault_index: Option<u8>,
+    /// 无法完整核对交易内容时，禁止批准/执行，仍可拒绝。
+    pub review_error: Option<String>,
 }
 
 /// 提案类型（用户选择要创建的提案）

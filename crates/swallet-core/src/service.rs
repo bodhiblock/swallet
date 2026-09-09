@@ -929,6 +929,7 @@ pub async fn execute_create_proposal(
     proposal_type_idx: usize,
     to_address: &str,
     amount_str: &str,
+    transfer_token: Option<&crate::config::SplTokenConfig>,
     upgrade_program: &str,
     upgrade_buffer: &str,
     preset_program_idx: usize,
@@ -968,7 +969,8 @@ pub async fn execute_create_proposal(
             )]
         }
         crate::multisig::ProposalType::TokenTransfer => {
-            return Err("Token 转账提案暂未实现，请使用 SOL 转账".into());
+            crate::multisig::token::prepare_transfer(&client, rpc_url, &vault_pda,
+                to_address, amount_str, transfer_token.ok_or("未选择转账代币")?).await?
         }
         crate::multisig::ProposalType::ProgramCall => {
             let programs = crate::multisig::presets::programs_for_chain(chain_id);

@@ -37,6 +37,8 @@ enum BgMessage {
     MultisigFetchError(String),
     ProposalsFetched(Vec<multisig::ProposalInfo>),
     ProposalsFetchError(String),
+    MsSplAssets { request: u64, result: Result<Vec<(TransferableAsset, Option<String>)>, String> },
+    MsSplPrepared { request: u64, result: Result<(), String> },
     MultisigOpComplete { success: bool, message: String },
     MultisigCreated { address: String, tx_sig: String },
     StakingOpComplete { success: bool, message: String },
@@ -105,7 +107,7 @@ impl App {
         Ok(())
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn render(&mut self, frame: &mut Frame) {
         match self.ui.screen {
             Screen::Unlock => unlock::render(frame, &self.ui),
             Screen::Main => {
@@ -134,7 +136,7 @@ impl App {
                     .as_ref()
                     .map(|s| s.address_labels())
                     .unwrap_or_default();
-                multisig_screen::render(frame, &self.ui, multisigs, &address_labels);
+                multisig_screen::render(frame, &mut self.ui, multisigs, &address_labels);
             }
             Screen::Dex => {
                 dex_screen::render(frame);
@@ -194,10 +196,30 @@ impl App {
                     }
                     // ViewDetail 等其他步骤：保持当前步骤不变
                 }
+                BgMessage::MsSplAssets { request, result } => {
+                    if request != self.ui.ms_spl_request || self.ui.screen != Screen::Multisig
+                        || self.ui.ms_step != MultisigStep::SelectTransferToken { continue; }
+                    match result {
+                        Ok(assets) => {
+                            self.ui.ms_transfer_assets = assets;
+                            self.ui.set_status(if self.ui.ms_transfer_assets.is_empty() { "当前链未配置 SPL 代币" } else { "请选择代币" });
+                        }
+                        Err(e) => self.ui.set_status(format!("查询代币失败: {e}；按 R 重试")),
+                    }
+                }
+                BgMessage::MsSplPrepared { request, result } => {
+                    if request != self.ui.ms_spl_request || self.ui.screen != Screen::Multisig
+                        || self.ui.ms_step != MultisigStep::PreparingTransfer { continue; }
+                    match result {
+                        Ok(()) => { self.ui.ms_content_scroll = 0; self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate); }
+                        Err(e) => { self.ui.ms_step = MultisigStep::InputTransferAmount; self.ui.set_status(e); }
+                    }
+                }
                 BgMessage::ProposalsFetched(proposals) => {
                     self.ui.ms_proposals = proposals;
                     self.ui.ms_proposal_selected = 0;
                     self.ui.ms_step = MultisigStep::ViewProposals;
+                    self.ui.clear_status();
                 }
                 BgMessage::ProposalsFetchError(err) => {
                     self.ui.set_status(format!("获取提案失败: {err}"));
@@ -2169,6 +2191,10 @@ impl App {
             MultisigStep::ViewProposals => self.handle_ms_proposals_key(key),
             MultisigStep::ViewProposal => self.handle_ms_proposal_detail_key(key),
             MultisigStep::SelectProposalType => self.handle_ms_select_proposal_type_key(key),
+            MultisigStep::SelectTransferToken => self.handle_ms_select_token_key(key),
+            MultisigStep::PreparingTransfer => {
+                if key.code == KeyCode::Esc { self.ui.ms_step = MultisigStep::InputTransferAmount; self.ui.clear_status(); }
+            }
             MultisigStep::InputTransferTo => self.handle_ms_text_input_key(key, MsInputField::TransferTo),
             MultisigStep::InputTransferAmount => self.handle_ms_text_input_key(key, MsInputField::TransferAmount),
             MultisigStep::InputUpgradeProgram => self.handle_ms_text_input_key(key, MsInputField::UpgradeProgram),
@@ -2354,6 +2380,7 @@ impl App {
             KeyCode::Enter => {
                 if let Some(proposal) = self.ui.ms_proposals.get(self.ui.ms_proposal_selected).cloned() {
                     self.ui.ms_current_proposal = Some(proposal);
+                    self.ui.ms_content_scroll = 0;
                     self.ui.ms_step = MultisigStep::ViewProposal;
                     self.ui.clear_status();
                 }
@@ -2367,6 +2394,13 @@ impl App {
     }
 
     fn handle_ms_proposal_detail_key(&mut self, key: KeyEvent) {
+        if self.handle_ms_scroll(key) { return; }
+        if key.code == KeyCode::F(5) { self.fetch_proposals(); return; }
+        if matches!(key.code, KeyCode::Char('a' | 'A' | 'e' | 'E')) {
+            if let Some(error) = self.ui.ms_current_proposal.as_ref().and_then(|p| p.review_error.clone()) {
+                self.ui.set_status(format!("无法批准/执行: {error}；F5 重试")); return;
+            }
+        }
         let status = self.ui.ms_current_proposal.as_ref().map(|p| p.status.clone());
 
         match key.code {
@@ -2449,10 +2483,16 @@ impl App {
                         }
                         self.ui.ms_step = MultisigStep::SelectVoteStakeAccount;
                     }
+                    Some(ProposalType::TokenTransfer) => {
+                        self.ui.ms_transfer_to.clear();
+                        self.ui.ms_transfer_amount.clear();
+                        self.load_ms_tokens();
+                        return;
+                    }
                     _ => {
                         self.ui.ms_transfer_to.clear();
                         self.ui.ms_transfer_amount.clear();
-                        self.ui.ms_transfer_mint.clear();
+                        self.ui.ms_transfer_assets.clear();
                         self.ui.ms_step = MultisigStep::InputTransferTo;
                     }
                 }
@@ -2464,6 +2504,80 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn load_ms_tokens(&mut self) {
+        self.ui.ms_step = MultisigStep::SelectTransferToken;
+        self.ui.ms_transfer_assets.clear();
+        self.ui.ms_transfer_selected = 0;
+        self.ui.ms_spl_request = self.ui.ms_spl_request.wrapping_add(1);
+        let request = self.ui.ms_spl_request;
+        let Some(mut chain) = self.service.config.chains.solana.iter()
+            .find(|c| c.id == self.ui.ms_selected_chain_id).cloned() else {
+                self.ui.set_status("未找到当前链配置"); return;
+            };
+        chain.rpc_url = self.get_current_ms_rpc_url();
+        let vault = self.ui.ms_current_vault_address.clone();
+        self.ui.set_status("正在查询代币及余额...");
+        let tx = self.bg_tx.clone();
+        self.runtime.spawn(async move {
+            let result = match reqwest::Client::builder().timeout(Duration::from_secs(30)).build() {
+                Ok(client) => multisig::token::load_assets(&client, &chain, &vault).await,
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = tx.send(BgMessage::MsSplAssets { request, result });
+        });
+    }
+
+    fn handle_ms_select_token_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up => self.ui.ms_transfer_selected = self.ui.ms_transfer_selected.saturating_sub(1),
+            KeyCode::Down => {
+                if self.ui.ms_transfer_selected + 1 < self.ui.ms_transfer_assets.len() { self.ui.ms_transfer_selected += 1; }
+            }
+            KeyCode::Char('r' | 'R') => self.load_ms_tokens(),
+            KeyCode::Enter => {
+                let Some((_, error)) = self.ui.ms_transfer_assets.get(self.ui.ms_transfer_selected) else { return; };
+                if let Some(error) = error.clone() { self.ui.set_status(error); return; }
+                self.ui.ms_transfer_amount.clear();
+                self.ui.ms_step = MultisigStep::InputTransferTo;
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => { self.ui.ms_step = MultisigStep::SelectProposalType; self.ui.clear_status(); }
+            _ => {}
+        }
+    }
+
+    fn prepare_ms_token_transfer(&mut self) {
+        let Some(token) = self.ui.ms_transfer_token() else { self.ui.set_status("未选择代币"); return; };
+        let Ok(vault) = self.ui.ms_current_vault_address.parse() else { self.ui.set_status("Vault 地址无效"); return; };
+        let to = self.ui.ms_transfer_to.clone();
+        let amount = self.ui.ms_transfer_amount.clone();
+        let rpc = self.get_current_ms_rpc_url();
+        self.ui.ms_spl_request = self.ui.ms_spl_request.wrapping_add(1);
+        let request = self.ui.ms_spl_request;
+        self.ui.ms_step = MultisigStep::PreparingTransfer;
+        self.ui.set_status("正在检查 Mint、余额及收款账户...");
+        let tx = self.bg_tx.clone();
+        self.runtime.spawn(async move {
+            let result = match reqwest::Client::builder().timeout(Duration::from_secs(30)).build() {
+                Ok(client) => multisig::token::prepare_transfer(&client, &rpc, &vault, &to, &amount, &token).await.map(|_| ()),
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = tx.send(BgMessage::MsSplPrepared { request, result });
+        });
+    }
+
+    fn handle_ms_scroll(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Up => self.ui.ms_content_scroll = self.ui.ms_content_scroll.saturating_sub(1),
+            KeyCode::Down => self.ui.ms_content_scroll = self.ui.ms_content_scroll.saturating_add(1),
+            KeyCode::PageUp => self.ui.ms_content_scroll = self.ui.ms_content_scroll.saturating_sub(8),
+            KeyCode::PageDown => self.ui.ms_content_scroll = self.ui.ms_content_scroll.saturating_add(8),
+            KeyCode::Home => self.ui.ms_content_scroll = 0,
+            _ => return false,
+        }
+        true
     }
 
     fn handle_ms_select_vote_stake_account_key(&mut self, key: KeyEvent) {
@@ -2944,7 +3058,7 @@ impl App {
                             self.ui.set_status("地址不能为空");
                             return;
                         }
-                        if bs58::decode(&self.ui.ms_transfer_to).into_vec().is_err() {
+                        if self.ui.ms_transfer_to.parse::<multisig::Pubkey>().is_err() {
                             self.ui.set_status("无效的 Solana 地址");
                             return;
                         }
@@ -2956,7 +3070,10 @@ impl App {
                             self.ui.set_status("数量不能为空");
                             return;
                         }
-                        // SOL 用 9 位小数
+                        if self.ui.ms_transfer_token().is_some() {
+                            self.prepare_ms_token_transfer();
+                            return;
+                        }
                         if let Err(e) = swallet_core::transfer::parse_amount(&self.ui.ms_transfer_amount, 9) {
                             self.ui.set_status(e);
                             return;
@@ -3035,7 +3152,7 @@ impl App {
                 self.ui.clear_status();
                 match field {
                     MsInputField::TransferTo => {
-                        self.ui.ms_step = MultisigStep::SelectProposalType;
+                        self.ui.ms_step = if self.ui.ms_transfer_assets.is_empty() { MultisigStep::SelectProposalType } else { MultisigStep::SelectTransferToken };
                     }
                     MsInputField::TransferAmount => {
                         self.ui.ms_step = MultisigStep::InputTransferTo;
@@ -3059,6 +3176,7 @@ impl App {
     }
 
     fn handle_ms_confirm_key(&mut self, key: KeyEvent) {
+        if self.handle_ms_scroll(key) { return; }
         match key.code {
             KeyCode::Char(c) => {
                 self.ui.clear_status();
@@ -3286,6 +3404,7 @@ impl App {
             .map(|c| c.native_symbol.clone())
             .unwrap_or_else(|| "SOL".to_string());
 
+        let tokens = self.service.config.chains.solana.iter().find(|c| c.id == chain_id).map(|c| c.tokens.clone()).unwrap_or_default();
         self.ui.set_status("正在获取提案...");
 
         self.runtime.spawn(async move {
@@ -3300,7 +3419,7 @@ impl App {
                 Err(_) => info, // 刷新失败则用缓存
             };
 
-            match multisig::squads::fetch_active_proposals(&client, &rpc_url, &latest_info, &native_symbol).await {
+            match multisig::squads::fetch_active_proposals(&client, &rpc_url, &latest_info, &native_symbol, &tokens).await {
                 Ok(proposals) => {
                     let _ = tx.send(BgMessage::ProposalsFetched(proposals));
                 }
@@ -3374,6 +3493,7 @@ impl App {
 
 
     fn enter_ms_fee_payer_select(&mut self, next_step: MultisigStep) {
+        self.ui.ms_content_scroll = 0;
         let list = self.build_fee_payer_list();
         if list.is_empty() {
             self.ui.set_status("没有可用的 Fee Payer（需要有余额的 SOL 地址）");
@@ -3421,6 +3541,8 @@ impl App {
                 // 返回提案类型或提案详情
                 if self.ui.ms_fee_payer_next_step == MultisigStep::ConfirmVote {
                     self.ui.ms_step = MultisigStep::ViewProposal;
+                } else if self.ui.ms_transfer_token().is_some() {
+                    self.ui.ms_step = MultisigStep::InputTransferAmount;
                 } else {
                     self.ui.ms_step = MultisigStep::SelectProposalType;
                 }
@@ -3475,6 +3597,7 @@ impl App {
             }
         };
 
+        let transfer_token = self.ui.ms_transfer_token();
         let to_address = self.ui.ms_transfer_to.clone();
         let amount_str = self.ui.ms_transfer_amount.clone();
         let upgrade_program = self.ui.ms_upgrade_program.clone();
@@ -3505,6 +3628,7 @@ impl App {
                 proposal_type_idx,
                 &to_address,
                 &amount_str,
+                transfer_token.as_ref(),
                 &upgrade_program,
                 &upgrade_buffer,
                 preset_program_idx,
@@ -3534,6 +3658,11 @@ impl App {
 
     /// 执行投票操作
     fn execute_vote(&mut self) {
+        if !matches!(self.ui.ms_vote_action, Some(VoteAction::Reject)) {
+            if let Some(error) = self.ui.ms_current_proposal.as_ref().and_then(|p| p.review_error.clone()) {
+                self.ui.set_status(format!("无法批准/执行: {error}")); return;
+            }
+        }
         // 验证密码
         let pw = match self.service.password() {
             Some(pw) => pw,
@@ -4436,6 +4565,7 @@ async fn execute_create_proposal_async(
     proposal_type_idx: usize,
     to_address: &str,
     amount_str: &str,
+    transfer_token: Option<&swallet_core::config::SplTokenConfig>,
     upgrade_program: &str,
     upgrade_buffer: &str,
     preset_program_idx: usize,
@@ -4483,7 +4613,8 @@ async fn execute_create_proposal_async(
             )]
         }
         ProposalType::TokenTransfer => {
-            return Err("Token 转账提案暂未实现，请使用 SOL 转账".into());
+            swallet_core::multisig::token::prepare_transfer(&client, rpc_url, &vault_pda,
+                to_address, amount_str, transfer_token.ok_or("未选择转账代币")?).await?
         }
         ProposalType::ProgramCall => {
             let programs = multisig::presets::programs_for_chain(chain_id);
@@ -5764,3 +5895,98 @@ enum StakingTextField {
 /// 空存储，用于渲染时的默认值
 static EMPTY_STORE: std::sync::LazyLock<WalletStore> =
     std::sync::LazyLock::new(WalletStore::new);
+
+#[cfg(test)]
+mod spl_tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn key(code: KeyCode) -> KeyEvent { KeyEvent::new(code, KeyModifiers::NONE) }
+
+    #[test]
+    fn spl_selection_review_and_small_screen() {
+        let mut config = swallet_core::config::defaults::default_config();
+        config.chains.solana[0].rpc_url = "http://127.0.0.1:1".into();
+        config.chains.solana[0].tokens.clear();
+        let chain = config.chains.solana[0].clone();
+        let mut app = App::new(config, Some(std::env::temp_dir().join(format!("swallet-test-{}.dat", uuid::Uuid::new_v4()))));
+        app.ui.screen = Screen::Multisig;
+        app.ui.ms_selected_chain_id = chain.id.clone();
+        app.ui.ms_selected_chain_name = chain.name.clone();
+        app.ui.ms_selected_rpc_url = chain.rpc_url.clone();
+        app.ui.ms_current_vault_address = multisig::Pubkey::new_unique().to_string();
+        app.ui.ms_proposal_type_selected = 1;
+        app.handle_ms_select_proposal_type_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_step, MultisigStep::SelectTransferToken);
+        app.handle_ms_select_token_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_step, MultisigStep::SelectTransferToken);
+        // Superseded asynchronous responses cannot replace the active selection.
+        app.ui.ms_spl_request += 1;
+        app.bg_tx.send(BgMessage::MsSplAssets { request: app.ui.ms_spl_request - 1, result: Err("obsolete".into()) }).unwrap();
+        app.process_bg_messages();
+        assert!(!app.ui.status_message.as_deref().unwrap_or("").contains("obsolete"));
+        let asset = TransferableAsset {
+            chain_type: ChainType::Solana, chain_id: chain.id, chain_name: chain.name, rpc_url: chain.rpc_url,
+            evm_chain_id: None, asset_kind: AssetKind::SplToken { mint_address: multisig::Pubkey::new_unique().to_string(), is_token_2022: false },
+            symbol: "USDC".into(), decimals: 6, balance: Some(2_000_000),
+        };
+        app.ui.ms_transfer_assets = vec![(asset, None)];
+        app.handle_ms_select_token_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_step, MultisigStep::InputTransferTo);
+        app.ui.ms_transfer_to = "1".into();
+        app.handle_ms_text_input_key(key(KeyCode::Enter), MsInputField::TransferTo);
+        assert_eq!(app.ui.ms_step, MultisigStep::InputTransferTo);
+        let to = multisig::Pubkey::new_unique().to_string();
+        app.ui.ms_transfer_to = to.clone();
+        app.handle_ms_text_input_key(key(KeyCode::Enter), MsInputField::TransferTo);
+        assert_eq!(app.ui.ms_step, MultisigStep::InputTransferAmount);
+        app.ui.ms_transfer_amount = "1.23".into();
+        app.handle_ms_text_input_key(key(KeyCode::Esc), MsInputField::TransferAmount);
+        app.handle_ms_text_input_key(key(KeyCode::Esc), MsInputField::TransferTo);
+        assert_eq!(app.ui.ms_step, MultisigStep::SelectTransferToken);
+        app.handle_ms_select_token_key(key(KeyCode::Enter));
+        assert!(app.ui.ms_transfer_amount.is_empty());
+        app.ui.ms_transfer_amount = "1.23".into();
+        let description = app.ui.ms_transfer_description().unwrap();
+        assert!(description.contains(&to));
+        assert!(description.contains("1.23 USDC"));
+        let mut terminal = Terminal::new(TestBackend::new(64, 18)).unwrap();
+        app.ui.ms_step = MultisigStep::ConfirmCreate;
+        app.ui.ms_confirm_password = "secret".into();
+        let mut tall = Terminal::new(TestBackend::new(100, 60)).unwrap();
+        tall.draw(|frame| app.render(frame)).unwrap();
+        let row_of = |symbol: &str| tall.backend().buffer().content.chunks(100)
+            .position(|row| row.iter().any(|cell| cell.symbol() == symbol)).unwrap();
+        assert!(row_of("┌") > 1);
+        assert!(row_of("└") - row_of("┌") < 30);
+        assert!(row_of("*") - row_of("租") <= 4, "密码输入应紧跟交易内容");
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = |terminal: &Terminal<TestBackend>| terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(rendered(&terminal).contains("******"));
+        assert!(!rendered(&terminal).contains("secret"));
+        app.handle_ms_confirm_key(key(KeyCode::PageDown));
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert!(app.ui.ms_content_scroll > 0);
+        assert!(rendered(&terminal).contains("******"));
+        app.ui.ms_current_proposal = Some(multisig::ProposalInfo {
+            address: multisig::Pubkey::new_unique(), multisig: multisig::Pubkey::new_unique(), transaction_index: 8,
+            status: multisig::ProposalStatus::Active, approved: vec![], rejected: vec![], cancelled: vec![], bump: 0,
+            summary: Some(description), vault_index: Some(3), review_error: Some("RPC failed".into()),
+        });
+        app.ui.ms_step = MultisigStep::ViewProposal;
+        app.handle_ms_proposal_detail_key(key(KeyCode::Char('a')));
+        assert_eq!(app.ui.ms_step, MultisigStep::ViewProposal);
+        assert!(app.ui.status_message.as_ref().unwrap().contains("无法批准/执行"));
+        app.ui.ms_content_scroll = 0;
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert!(rendered(&terminal).contains("1.23 USDC"));
+        app.ui.ms_content_scroll = u16::MAX;
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert!(app.ui.ms_content_scroll < u16::MAX);
+        assert!(rendered(&terminal).contains("F5"));
+        // Switching to a native transfer cannot reuse a previously selected SPL token.
+        app.ui.ms_proposal_type_selected = 0;
+        assert!(app.ui.ms_transfer_token().is_none());
+    }
+}

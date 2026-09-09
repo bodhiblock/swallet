@@ -16,7 +16,7 @@ use crate::tui::state::{MultisigStep, UiState, VoteAction};
 /// address_labels: 地址→备注映射，用于标注自己的地址
 pub fn render(
     frame: &mut Frame,
-    state: &UiState,
+    state: &mut UiState,
     multisigs: &[MultisigAccount],
     address_labels: &HashMap<String, String>,
 ) {
@@ -24,7 +24,9 @@ pub fn render(
 
     let [_, center_v, _] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(20),
+        Constraint::Length(if matches!(state.ms_step, MultisigStep::ViewProposal | MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote) {
+            area.height.saturating_sub(2)
+        } else { 20 }),
         Constraint::Fill(1),
     ])
     .areas(area);
@@ -44,6 +46,8 @@ pub fn render(
         MultisigStep::ViewProposals => render_view_proposals(frame, center, state),
         MultisigStep::ViewProposal => render_view_proposal(frame, center, state, address_labels),
         MultisigStep::SelectProposalType => render_select_proposal_type(frame, center, state),
+        MultisigStep::SelectTransferToken => render_select_transfer_token(frame, center, state),
+        MultisigStep::PreparingTransfer => render_submitting(frame, center, state),
         MultisigStep::InputTransferTo => render_input_transfer_field(frame, center, state, "地址", &state.ms_transfer_to),
         MultisigStep::InputTransferAmount => render_input_transfer_field(frame, center, state, "数量", &state.ms_transfer_amount),
         MultisigStep::InputUpgradeProgram => render_input_upgrade_field(frame, center, state, "程序地址", &state.ms_upgrade_program),
@@ -437,7 +441,10 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                 ]);
                 let mut lines = vec![line1];
                 if let Some(ref summary) = p.summary {
-                    for line in summary.lines() {
+                    let headline = summary.lines().find(|l| l.contains("SPL 转账:")).or_else(|| summary.lines().find(|l| l.starts_with("指令 "))).or_else(|| summary.lines().next()).unwrap_or("");
+                    let target = summary.lines().find(|l| l.starts_with("收款钱包:") || l.starts_with("目标:")).unwrap_or("");
+                    let amount = summary.lines().find(|l| l.starts_with("金额:")).unwrap_or("");
+                    for line in [headline, target, amount].into_iter().filter(|l| !l.is_empty()) {
                         lines.push(Line::from(Span::styled(
                             format!("    {line}"),
                             Style::default().fg(Color::Cyan),
@@ -469,7 +476,7 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
 fn render_view_proposal(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
-    state: &UiState,
+    state: &mut UiState,
     address_labels: &HashMap<String, String>,
 ) {
     let mut lines = vec![Line::from("")];
@@ -496,6 +503,15 @@ fn render_view_proposal(
                 Style::default().fg(status_color),
             ),
         ]));
+        lines.push(Line::from(""));
+
+        lines.push(Line::from(format!(" 链: {}", state.ms_selected_chain_name)));
+        if let Some(summary) = &proposal.summary {
+            lines.extend(summary.lines().map(|line| Line::from(line.to_string())));
+        }
+        if let Some(error) = &proposal.review_error {
+            lines.push(Line::from(Span::styled(format!("无法批准/执行: {error}"), Style::default().fg(Color::Red))));
+        }
         lines.push(Line::from(""));
 
         lines.push(Line::from(Span::styled(
@@ -540,18 +556,6 @@ fn render_view_proposal(
 
         lines.push(Line::from(""));
 
-        // 操作提示
-        match proposal.status {
-            swallet_core::multisig::ProposalStatus::Active => {
-                append_hint(&mut lines, " A审批  R拒绝  Esc返回");
-            }
-            swallet_core::multisig::ProposalStatus::Approved => {
-                append_hint(&mut lines, " E执行  Esc返回");
-            }
-            _ => {
-                append_hint(&mut lines, " Esc返回");
-            }
-        }
     } else {
         lines.push(Line::from(Span::styled(
             " 无提案数据",
@@ -560,15 +564,17 @@ fn render_view_proposal(
         append_hint(&mut lines, " Esc返回");
     }
 
-    append_status(&mut lines, state);
-
-    let block = Block::default()
-        .title(" 提案详情 ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
+    let area = fit_content(area, &lines, 3);
+    let block = Block::default().title(" 提案详情 ").borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [body, footer] = Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(inner);
+    render_scrolling_content(frame, body, lines, &mut state.ms_content_scroll);
+    let mut footer_lines = vec![Line::from(" ↑↓/PgUp/PgDn滚动  F5刷新  Esc返回"),
+        Line::from(" A批准  R拒绝  E执行（按提案状态）")];
+    if let Some(status) = &state.status_message { footer_lines.push(Line::from(status.clone())); }
+    frame.render_widget(Paragraph::new(footer_lines).wrap(ratatui::widgets::Wrap { trim: false }), footer);
 }
 
 fn render_select_proposal_type(
@@ -629,6 +635,44 @@ fn render_select_proposal_type(
     frame.render_widget(footer, footer_area);
 }
 
+fn render_select_transfer_token(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let block = Block::default().title(" 创建提案 - 选择代币 ").borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [list_area, footer] = Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(inner);
+    let items: Vec<ListItem> = state.ms_transfer_assets.iter().map(|(asset, error)| {
+        let mint = match &asset.asset_kind {
+            swallet_core::transfer::AssetKind::SplToken { mint_address, is_token_2022 } => format!("{}  {}", if *is_token_2022 { "Token-2022" } else { "SPL Token" }, mint_address),
+            _ => String::new(),
+        };
+        let mut lines = vec![Line::from(asset.display_label()), Line::from(mint)];
+        if let Some(error) = error { lines.push(Line::from(Span::styled(error.clone(), Style::default().fg(Color::Red)))); }
+        ListItem::new(lines)
+    }).collect();
+    let mut selected = ListState::default();
+    selected.select(Some(state.ms_transfer_selected));
+    frame.render_stateful_widget(List::new(items).highlight_style(Style::default().bg(Color::DarkGray)), list_area, &mut selected);
+    let mut lines = vec![Line::from(" ↑↓选择  Enter确认  R刷新  Esc返回")];
+    append_status(&mut lines, state);
+    frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), footer);
+}
+
+fn fit_content(area: ratatui::layout::Rect, lines: &[Line<'_>], footer_height: u16) -> ratatui::layout::Rect {
+    let content_height = Paragraph::new(lines.to_vec())
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .line_count(area.width.saturating_sub(2));
+    // 边框两行，正文和固定操作区之间留一行；长内容仍由滚动处理。
+    let height = (content_height + usize::from(footer_height) + 3).min(usize::from(area.height)) as u16;
+    ratatui::layout::Rect { y: area.y + (area.height - height) / 2, height, ..area }
+}
+
+fn render_scrolling_content(frame: &mut Frame, area: ratatui::layout::Rect, lines: Vec<Line<'_>>, scroll: &mut u16) {
+    let paragraph = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
+    let max = paragraph.line_count(area.width).saturating_sub(area.height as usize).min(u16::MAX as usize) as u16;
+    *scroll = (*scroll).min(max);
+    frame.render_widget(paragraph.scroll((*scroll, 0)), area);
+}
+
 fn render_input_transfer_field(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
@@ -655,6 +699,10 @@ fn render_input_transfer_field(
         )),
     ];
 
+    if let Some(token) = state.ms_transfer_token() {
+        lines.push(Line::from(format!(" 代币: {} (精度 {})", token.symbol, token.decimals)));
+        lines.push(Line::from(format!(" Mint: {}", token.mint_address)));
+    }
     append_status(&mut lines, state);
     append_hint(&mut lines, " Enter确认  Esc返回");
 
@@ -949,7 +997,7 @@ fn render_input_program_args(frame: &mut Frame, area: ratatui::layout::Rect, sta
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &mut UiState) {
     let masked: String = "*".repeat(state.ms_confirm_password.len());
 
     let mut lines = vec![
@@ -979,7 +1027,11 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
                 Span::styled(format_vault_label(state), Style::default().fg(Color::Yellow)),
             ]));
 
-            if ptype == Some(&ProposalType::ProgramCall) {
+            if ptype == Some(&ProposalType::TokenTransfer) {
+                if let Some(description) = state.ms_transfer_description() {
+                    lines.extend(description.lines().map(|line| Line::from(line.to_string())));
+                }
+            } else if ptype == Some(&ProposalType::ProgramCall) {
                 let programs = presets::programs_for_chain(&state.ms_selected_chain_id);
                 let prog = programs.get(state.ms_preset_program_selected);
                 let ix = prog.and_then(|p| p.instructions.get(state.ms_preset_instruction_selected));
@@ -1062,6 +1114,9 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
                 ]));
             }
             if let Some(ref p) = state.ms_current_proposal {
+                lines.push(Line::from(format!("链: {}", state.ms_selected_chain_name)));
+                if let Some(summary) = &p.summary { lines.extend(summary.lines().map(|line| Line::from(line.to_string()))); }
+                if let Some(error) = &p.review_error { lines.push(Line::from(format!("无法批准/执行: {error}"))); }
                 lines.push(Line::from(vec![
                     Span::styled("   提案: ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
@@ -1074,26 +1129,21 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiStat
         _ => {}
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        " 请输入密码确认:",
-        Style::default().fg(Color::White),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!(" > {masked}"),
-        Style::default().fg(Color::Yellow),
-    )));
-
-    append_status(&mut lines, state);
-    append_hint(&mut lines, " Enter确认执行  Esc取消");
-
-    let block = Block::default()
-        .title(" 确认操作 ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
+    if let Some((address, _, _, _, _)) = state.ms_fee_payer_list.iter().find(|(_, _, _, wi, ai)|
+        *wi == state.ms_fee_payer_wallet_index && *ai == state.ms_fee_payer_account_index) {
+        lines.push(Line::from(format!("Fee Payer: {address}")));
+    }
+    let area = fit_content(area, &lines, 5);
+    let block = Block::default().title(" 确认操作 ").borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Red));
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [body, footer] = Layout::vertical([Constraint::Fill(1), Constraint::Length(5)]).areas(inner);
+    render_scrolling_content(frame, body, lines, &mut state.ms_content_scroll);
+    let mut footer_lines = vec![Line::from(" 请输入密码确认:"), Line::from(format!(" > {masked}")),
+        Line::from(" ↑↓/PgUp/PgDn滚动  Enter确认  Esc返回")];
+    append_status(&mut footer_lines, state);
+    frame.render_widget(Paragraph::new(footer_lines).wrap(ratatui::widgets::Wrap { trim: false }), footer);
 }
 
 fn render_submitting(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
