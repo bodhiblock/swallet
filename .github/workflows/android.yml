@@ -41,6 +41,9 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 新版 cmdline-tools 已无 "tools" 包，默认值会导致 sdkmanager 失败
+          packages: platform-tools
 
       - name: Install Android NDK
         run: sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
