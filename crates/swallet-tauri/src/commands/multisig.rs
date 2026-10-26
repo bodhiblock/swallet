@@ -15,6 +15,19 @@ pub struct MultisigDetailDto {
 #[derive(Serialize)]
 pub struct MemberDto {
     pub address: String,
+    /// 权限位掩码：1 发起、2 投票、4 执行
+    pub permissions: u8,
+    pub permission_label: String,
+}
+
+impl MemberDto {
+    fn from_member(m: &multisig::MultisigMember) -> Self {
+        Self {
+            address: m.address(),
+            permissions: m.permissions,
+            permission_label: m.permission_label(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -27,6 +40,10 @@ pub struct ProposalDto {
     pub approved_addresses: Vec<String>,
     pub rejected_addresses: Vec<String>,
     pub summary: Option<String>,
+    /// 是否为配置变更提案（成员管理/阈值）
+    pub is_config: bool,
+    /// 审查错误：有值时应禁止批准和执行，但允许拒绝
+    pub review_error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -92,7 +109,7 @@ pub async fn import_multisig(
     let dto = MultisigDetailDto {
         address: info.address.to_string(),
         threshold: info.threshold,
-        members: info.members.iter().map(|m| MemberDto { address: m.address() }).collect(),
+        members: info.members.iter().map(MemberDto::from_member).collect(),
         transaction_index: info.transaction_index,
     };
 
@@ -144,6 +161,8 @@ pub async fn fetch_proposals(
         approved_addresses: p.approved.iter().map(|a| a.to_string()).collect(),
         rejected_addresses: p.rejected.iter().map(|a| a.to_string()).collect(),
         summary: p.summary.clone(),
+        is_config: p.is_config,
+        review_error: p.review_error.clone(),
     }).collect())
 }
 
@@ -166,6 +185,55 @@ pub async fn create_sol_transfer_proposal(
         0, // SolTransfer index
         &to_address, &amount, None, "", "", 0, 0, &[], "", vault_index, None, "", "", "",
     ).await.map_err(|e| e.into())
+}
+
+/// 创建成员管理（配置变更）提案
+/// action: "add" | "remove" | "threshold"；有 new_threshold 时追加修改阈值操作
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn create_config_proposal(
+    state: tauri::State<'_, AppState>,
+    wallet_index: usize,
+    action: String,
+    member: Option<String>,
+    permissions: Option<u8>,
+    new_threshold: Option<u16>,
+    password: String,
+    fee_payer_wi: usize,
+    fee_payer_ai: usize,
+) -> CommandResult<String> {
+    let parse_member = |m: Option<String>| -> Result<multisig::Pubkey, String> {
+        let addr = m.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).ok_or("请填写成员地址")?;
+        addr.parse().map_err(|_| format!("无效的成员地址: {addr}"))
+    };
+
+    // 主操作在前，可选的阈值修改追加在后
+    let mut ops = Vec::new();
+    match action.as_str() {
+        "add" => ops.push(multisig::ConfigOp::AddMember {
+            key: parse_member(member)?,
+            permissions: permissions.unwrap_or(7),
+        }),
+        "remove" => ops.push(multisig::ConfigOp::RemoveMember { key: parse_member(member)? }),
+        "threshold" => {
+            let threshold = new_threshold.ok_or("请填写新阈值")?;
+            ops.push(multisig::ConfigOp::ChangeThreshold { threshold });
+        }
+        _ => return Err(format!("未知的配置操作: {action}").into()),
+    }
+    if action != "threshold"
+        && let Some(threshold) = new_threshold
+    {
+        ops.push(multisig::ConfigOp::ChangeThreshold { threshold });
+    }
+
+    let (private_key, fee_payer_key, rpc_url, ms_address) =
+        get_vote_params(&state, wallet_index, &password, fee_payer_wi, fee_payer_ai)?;
+
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
+        .map_err(|e| format!("HTTP 客户端失败: {e}"))?;
+    multisig::squads::create_config_proposal_and_approve(&client, &rpc_url, &private_key, &fee_payer_key, &ms_address, &ops)
+        .await.map_err(|e| e.into())
 }
 
 #[tauri::command]
@@ -553,7 +621,7 @@ pub async fn get_multisig_detail(
     Ok(MultisigDetailDto {
         address: info.address.to_string(),
         threshold: info.threshold,
-        members: info.members.iter().map(|m| MemberDto { address: m.address() }).collect(),
+        members: info.members.iter().map(MemberDto::from_member).collect(),
         transaction_index: info.transaction_index,
     })
 }

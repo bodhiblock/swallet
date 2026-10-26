@@ -9,7 +9,7 @@ use std::str::FromStr;
 use super::{
     derive_multisig_pda, derive_program_config_pda,
     derive_proposal_pda, derive_transaction_pda, derive_vault_pda,
-    MultisigInfo, MultisigMember, ProposalInfo, ProposalStatus,
+    ConfigOp, MultisigInfo, MultisigMember, ProposalInfo, ProposalStatus,
 };
 use crate::squads_multisig_program::{accounts as sdk_accounts, client, types};
 use crate::transfer::sol_transfer::{self, AccountMeta, Instruction};
@@ -107,7 +107,20 @@ pub async fn fetch_active_proposals(
                     proposal.summary = Some(format!("Vault #{}: {vault}\n{summary}", tx.vault_index));
                     proposal.review_error = error;
                 }
-                _ => proposal.review_error = Some("交易账户无效或与提案不匹配".into()),
+                _ => match sdk_accounts::ConfigTransaction::try_deserialize(&mut &tx_bytes[..]) {
+                    Ok(tx) if tx.multisig == proposal.multisig && tx.index == proposal.transaction_index => {
+                        proposal.is_config = true;
+                        let (summary, error) = review_config_actions(&tx.actions);
+                        proposal.summary = Some(summary);
+                        proposal.review_error = error;
+                        // 配置变更后，此前的配置提案全部失效，链上不再允许审批/执行
+                        let pending = matches!(proposal.status, ProposalStatus::Draft | ProposalStatus::Active | ProposalStatus::Approved);
+                        if pending && proposal.transaction_index <= multisig.stale_transaction_index {
+                            proposal.review_error.get_or_insert_with(|| "多签配置已变更，此配置提案已过期".into());
+                        }
+                    }
+                    _ => proposal.review_error = Some("交易账户无效或与提案不匹配".into()),
+                },
             }
         } else {
             proposal.review_error = Some("未找到提案的交易账户".into());
@@ -173,7 +186,196 @@ fn parse_proposal_account(data: &[u8], address: Pubkey) -> Result<ProposalInfo, 
         summary: None,
         vault_index: None,
         review_error: None,
+        is_config: false,
     })
+}
+
+// ========== 配置变更（ConfigTransaction） ==========
+
+/// 生成配置变更提案摘要；包含本钱包无法执行的操作时返回错误以禁止审批/执行
+fn review_config_actions(actions: &[types::ConfigAction]) -> (String, Option<String>) {
+    let mut lines = vec!["配置变更".to_string()];
+    let mut error = None;
+    for action in actions {
+        let line = match action {
+            types::ConfigAction::AddMember { new_member } => ConfigOp::AddMember {
+                key: new_member.key, permissions: new_member.permissions.mask,
+            }.describe(),
+            types::ConfigAction::RemoveMember { old_member } => ConfigOp::RemoveMember { key: *old_member }.describe(),
+            types::ConfigAction::ChangeThreshold { new_threshold } => ConfigOp::ChangeThreshold { threshold: *new_threshold }.describe(),
+            types::ConfigAction::SetTimeLock { new_time_lock } => format!("修改时间锁: {new_time_lock} 秒"),
+            types::ConfigAction::SetRentCollector { new_rent_collector } => format!(
+                "修改租金回收地址: {}", new_rent_collector.map(|k| k.to_string()).unwrap_or_else(|| "无".into())),
+            types::ConfigAction::AddSpendingLimit { mint, amount, vault_index, .. } => {
+                error.get_or_insert_with(|| "暂不支持执行包含消费限额的配置提案".to_string());
+                format!("添加消费限额: Vault #{vault_index} Mint {mint} 数量 {amount}")
+            }
+            types::ConfigAction::RemoveSpendingLimit { spending_limit } => {
+                error.get_or_insert_with(|| "暂不支持执行包含消费限额的配置提案".to_string());
+                format!("移除消费限额: {spending_limit}")
+            }
+        };
+        lines.push(line);
+    }
+    (lines.join("\n"), error)
+}
+
+/// 按链上 Multisig::invariant 规则预演配置变更，提前给出可读的错误
+pub fn validate_config_ops(info: &MultisigInfo, ops: &[ConfigOp]) -> Result<(), String> {
+    if ops.is_empty() {
+        return Err("没有配置变更".into());
+    }
+    let mut members = info.members.clone();
+    let mut threshold = info.threshold;
+    for op in ops {
+        match op {
+            ConfigOp::AddMember { key, permissions } => {
+                if *permissions == 0 || *permissions > 7 {
+                    return Err("成员权限无效".into());
+                }
+                if members.iter().any(|m| m.key == *key) {
+                    return Err(format!("{key} 已是多签成员"));
+                }
+                members.push(MultisigMember { key: *key, permissions: *permissions });
+            }
+            ConfigOp::RemoveMember { key } => {
+                let pos = members.iter().position(|m| m.key == *key)
+                    .ok_or_else(|| format!("{key} 不是多签成员"))?;
+                members.remove(pos);
+            }
+            ConfigOp::ChangeThreshold { threshold: t } => threshold = *t,
+        }
+    }
+    if members.is_empty() {
+        return Err("不能移除全部成员".into());
+    }
+    if !members.iter().any(MultisigMember::can_initiate) {
+        return Err("变更后至少需要一个有发起权限的成员".into());
+    }
+    if !members.iter().any(MultisigMember::can_execute) {
+        return Err("变更后至少需要一个有执行权限的成员".into());
+    }
+    let voters = members.iter().filter(|m| m.can_vote()).count();
+    if voters == 0 {
+        return Err("变更后至少需要一个有投票权限的成员".into());
+    }
+    if threshold == 0 || threshold as usize > voters {
+        return Err(format!("阈值 {threshold} 无效，变更后有投票权的成员为 {voters} 个，请同时修改阈值"));
+    }
+    Ok(())
+}
+
+/// 创建 ConfigTransaction + Proposal（+ Approve），用于增删成员、修改阈值
+pub async fn create_config_proposal_and_approve(
+    client: &Client,
+    rpc_url: &str,
+    private_key: &[u8],
+    fee_payer_key: &[u8],
+    multisig_address: &str,
+    ops: &[ConfigOp],
+) -> Result<String, String> {
+    let key_bytes: [u8; 32] = private_key
+        .try_into()
+        .map_err(|_| "私钥长度必须为 32 字节".to_string())?;
+    let keypair = Keypair::new_from_array(key_bytes);
+    let creator_pubkey = keypair.pubkey();
+    let fee_payer = prepare_fee_payer(fee_payer_key)?;
+
+    let multisig_pubkey = Pubkey::from_str(multisig_address)
+        .map_err(|e| format!("无效的多签地址: {e}"))?;
+    let multisig_info = fetch_multisig(client, rpc_url, multisig_address).await?;
+    if multisig_info.config_authority != Pubkey::default() {
+        return Err(format!("该多签由 config authority {} 控制，不能通过提案修改配置", multisig_info.config_authority));
+    }
+    let creator = multisig_info.members.iter().find(|m| m.key == creator_pubkey)
+        .ok_or_else(|| format!("{creator_pubkey} 不是多签成员"))?;
+    if !creator.can_initiate() {
+        return Err(format!("{creator_pubkey} 没有发起提案的权限"));
+    }
+    validate_config_ops(&multisig_info, ops)?;
+
+    let new_tx_index = multisig_info.transaction_index + 1;
+    let (transaction_pda, _) = derive_transaction_pda(&multisig_pubkey, new_tx_index);
+    let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, new_tx_index);
+    let system_program = Pubkey::default();
+
+    let actions = ops.iter().map(|op| match op {
+        ConfigOp::AddMember { key, permissions } => types::ConfigAction::AddMember {
+            new_member: types::Member { key: *key, permissions: types::Permissions { mask: *permissions } },
+        },
+        ConfigOp::RemoveMember { key } => types::ConfigAction::RemoveMember { old_member: *key },
+        ConfigOp::ChangeThreshold { threshold } => types::ConfigAction::ChangeThreshold { new_threshold: *threshold },
+    }).collect();
+
+    let mut instructions = vec![
+        sdk_instruction(
+            client::accounts::ConfigTransactionCreate {
+                multisig: multisig_pubkey,
+                transaction: transaction_pda,
+                creator: creator_pubkey,
+                rent_payer: creator_pubkey,
+                system_program,
+            },
+            client::args::ConfigTransactionCreate {
+                args: types::ConfigTransactionCreateArgs { actions, memo: None },
+            },
+        ),
+        sdk_instruction(
+            client::accounts::ProposalCreate {
+                multisig: multisig_pubkey,
+                proposal: proposal_pda,
+                creator: creator_pubkey,
+                rent_payer: creator_pubkey,
+                system_program,
+            },
+            client::args::ProposalCreate {
+                args: types::ProposalCreateArgs { transaction_index: new_tx_index, draft: false },
+            },
+        ),
+    ];
+    if creator.can_vote() {
+        instructions.push(sdk_instruction(
+            client::accounts::ProposalApprove {
+                multisig: multisig_pubkey,
+                member: creator_pubkey,
+                proposal: proposal_pda,
+            },
+            client::args::ProposalApprove {
+                args: types::ProposalVoteArgs { memo: None },
+            },
+        ));
+    }
+
+    sign_and_send_with_fee_payer(client, rpc_url, &keypair, &fee_payer, &instructions).await
+}
+
+/// 执行已通过的 ConfigTransaction（添加成员可能需要扩容 Multisig 账户，由 fee payer 支付租金）
+async fn execute_config_transaction(
+    client: &Client,
+    rpc_url: &str,
+    keypair: &Keypair,
+    fee_payer: &Keypair,
+    multisig_pubkey: Pubkey,
+    transaction_index: u64,
+    transaction: &sdk_accounts::ConfigTransaction,
+) -> Result<String, String> {
+    if let (_, Some(e)) = review_config_actions(&transaction.actions) {
+        return Err(e);
+    }
+    let (transaction_pda, _) = derive_transaction_pda(&multisig_pubkey, transaction_index);
+    let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index);
+    let ix = sdk_instruction(
+        client::accounts::ConfigTransactionExecute {
+            multisig: multisig_pubkey,
+            member: keypair.pubkey(),
+            proposal: proposal_pda,
+            transaction: transaction_pda,
+            rent_payer: Some(fee_payer.pubkey()),
+            system_program: Some(Pubkey::default()),
+        },
+        client::args::ConfigTransactionExecute,
+    );
+    sign_and_send_with_fee_payer(client, rpc_url, keypair, fee_payer, &[ix]).await
 }
 
 // ========== 交易构建 ==========
@@ -393,7 +595,7 @@ async fn sign_and_send_with_fee_payer(
     sol_transfer::send_transaction(client, rpc_url, &tx_bytes).await
 }
 
-/// 执行已通过的 Vault Transaction
+/// 执行已通过的 Vault Transaction（交易账户为 ConfigTransaction 时自动执行配置变更）
 pub async fn execute_vault_transaction(
     client: &Client,
     rpc_url: &str,
@@ -416,8 +618,14 @@ pub async fn execute_vault_transaction(
     let (transaction_pda, _) = derive_transaction_pda(&multisig_pubkey, transaction_index);
     let (proposal_pda, _) = derive_proposal_pda(&multisig_pubkey, transaction_index);
 
-    // 从链上获取 VaultTransaction，SDK 用标准 Borsh 反序列化（与链上存储格式一致）
+    // 从链上获取交易账户，SDK 用标准 Borsh 反序列化（与链上存储格式一致）；配置提案走 ConfigTransaction 执行
     let tx_data = fetch_account_data(client, rpc_url, &transaction_pda.to_string()).await?;
+    if let Ok(config_tx) = sdk_accounts::ConfigTransaction::try_deserialize(&mut &tx_data[..]) {
+        if config_tx.multisig != multisig_pubkey || config_tx.index != transaction_index {
+            return Err("交易不属于当前多签/提案".into());
+        }
+        return execute_config_transaction(client, rpc_url, &keypair, &fee_payer, multisig_pubkey, transaction_index, &config_tx).await;
+    }
     let transaction = sdk_accounts::VaultTransaction::try_deserialize(&mut &tx_data[..])
         .map_err(|e| format!("VaultTransaction 反序列化失败: {e}"))?;
     if transaction.multisig != multisig_pubkey || transaction.index != transaction_index {
@@ -1052,6 +1260,66 @@ mod tests {
         let mut bytes = Vec::new();
         tx.try_serialize(&mut bytes).unwrap();
         bytes
+    }
+
+    fn multisig_info(perms: &[u8], threshold: u16) -> MultisigInfo {
+        MultisigInfo {
+            address: Pubkey::new_unique(), create_key: Pubkey::new_unique(), config_authority: Pubkey::default(),
+            threshold, time_lock: 0, transaction_index: 0, stale_transaction_index: 0, rent_collector: None, bump: 0,
+            members: perms.iter().map(|&p| MultisigMember { key: Pubkey::new_unique(), permissions: p }).collect(),
+        }
+    }
+
+    #[test]
+    fn config_ops_validation() {
+        let info = multisig_info(&[7, 7], 2);
+        let [a, b] = [info.members[0].key, info.members[1].key];
+        let new = Pubkey::new_unique();
+        let add = |permissions| ConfigOp::AddMember { key: new, permissions };
+        assert!(validate_config_ops(&info, &[add(7)]).is_ok());
+        assert!(validate_config_ops(&info, &[add(7), ConfigOp::ChangeThreshold { threshold: 3 }]).is_ok());
+        assert!(validate_config_ops(&info, &[add(0)]).is_err());
+        assert!(validate_config_ops(&info, &[add(8)]).is_err());
+        assert!(validate_config_ops(&info, &[ConfigOp::AddMember { key: a, permissions: 7 }]).is_err());
+        assert!(validate_config_ops(&info, &[]).is_err());
+        // 2-of-2 移除一人必须同时降低阈值
+        assert!(validate_config_ops(&info, &[ConfigOp::RemoveMember { key: b }]).is_err());
+        assert!(validate_config_ops(&info, &[ConfigOp::RemoveMember { key: b }, ConfigOp::ChangeThreshold { threshold: 1 }]).is_ok());
+        assert!(validate_config_ops(&info, &[ConfigOp::RemoveMember { key: new }]).is_err());
+        assert!(validate_config_ops(&info, &[ConfigOp::RemoveMember { key: a }, ConfigOp::RemoveMember { key: b }]).is_err());
+        assert!(validate_config_ops(&info, &[ConfigOp::ChangeThreshold { threshold: 0 }]).is_err());
+        assert!(validate_config_ops(&info, &[ConfigOp::ChangeThreshold { threshold: 3 }]).is_err());
+        // 只投票的成员不计入发起/执行
+        let info = multisig_info(&[7, 2], 1);
+        let a = info.members[0].key;
+        assert!(validate_config_ops(&info, &[ConfigOp::RemoveMember { key: a }]).is_err());
+        assert!(validate_config_ops(&info, &[ConfigOp::RemoveMember { key: a }, add(5)]).is_ok());
+        // 新成员无投票权时不计入阈值
+        let info = multisig_info(&[7], 1);
+        assert!(validate_config_ops(&info, &[add(1), ConfigOp::ChangeThreshold { threshold: 2 }]).is_err());
+    }
+
+    #[test]
+    fn config_transaction_review() {
+        let key = Pubkey::new_unique();
+        let tx = sdk_accounts::ConfigTransaction {
+            multisig: Pubkey::new_unique(), creator: Pubkey::new_unique(), index: 3, bump: 0,
+            actions: vec![
+                types::ConfigAction::AddMember { new_member: types::Member { key, permissions: types::Permissions { mask: 3 } } },
+                types::ConfigAction::ChangeThreshold { new_threshold: 2 },
+            ],
+        };
+        let mut bytes = Vec::new();
+        tx.try_serialize(&mut bytes).unwrap();
+        // 配置交易不能被误当作 VaultTransaction 解析
+        assert!(sdk_accounts::VaultTransaction::try_deserialize(&mut &bytes[..]).is_err());
+        let parsed = sdk_accounts::ConfigTransaction::try_deserialize(&mut &bytes[..]).unwrap();
+        let (summary, error) = review_config_actions(&parsed.actions);
+        assert_eq!(error, None);
+        assert!(summary.contains(&format!("添加成员: {key} (权限: 发起+投票)")), "{summary}");
+        assert!(summary.contains("修改阈值: 2"), "{summary}");
+        let (_, error) = review_config_actions(&[types::ConfigAction::RemoveSpendingLimit { spending_limit: key }]);
+        assert!(error.is_some());
     }
 
     #[tokio::test]

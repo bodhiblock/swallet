@@ -56,8 +56,15 @@ export interface AssetDto {
 export interface MultisigDetailDto {
 	address: string;
 	threshold: number;
-	members: { address: string }[];
+	members: MemberDto[];
 	transaction_index: number;
+}
+
+export interface MemberDto {
+	address: string;
+	/** 权限位掩码：1 发起、2 投票、4 执行 */
+	permissions: number;
+	permission_label: string;
 }
 
 export interface ProposalDto {
@@ -69,6 +76,10 @@ export interface ProposalDto {
 	approved_addresses: string[];
 	rejected_addresses: string[];
 	summary: string | null;
+	/** 配置变更提案（成员管理/阈值） */
+	is_config: boolean;
+	/** 有值时禁止批准和执行，但允许拒绝 */
+	review_error: string | null;
 }
 
 export interface FeePayerDto {

@@ -119,6 +119,29 @@ pub struct ProposalInfo {
     pub vault_index: Option<u8>,
     /// 无法完整核对交易内容时，禁止批准/执行，仍可拒绝。
     pub review_error: Option<String>,
+    /// 是否为配置变更提案（ConfigTransaction：增删成员、修改阈值等）
+    pub is_config: bool,
+}
+
+/// 多签配置变更操作（对应 Squads v4 ConfigAction 中本钱包支持发起的部分）
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConfigOp {
+    AddMember { key: Pubkey, permissions: u8 },
+    RemoveMember { key: Pubkey },
+    ChangeThreshold { threshold: u16 },
+}
+
+impl ConfigOp {
+    pub fn describe(&self) -> String {
+        match self {
+            Self::AddMember { key, permissions } => {
+                let label = MultisigMember { key: *key, permissions: *permissions }.permission_label();
+                format!("添加成员: {key} (权限: {label})")
+            }
+            Self::RemoveMember { key } => format!("移除成员: {key}"),
+            Self::ChangeThreshold { threshold } => format!("修改阈值: {threshold}"),
+        }
+    }
 }
 
 /// 提案类型（用户选择要创建的提案）
@@ -136,6 +159,8 @@ pub enum ProposalType {
     VoteManage,
     /// Stake 账户管理（vault 作为 staker/withdrawer 权限）
     StakeManage,
+    /// 成员管理（ConfigTransaction：增删成员、修改阈值）
+    MemberManage,
 }
 
 impl ProposalType {
@@ -147,6 +172,7 @@ impl ProposalType {
             Self::ProgramCall => "调用程序",
             Self::VoteManage => "Vote 账户管理",
             Self::StakeManage => "Stake 账户管理",
+            Self::MemberManage => "成员管理",
         }
     }
 
@@ -162,6 +188,8 @@ impl ProposalType {
         if !presets::programs_for_chain(chain_id).is_empty() {
             types.push(Self::ProgramCall);
         }
+        // 放在最后，保持其它类型的索引不变
+        types.push(Self::MemberManage);
         types
     }
 }

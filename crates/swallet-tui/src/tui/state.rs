@@ -1,4 +1,4 @@
-use swallet_core::multisig::{MultisigInfo, ProposalInfo};
+use swallet_core::multisig::{ConfigOp, MultisigInfo, ProposalInfo};
 use swallet_core::storage::data::ChainType;
 use swallet_core::transfer::TransferableAsset;
 
@@ -27,6 +27,8 @@ pub enum Screen {
     Staking,
     /// 删除确认（需密码）
     ConfirmDelete,
+    /// 查看私钥（需密码）
+    ViewPrivateKey,
 }
 
 /// 解锁界面状态
@@ -208,6 +210,17 @@ pub enum MultisigStep {
     InputVoteStakeParam,
     /// 输入金额（仅 Withdraw）
     InputVoteStakeAmount,
+    // ---- 成员管理提案流程（ConfigTransaction） ----
+    /// 选择成员管理操作（添加/移除成员、修改阈值）
+    MemberSelectOp,
+    /// 输入新成员地址
+    MemberInputAddress,
+    /// 选择新成员权限
+    MemberSelectPermissions,
+    /// 选择要移除的成员
+    MemberSelectRemove,
+    /// 输入新阈值（添加/移除时可留空表示不改）
+    MemberInputThreshold,
     /// 选择 Fee Payer（创建提案/投票前）
     SelectMsFeePayer,
     /// 确认创建提案（输入密码）
@@ -230,6 +243,31 @@ pub enum MultisigStep {
     /// 确认创建（输入密码）
     CreateConfirm,
 }
+
+/// 成员管理操作类型
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MsMemberOp {
+    AddMember,
+    RemoveMember,
+    ChangeThreshold,
+}
+
+impl MsMemberOp {
+    pub fn all() -> [Self; 3] {
+        [Self::AddMember, Self::RemoveMember, Self::ChangeThreshold]
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            Self::AddMember => "添加成员",
+            Self::RemoveMember => "移除成员",
+            Self::ChangeThreshold => "修改阈值",
+        }
+    }
+}
+
+/// 成员权限选项（位掩码, 标签）
+pub const MS_MEMBER_PERMISSIONS: [(u8, &str); 3] = [(1, "发起"), (2, "投票"), (4, "执行")];
 
 /// 多签投票类型
 #[derive(Debug, Clone, PartialEq)]
@@ -315,6 +353,7 @@ pub enum ActionItem {
     CreateStakeAccount,
     AddVault,
     DeleteMultisig,
+    ViewPrivateKey,
 }
 
 impl ActionItem {
@@ -335,6 +374,7 @@ impl ActionItem {
             Self::CreateStakeAccount => "创建 Stake 账户",
             Self::AddVault => "添加 Vault",
             Self::DeleteMultisig => "删除多签钱包",
+            Self::ViewPrivateKey => "查看私钥",
         }
     }
 
@@ -343,19 +383,19 @@ impl ActionItem {
     }
 
     pub fn for_mnemonic_address() -> Vec<Self> {
-        vec![Self::Transfer, Self::EditAddressLabel, Self::HideAddress]
+        vec![Self::Transfer, Self::EditAddressLabel, Self::HideAddress, Self::ViewPrivateKey]
     }
 
     pub fn for_mnemonic_sol_address() -> Vec<Self> {
-        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditAddressLabel, Self::HideAddress, Self::CreateMultisig, Self::CreateMultisigWithSeed]
+        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditAddressLabel, Self::HideAddress, Self::CreateMultisig, Self::CreateMultisigWithSeed, Self::ViewPrivateKey]
     }
 
     pub fn for_private_key_address() -> Vec<Self> {
-        vec![Self::Transfer, Self::EditName, Self::HideWallet]
+        vec![Self::Transfer, Self::EditName, Self::HideWallet, Self::ViewPrivateKey]
     }
 
     pub fn for_private_key_sol_address() -> Vec<Self> {
-        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditName, Self::HideWallet, Self::CreateMultisig, Self::CreateMultisigWithSeed]
+        vec![Self::Transfer, Self::CreateVoteAccount, Self::CreateStakeAccount, Self::EditName, Self::HideWallet, Self::CreateMultisig, Self::CreateMultisigWithSeed, Self::ViewPrivateKey]
     }
 
     pub fn for_watch_address() -> Vec<Self> {
@@ -455,6 +495,16 @@ pub struct UiState {
     pub ms_vs_target: String,    // 目标 vote/stake 账户地址
     pub ms_vs_param: String,     // 参数（new authority / vote account / to address）
     pub ms_vs_amount: String,    // 金额（仅 withdraw）
+    // 成员管理提案
+    pub ms_member_op_selected: usize,
+    pub ms_member_address: String,      // 新成员地址
+    pub ms_member_permissions: u8,      // 新成员权限位掩码（默认 7）
+    pub ms_member_perm_cursor: usize,   // 权限选择光标
+    pub ms_member_remove_selected: usize, // 要移除的成员（ms_current_info.members 索引）
+    pub ms_member_threshold: String,    // 新阈值输入
+    pub ms_member_ops: Vec<ConfigOp>,   // 校验通过、待提交的配置操作
+    /// 执行配置提案成功后，关闭结果页时刷新多签信息（成员/阈值已变）
+    pub ms_refresh_info_after_result: bool,
     // Fee Payer 选择（提案/投票）
     pub ms_fee_payer_list: Vec<(String, String, u128, usize, usize)>, // (address, label, balance, wi, ai)
     pub ms_fee_payer_selected: usize,
@@ -524,6 +574,14 @@ pub struct UiState {
     // 删除钱包确认
     pub pending_delete_wallet: Option<usize>,
     pub delete_confirm_password: String,
+
+    // 查看私钥
+    /// 待查看私钥的地址上下文
+    pub view_key_context: Option<ActionContext>,
+    /// 查看私钥的密码输入
+    pub view_key_password: String,
+    /// 已解密并格式化的私钥（仅在验证密码后短暂持有，关闭时清零）
+    pub view_key_plaintext: Option<String>,
 }
 
 /// 文本输入的用途
@@ -611,6 +669,14 @@ impl UiState {
             ms_vs_target: String::new(),
             ms_vs_param: String::new(),
             ms_vs_amount: String::new(),
+            ms_member_op_selected: 0,
+            ms_member_address: String::new(),
+            ms_member_permissions: 7,
+            ms_member_perm_cursor: 0,
+            ms_member_remove_selected: 0,
+            ms_member_threshold: String::new(),
+            ms_member_ops: Vec::new(),
+            ms_refresh_info_after_result: false,
             ms_fee_payer_list: Vec::new(),
             ms_fee_payer_selected: 0,
             ms_fee_payer_wallet_index: 0,
@@ -670,6 +736,10 @@ impl UiState {
 
             pending_delete_wallet: None,
             delete_confirm_password: String::new(),
+
+            view_key_context: None,
+            view_key_password: String::new(),
+            view_key_plaintext: None,
         }
     }
 
@@ -769,6 +839,33 @@ impl UiState {
             self.ms_selected_chain_name, self.ms_current_vault_index, self.ms_current_vault_address,
             self.ms_transfer_amount, token.symbol, token.mint_address,
             swallet_core::multisig::token::program(&token), self.ms_transfer_to))
+    }
+
+    /// 当前选中的成员管理操作
+    pub fn ms_member_op(&self) -> MsMemberOp {
+        MsMemberOp::all().get(self.ms_member_op_selected).copied().unwrap_or(MsMemberOp::AddMember)
+    }
+
+    /// 当前多签中有投票权的成员数
+    pub fn ms_voter_count(&self) -> usize {
+        self.ms_current_info.as_ref()
+            .map(|i| i.members.iter().filter(|m| m.can_vote()).count())
+            .unwrap_or(0)
+    }
+
+    /// 执行主操作（添加/移除）后有投票权的成员数，用于提示阈值上限
+    pub fn ms_voter_count_after_member_op(&self) -> usize {
+        let current = self.ms_voter_count();
+        match self.ms_member_op() {
+            MsMemberOp::AddMember if self.ms_member_permissions & 2 != 0 => current + 1,
+            MsMemberOp::RemoveMember => {
+                let removed_votes = self.ms_current_info.as_ref()
+                    .and_then(|i| i.members.get(self.ms_member_remove_selected))
+                    .is_some_and(|m| m.can_vote());
+                current - usize::from(removed_votes)
+            }
+            _ => current,
+        }
     }
 
     /// 返回主界面

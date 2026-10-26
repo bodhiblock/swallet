@@ -23,8 +23,8 @@ use crate::tui::screens::{
 };
 use crate::tui::state::{
     ActionContext, ActionItem, AddWalletOption, AddWalletStep, InputPurpose, MsChainSelectPurpose,
-    MultisigStep, Screen, StakingCreateType, StakingOp, StakingStep, TransferStep, UiState,
-    UnlockMode, VoteAction,
+    MsMemberOp, MultisigStep, Screen, StakingCreateType, StakingOp, StakingStep, TransferStep, UiState,
+    UnlockMode, VoteAction, MS_MEMBER_PERMISSIONS,
 };
 
 /// 后台任务消息
@@ -148,6 +148,11 @@ impl App {
                 let store = self.service.store.as_ref().unwrap_or(&EMPTY_STORE);
                 main_screen::render(frame, &self.ui, store, &self.service.balance_cache, self.loading_balances);
                 self.render_confirm_delete(frame);
+            }
+            Screen::ViewPrivateKey => {
+                let store = self.service.store.as_ref().unwrap_or(&EMPTY_STORE);
+                main_screen::render(frame, &self.ui, store, &self.service.balance_cache, self.loading_balances);
+                self.render_view_private_key(frame);
             }
         }
     }
@@ -317,6 +322,7 @@ impl App {
             }
             Screen::Staking => self.handle_staking_key(key),
             Screen::ConfirmDelete => self.handle_confirm_delete_key(key),
+            Screen::ViewPrivateKey => self.handle_view_private_key_key(key),
         }
     }
 
@@ -1313,6 +1319,18 @@ impl App {
                     _ => {}
                 }
             }
+            ActionItem::ViewPrivateKey => {
+                if matches!(
+                    context,
+                    ActionContext::MnemonicAddress { .. } | ActionContext::PrivateKeyAddress { .. }
+                ) {
+                    self.ui.view_key_context = Some(context);
+                    self.ui.view_key_password.clear();
+                    self.ui.view_key_plaintext = None;
+                    self.ui.screen = Screen::ViewPrivateKey;
+                    self.ui.clear_status();
+                }
+            }
         }
     }
 
@@ -1691,6 +1709,218 @@ impl App {
                 self.ui.pending_delete_wallet = None;
                 self.ui.delete_confirm_password.clear();
                 self.ui.back_to_main();
+            }
+            _ => {}
+        }
+    }
+
+    // ========== 查看私钥 ==========
+
+    /// 获取查看私钥上下文对应的 (链类型, 地址)
+    fn view_key_target(&self) -> Option<(ChainType, String)> {
+        let store = self.service.store.as_ref()?;
+        match self.ui.view_key_context.as_ref()? {
+            ActionContext::MnemonicAddress { wallet_index, chain_type, account_index } => {
+                let wallet = store.wallets.get(*wallet_index)?;
+                let WalletType::Mnemonic { eth_accounts, sol_accounts, .. } = &wallet.wallet_type else {
+                    return None;
+                };
+                let accs = match chain_type {
+                    ChainType::Ethereum => eth_accounts,
+                    ChainType::Solana => sol_accounts,
+                };
+                Some((chain_type.clone(), accs.get(*account_index)?.address.clone()))
+            }
+            ActionContext::PrivateKeyAddress { wallet_index, chain_type } => {
+                let wallet = store.wallets.get(*wallet_index)?;
+                let WalletType::PrivateKey { address, .. } = &wallet.wallet_type else {
+                    return None;
+                };
+                Some((chain_type.clone(), address.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// 解密并格式化私钥：ETH 为 0x 开头 hex，SOL 为 Base58 的 64 字节 keypair（与 Phantom 导出格式一致）
+    fn reveal_private_key(&self) -> Result<String, String> {
+        let (chain_type, address) = self.view_key_target().ok_or("未找到地址")?;
+        let (wallet_index, account_index) = match self.ui.view_key_context.as_ref() {
+            Some(ActionContext::MnemonicAddress { wallet_index, account_index, .. }) => {
+                (*wallet_index, Some(*account_index))
+            }
+            Some(ActionContext::PrivateKeyAddress { wallet_index, .. }) => (*wallet_index, None),
+            _ => return Err("无效的上下文".into()),
+        };
+
+        let mut key = self
+            .service
+            .get_transfer_private_key(wallet_index, account_index, &chain_type)
+            .ok_or("私钥解密失败")?;
+
+        let result = match chain_type {
+            ChainType::Ethereum => {
+                // 校验私钥与地址一致
+                let derived = eth_keys::private_key_to_eth_address(&key).map_err(|e| e.to_string())?;
+                if !derived.eq_ignore_ascii_case(&address) {
+                    Err("私钥与地址不匹配".to_string())
+                } else {
+                    Ok(format!("0x{}", hex::encode(&key)))
+                }
+            }
+            ChainType::Solana => {
+                let key_bytes: [u8; 32] = key
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| "SOL 私钥长度错误".to_string())?;
+                let keypair = solana_sdk::signer::keypair::Keypair::new_from_array(key_bytes);
+                let derived = solana_sdk::signer::Signer::pubkey(&keypair).to_string();
+                if derived != address {
+                    Err("私钥与地址不匹配".to_string())
+                } else {
+                    let mut full = keypair.to_bytes().to_vec();
+                    let encoded = bs58::encode(&full).into_string();
+                    full.clear_sensitive();
+                    Ok(encoded)
+                }
+            }
+        };
+        key.clear_sensitive();
+        result
+    }
+
+    /// 关闭查看私钥弹窗并清零敏感数据
+    fn close_view_private_key(&mut self) {
+        if let Some(mut pk) = self.ui.view_key_plaintext.take() {
+            pk.clear_sensitive();
+        }
+        self.ui.view_key_password.clear_sensitive();
+        self.ui.view_key_context = None;
+        self.ui.back_to_main();
+    }
+
+    fn render_view_private_key(&self, frame: &mut Frame) {
+        use ratatui::layout::Alignment;
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+
+        let area = frame.area();
+        let popup_width = 70.min(area.width.saturating_sub(4));
+        let popup_height = 10.min(area.height.saturating_sub(4));
+        let x = (area.width.saturating_sub(popup_width)) / 2;
+        let y = (area.height.saturating_sub(popup_height)) / 2;
+        let popup_area = ratatui::layout::Rect::new(x, y, popup_width, popup_height);
+
+        frame.render_widget(Clear, popup_area);
+
+        let (chain_label, address) = self
+            .view_key_target()
+            .map(|(c, a)| {
+                let label = match c {
+                    ChainType::Ethereum => "ETH",
+                    ChainType::Solana => "SOL",
+                };
+                (label.to_string(), a)
+            })
+            .unwrap_or_else(|| ("未知".into(), "未知".into()));
+        let status_line = self.ui.status_message.as_deref().unwrap_or("");
+
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled("  链: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(chain_label),
+            ]),
+            Line::from(vec![
+                Span::styled("  地址: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(address),
+            ]),
+            Line::from(""),
+        ];
+
+        match &self.ui.view_key_plaintext {
+            Some(pk) => {
+                lines.push(Line::from(Span::styled(
+                    "  私钥（请勿泄露给任何人）:",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(Span::styled(
+                    format!("  {pk}"),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "  Esc / Enter 关闭",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            None => {
+                let mask = "*".repeat(self.ui.view_key_password.len());
+                lines.push(Line::from(format!("  密码: {mask}")));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!("  {status_line}"),
+                    Style::default().fg(Color::Yellow),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "  Enter 确认 | Esc 取消",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        let block = Block::default()
+            .title(" 查看私钥 ")
+            .title_alignment(Alignment::Center)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Red));
+
+        frame.render_widget(
+            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            popup_area,
+        );
+    }
+
+    fn handle_view_private_key_key(&mut self, key: KeyEvent) {
+        // 已显示私钥：任意关闭键退出
+        if self.ui.view_key_plaintext.is_some() {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                self.close_view_private_key();
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Char(c) => {
+                self.ui.clear_status();
+                self.ui.view_key_password.push(c);
+            }
+            KeyCode::Backspace => {
+                self.ui.clear_status();
+                self.ui.view_key_password.pop();
+            }
+            KeyCode::Enter => {
+                if self.ui.view_key_password.is_empty() {
+                    self.ui.set_status("请输入密码");
+                    return;
+                }
+                if !self.service.verify_password(self.ui.view_key_password.as_bytes()) {
+                    self.ui.set_status("密码错误");
+                    self.ui.view_key_password.clear_sensitive();
+                    return;
+                }
+                self.ui.view_key_password.clear_sensitive();
+                match self.reveal_private_key() {
+                    Ok(pk) => {
+                        self.ui.clear_status();
+                        self.ui.view_key_plaintext = Some(pk);
+                    }
+                    Err(e) => {
+                        self.ui.set_status(format!("获取私钥失败: {e}"));
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                self.close_view_private_key();
             }
             _ => {}
         }
@@ -2206,6 +2436,11 @@ impl App {
             MultisigStep::SelectVoteStakeOp => self.handle_ms_select_vote_stake_op_key(key),
             MultisigStep::InputVoteStakeParam => self.handle_ms_text_input_key(key, MsInputField::VsParam),
             MultisigStep::InputVoteStakeAmount => self.handle_ms_text_input_key(key, MsInputField::VsAmount),
+            MultisigStep::MemberSelectOp => self.handle_ms_member_select_op_key(key),
+            MultisigStep::MemberInputAddress => self.handle_ms_member_input_address_key(key),
+            MultisigStep::MemberSelectPermissions => self.handle_ms_member_permissions_key(key),
+            MultisigStep::MemberSelectRemove => self.handle_ms_member_select_remove_key(key),
+            MultisigStep::MemberInputThreshold => self.handle_ms_member_threshold_key(key),
             MultisigStep::SelectMsFeePayer => self.handle_ms_select_fee_payer_key(key),
             MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => {
                 self.handle_ms_confirm_key(key);
@@ -2222,6 +2457,12 @@ impl App {
                     self.ui.clear_status();
                     if self.ui.ms_current_info.is_some() {
                         self.ui.ms_step = MultisigStep::ViewDetail;
+                        // 配置提案执行成功后成员/阈值已变，重新拉取多签信息
+                        if std::mem::take(&mut self.ui.ms_refresh_info_after_result)
+                            && self.ui.ms_result.as_ref().is_some_and(|(ok, _)| *ok)
+                        {
+                            self.refresh_current_multisig_info();
+                        }
                     } else {
                         self.ui.back_to_main();
                     }
@@ -2489,6 +2730,27 @@ impl App {
                         self.load_ms_tokens();
                         return;
                     }
+                    Some(ProposalType::MemberManage) => {
+                        let Some(info) = &self.ui.ms_current_info else {
+                            self.ui.set_status("多签信息缺失");
+                            return;
+                        };
+                        if info.config_authority != multisig::Pubkey::default() {
+                            self.ui.set_status(format!(
+                                "该多签由 config authority {} 控制，不能通过提案修改配置",
+                                info.config_authority
+                            ));
+                            return;
+                        }
+                        self.ui.ms_member_op_selected = 0;
+                        self.ui.ms_member_address.clear();
+                        self.ui.ms_member_permissions = 7;
+                        self.ui.ms_member_perm_cursor = 0;
+                        self.ui.ms_member_remove_selected = 0;
+                        self.ui.ms_member_threshold.clear();
+                        self.ui.ms_member_ops.clear();
+                        self.ui.ms_step = MultisigStep::MemberSelectOp;
+                    }
                     _ => {
                         self.ui.ms_transfer_to.clear();
                         self.ui.ms_transfer_amount.clear();
@@ -2504,6 +2766,211 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    // ---- 成员管理提案（ConfigTransaction） ----
+
+    /// 当前选中的提案类型是否为成员管理
+    fn is_member_manage_selected(&self) -> bool {
+        ProposalType::for_chain(&self.ui.ms_selected_chain_id).get(self.ui.ms_proposal_type_selected)
+            == Some(&ProposalType::MemberManage)
+    }
+
+    fn handle_ms_member_select_op_key(&mut self, key: KeyEvent) {
+        let count = MsMemberOp::all().len();
+        match key.code {
+            KeyCode::Up => self.ui.ms_member_op_selected = self.ui.ms_member_op_selected.saturating_sub(1),
+            KeyCode::Down => {
+                if self.ui.ms_member_op_selected + 1 < count { self.ui.ms_member_op_selected += 1; }
+            }
+            KeyCode::Enter => {
+                self.ui.ms_member_threshold.clear();
+                self.ui.ms_member_ops.clear();
+                self.ui.ms_step = match self.ui.ms_member_op() {
+                    MsMemberOp::AddMember => MultisigStep::MemberInputAddress,
+                    MsMemberOp::RemoveMember => {
+                        let count = self.ui.ms_current_info.as_ref().map(|i| i.members.len()).unwrap_or(0);
+                        if count == 0 { self.ui.set_status("多签成员列表为空"); return; }
+                        if self.ui.ms_member_remove_selected >= count { self.ui.ms_member_remove_selected = 0; }
+                        MultisigStep::MemberSelectRemove
+                    }
+                    MsMemberOp::ChangeThreshold => MultisigStep::MemberInputThreshold,
+                };
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => { self.ui.ms_step = MultisigStep::SelectProposalType; self.ui.clear_status(); }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_member_input_address_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) => { self.ui.clear_status(); self.ui.ms_member_address.push(c); }
+            KeyCode::Backspace => { self.ui.clear_status(); self.ui.ms_member_address.pop(); }
+            KeyCode::Enter => {
+                let input = self.ui.ms_member_address.trim().to_string();
+                if input.is_empty() { self.ui.set_status("地址不能为空"); return; }
+                let Ok(key) = input.parse::<multisig::Pubkey>() else {
+                    self.ui.set_status("无效的 Solana 地址"); return;
+                };
+                if self.ui.ms_current_info.as_ref().is_some_and(|i| i.members.iter().any(|m| m.key == key)) {
+                    self.ui.set_status(format!("{key} 已是多签成员")); return;
+                }
+                self.ui.ms_member_address = input;
+                self.ui.ms_step = MultisigStep::MemberSelectPermissions;
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => { self.ui.ms_step = MultisigStep::MemberSelectOp; self.ui.clear_status(); }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_member_permissions_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up => self.ui.ms_member_perm_cursor = self.ui.ms_member_perm_cursor.saturating_sub(1),
+            KeyCode::Down => {
+                if self.ui.ms_member_perm_cursor + 1 < MS_MEMBER_PERMISSIONS.len() { self.ui.ms_member_perm_cursor += 1; }
+            }
+            KeyCode::Char(' ') => {
+                if let Some((bit, _)) = MS_MEMBER_PERMISSIONS.get(self.ui.ms_member_perm_cursor) {
+                    self.ui.ms_member_permissions ^= bit;
+                }
+                self.ui.clear_status();
+            }
+            KeyCode::Enter => {
+                if self.ui.ms_member_permissions == 0 { self.ui.set_status("请至少选择一项权限"); return; }
+                self.ui.ms_member_threshold.clear();
+                self.ui.ms_step = MultisigStep::MemberInputThreshold;
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => { self.ui.ms_step = MultisigStep::MemberInputAddress; self.ui.clear_status(); }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_member_select_remove_key(&mut self, key: KeyEvent) {
+        let count = self.ui.ms_current_info.as_ref().map(|i| i.members.len()).unwrap_or(0);
+        match key.code {
+            KeyCode::Up => self.ui.ms_member_remove_selected = self.ui.ms_member_remove_selected.saturating_sub(1),
+            KeyCode::Down => {
+                if self.ui.ms_member_remove_selected + 1 < count { self.ui.ms_member_remove_selected += 1; }
+            }
+            KeyCode::Enter => {
+                if count == 0 { return; }
+                self.ui.ms_member_threshold.clear();
+                self.ui.ms_step = MultisigStep::MemberInputThreshold;
+                self.ui.clear_status();
+            }
+            KeyCode::Esc => { self.ui.ms_step = MultisigStep::MemberSelectOp; self.ui.clear_status(); }
+            _ => {}
+        }
+    }
+
+    fn handle_ms_member_threshold_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) if c.is_ascii_digit() => { self.ui.clear_status(); self.ui.ms_member_threshold.push(c); }
+            KeyCode::Backspace => { self.ui.clear_status(); self.ui.ms_member_threshold.pop(); }
+            KeyCode::Enter => match self.build_ms_config_ops() {
+                Ok(ops) => {
+                    self.ui.ms_member_ops = ops;
+                    self.enter_ms_fee_payer_select(MultisigStep::ConfirmCreate);
+                }
+                Err(e) => self.ui.set_status(e),
+            },
+            KeyCode::Esc => {
+                self.ui.ms_step = match self.ui.ms_member_op() {
+                    MsMemberOp::AddMember => MultisigStep::MemberSelectPermissions,
+                    MsMemberOp::RemoveMember => MultisigStep::MemberSelectRemove,
+                    MsMemberOp::ChangeThreshold => MultisigStep::MemberSelectOp,
+                };
+                self.ui.clear_status();
+            }
+            _ => {}
+        }
+    }
+
+    /// 根据输入生成配置操作（主操作在前，有新阈值时追加 ChangeThreshold），并按链上规则预演校验
+    fn build_ms_config_ops(&self) -> Result<Vec<multisig::ConfigOp>, String> {
+        let info = self.ui.ms_current_info.as_ref().ok_or("多签信息缺失")?;
+        let threshold_input = self.ui.ms_member_threshold.trim();
+        let new_threshold = if threshold_input.is_empty() {
+            None
+        } else {
+            let t: u16 = threshold_input.parse().map_err(|_| "阈值无效".to_string())?;
+            if t == 0 { return Err("阈值必须大于 0".into()); }
+            Some(t)
+        };
+
+        let mut ops = Vec::new();
+        match self.ui.ms_member_op() {
+            MsMemberOp::AddMember => {
+                let key = self.ui.ms_member_address.trim().parse::<multisig::Pubkey>()
+                    .map_err(|_| "无效的 Solana 地址".to_string())?;
+                ops.push(multisig::ConfigOp::AddMember { key, permissions: self.ui.ms_member_permissions });
+            }
+            MsMemberOp::RemoveMember => {
+                let member = info.members.get(self.ui.ms_member_remove_selected).ok_or("请选择要移除的成员")?;
+                ops.push(multisig::ConfigOp::RemoveMember { key: member.key });
+            }
+            MsMemberOp::ChangeThreshold => {
+                let t = new_threshold.ok_or("请输入新阈值")?;
+                if t == info.threshold { return Err(format!("新阈值与当前阈值 {t} 相同")); }
+            }
+        }
+        // 与当前阈值相同则视为不修改
+        if let Some(t) = new_threshold.filter(|t| *t != info.threshold) {
+            ops.push(multisig::ConfigOp::ChangeThreshold { threshold: t });
+        }
+        multisig::squads::validate_config_ops(info, &ops)?;
+        Ok(ops)
+    }
+
+    /// 异步提交配置提案（创建 ConfigTransaction + Proposal，发起人有投票权时自动审批）
+    fn submit_config_proposal(&mut self, ms_info: multisig::MultisigInfo, private_key: Vec<u8>, fee_payer_key: Vec<u8>) {
+        let ops = self.ui.ms_member_ops.clone();
+        if let Err(e) = multisig::squads::validate_config_ops(&ms_info, &ops) {
+            self.ui.set_status(e);
+            return;
+        }
+        let rpc_url = self.get_current_ms_rpc_url();
+        let multisig_address = ms_info.address.to_string();
+
+        self.ui.ms_step = MultisigStep::Submitting;
+        self.ui.clear_status();
+
+        let tx = self.bg_tx.clone();
+        self.runtime.spawn(async move {
+            let result = match reqwest::Client::builder().timeout(Duration::from_secs(30)).build() {
+                Ok(client) => multisig::squads::create_config_proposal_and_approve(
+                    &client, &rpc_url, &private_key, &fee_payer_key, &multisig_address, &ops,
+                ).await,
+                Err(e) => Err(format!("创建 HTTP 客户端失败: {e}")),
+            };
+            let (success, message) = match result {
+                Ok(sig) => (true, sig),
+                Err(err) => (false, err),
+            };
+            let _ = tx.send(BgMessage::MultisigOpComplete { success, message });
+        });
+    }
+
+    /// 后台刷新当前多签信息（成员、阈值等）
+    fn refresh_current_multisig_info(&mut self) {
+        let Some(info) = &self.ui.ms_current_info else { return; };
+        let address = info.address.to_string();
+        let rpc_url = self.get_current_ms_rpc_url();
+        self.ui.set_status("正在刷新多签信息...");
+        let tx = self.bg_tx.clone();
+        self.runtime.spawn(async move {
+            let result = match reqwest::Client::builder().timeout(Duration::from_secs(30)).build() {
+                Ok(client) => multisig::squads::fetch_multisig(&client, &rpc_url, &address).await,
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = tx.send(match result {
+                Ok(info) => BgMessage::MultisigFetched(info),
+                Err(err) => BgMessage::MultisigFetchError(err),
+            });
+        });
     }
 
     fn load_ms_tokens(&mut self) {
@@ -3206,6 +3673,9 @@ impl App {
                             Some(ProposalType::ProgramUpgrade) => {
                                 self.ui.ms_step = MultisigStep::InputUpgradeBuffer;
                             }
+                            Some(ProposalType::MemberManage) => {
+                                self.ui.ms_step = MultisigStep::MemberInputThreshold;
+                            }
                             _ => {
                                 self.ui.ms_step = MultisigStep::InputTransferAmount;
                             }
@@ -3541,6 +4011,8 @@ impl App {
                 // 返回提案类型或提案详情
                 if self.ui.ms_fee_payer_next_step == MultisigStep::ConfirmVote {
                     self.ui.ms_step = MultisigStep::ViewProposal;
+                } else if self.is_member_manage_selected() {
+                    self.ui.ms_step = MultisigStep::MemberInputThreshold;
                 } else if self.ui.ms_transfer_token().is_some() {
                     self.ui.ms_step = MultisigStep::InputTransferAmount;
                 } else {
@@ -3596,6 +4068,11 @@ impl App {
                 return;
             }
         };
+
+        if self.is_member_manage_selected() {
+            self.submit_config_proposal(ms_info, private_key, fee_payer_key);
+            return;
+        }
 
         let transfer_token = self.ui.ms_transfer_token();
         let to_address = self.ui.ms_transfer_to.clone();
@@ -3720,7 +4197,9 @@ impl App {
         let rpc_url = self.get_current_ms_rpc_url();
         let multisig_address = ms_info.address.to_string();
         let tx_index = proposal.transaction_index;
+        // 配置提案没有 vault_index，core 执行时会忽略该参数
         let vault_index = self.ui.ms_current_vault_index;
+        self.ui.ms_refresh_info_after_result = proposal.is_config && vote_action == VoteAction::Execute;
 
         self.ui.ms_step = MultisigStep::Submitting;
         self.ui.clear_status();
@@ -4594,6 +5073,8 @@ async fn execute_create_proposal_async(
         .ok_or("无效的提案类型")?;
 
     let inner_instructions = match proposal_type {
+        // 成员管理是 ConfigTransaction，不经过 vault 交易流程（见 submit_config_proposal）
+        ProposalType::MemberManage => return Err("成员管理提案应通过配置提案流程创建".into()),
         ProposalType::SolTransfer => {
             let to_pubkey: [u8; 32] = bs58::decode(to_address)
                 .into_vec()
@@ -5973,6 +6454,7 @@ mod spl_tests {
             address: multisig::Pubkey::new_unique(), multisig: multisig::Pubkey::new_unique(), transaction_index: 8,
             status: multisig::ProposalStatus::Active, approved: vec![], rejected: vec![], cancelled: vec![], bump: 0,
             summary: Some(description), vault_index: Some(3), review_error: Some("RPC failed".into()),
+            is_config: false,
         });
         app.ui.ms_step = MultisigStep::ViewProposal;
         app.handle_ms_proposal_detail_key(key(KeyCode::Char('a')));
@@ -5988,5 +6470,82 @@ mod spl_tests {
         // Switching to a native transfer cannot reuse a previously selected SPL token.
         app.ui.ms_proposal_type_selected = 0;
         assert!(app.ui.ms_transfer_token().is_none());
+    }
+
+    #[test]
+    fn member_manage_flow() {
+        let config = swallet_core::config::defaults::default_config();
+        let chain = config.chains.solana[0].clone();
+        let mut app = App::new(config, Some(std::env::temp_dir().join(format!("swallet-test-{}.dat", uuid::Uuid::new_v4()))));
+        app.ui.screen = Screen::Multisig;
+        app.ui.ms_selected_chain_id = chain.id.clone();
+        app.ui.ms_selected_chain_name = chain.name.clone();
+        let members: Vec<multisig::MultisigMember> = (0..2)
+            .map(|_| multisig::MultisigMember { key: multisig::Pubkey::new_unique(), permissions: 7 })
+            .collect();
+        let b = members[1].key;
+        app.ui.ms_current_info = Some(multisig::MultisigInfo {
+            address: multisig::Pubkey::new_unique(), create_key: multisig::Pubkey::new_unique(),
+            config_authority: multisig::Pubkey::default(), threshold: 2, time_lock: 0, transaction_index: 0,
+            stale_transaction_index: 0, rent_collector: None, bump: 0, members,
+        });
+        // 成员管理在类型列表最后
+        app.ui.ms_proposal_type_selected = ProposalType::for_chain(&chain.id).len() - 1;
+        app.handle_ms_select_proposal_type_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_step, MultisigStep::MemberSelectOp);
+
+        // 移除成员：2-of-2 只移除一人应被拒绝
+        app.handle_ms_member_select_op_key(key(KeyCode::Down));
+        app.handle_ms_member_select_op_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_step, MultisigStep::MemberSelectRemove);
+        app.handle_ms_member_select_remove_key(key(KeyCode::Down));
+        app.handle_ms_member_select_remove_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_step, MultisigStep::MemberInputThreshold);
+        assert_eq!(app.ui.ms_voter_count_after_member_op(), 1);
+        app.handle_ms_member_threshold_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_step, MultisigStep::MemberInputThreshold);
+        assert!(app.ui.status_message.as_deref().unwrap_or("").contains("阈值"));
+        // 同时把阈值改为 1：主操作在前，ChangeThreshold 追加在后
+        app.handle_ms_member_threshold_key(key(KeyCode::Char('1')));
+        app.handle_ms_member_threshold_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_member_ops, vec![
+            multisig::ConfigOp::RemoveMember { key: b },
+            multisig::ConfigOp::ChangeThreshold { threshold: 1 },
+        ]);
+
+        // 确认页展示操作和过期提示
+        app.ui.ms_step = MultisigStep::ConfirmCreate;
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        // 宽字符占两格，去掉空白后再比对
+        let rendered: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol())
+            .filter(|s| !s.trim().is_empty()).collect();
+        assert!(rendered.contains("修改阈值:1"));
+        assert!(rendered.contains("过期"));
+        app.handle_ms_confirm_key(key(KeyCode::Esc));
+        assert_eq!(app.ui.ms_step, MultisigStep::MemberInputThreshold);
+
+        // 添加成员：默认全部权限，留空阈值表示不修改
+        app.ui.ms_step = MultisigStep::MemberSelectOp;
+        app.ui.ms_member_op_selected = 0;
+        app.handle_ms_member_select_op_key(key(KeyCode::Enter));
+        let new = multisig::Pubkey::new_unique();
+        app.ui.ms_member_address = new.to_string();
+        app.handle_ms_member_input_address_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_step, MultisigStep::MemberSelectPermissions);
+        app.handle_ms_member_permissions_key(key(KeyCode::Char(' '))); // 取消“发起”
+        app.handle_ms_member_permissions_key(key(KeyCode::Enter));
+        app.handle_ms_member_threshold_key(key(KeyCode::Enter));
+        assert_eq!(app.ui.ms_member_ops, vec![multisig::ConfigOp::AddMember { key: new, permissions: 6 }]);
+
+        // 修改阈值：必须输入，且不能超过有投票权的成员数
+        app.ui.ms_step = MultisigStep::MemberSelectOp;
+        app.ui.ms_member_op_selected = 2;
+        app.handle_ms_member_select_op_key(key(KeyCode::Enter));
+        app.handle_ms_member_threshold_key(key(KeyCode::Enter));
+        assert!(app.ui.status_message.as_deref().unwrap_or("").contains("请输入新阈值"));
+        app.handle_ms_member_threshold_key(key(KeyCode::Char('3')));
+        app.handle_ms_member_threshold_key(key(KeyCode::Enter));
+        assert!(app.ui.status_message.as_deref().unwrap_or("").contains("阈值 3 无效"));
     }
 }

@@ -293,3 +293,55 @@ async fn local_spl_flow() {
         );
     }
 }
+
+/// SWALLET_LOCAL_RPC=http://127.0.0.1:18899 cargo test -p swallet-core --lib local_config_flow -- --ignored --nocapture
+#[tokio::test]
+#[ignore = "requires a local Solana validator with Squads and its ProgramConfig"]
+async fn local_config_flow() {
+    let rpc = std::env::var("SWALLET_LOCAL_RPC").expect("Set SWALLET_LOCAL_RPC to a loopback validator");
+    let url = reqwest::Url::parse(&rpc).unwrap();
+    assert_eq!(url.host_str(), Some("127.0.0.1"), "This test must never use a real cluster");
+    let client = Client::builder().timeout(std::time::Duration::from_secs(15)).build().unwrap();
+    let payer = Keypair::new();
+    let approver = Keypair::new();
+    let newcomer = Pubkey::new_unique();
+    let secret = payer.to_bytes();
+    let approver_secret = approver.to_bytes();
+    let airdrop = sol_transfer::rpc_call(&client, &rpc, &json!({"jsonrpc":"2.0", "id":1,
+        "method":"requestAirdrop", "params":[payer.pubkey().to_string(), 10_000_000_000u64]})).await.unwrap();
+    confirmed(&client, &rpc, airdrop["result"].as_str().unwrap()).await;
+    let created = create_multisig_v2(&client, &rpc, &secret[..32], &[payer.pubkey(), approver.pubkey()], 2, None)
+        .await.unwrap();
+    let (address, sig) = created.split_once('|').unwrap();
+    confirmed(&client, &rpc, sig).await;
+
+    // 每轮：payer 发起并自动批准 → approver 批准 → payer 执行（approver 只是成员，不付手续费）
+    let run = async |ops: &[ConfigOp], summary: &str| {
+        let sig = create_config_proposal_and_approve(&client, &rpc, &secret[..32], &secret[..32], address, ops).await.unwrap();
+        confirmed(&client, &rpc, &sig).await;
+        let info = fetch_multisig(&client, &rpc, address).await.unwrap();
+        let proposals = fetch_active_proposals(&client, &rpc, &info, "SOL", &[]).await.unwrap();
+        let proposal = &proposals[0];
+        assert!(proposal.is_config);
+        assert_eq!(proposal.review_error, None);
+        assert!(proposal.summary.as_ref().unwrap().contains(summary), "{:?}", proposal.summary);
+        assert_eq!(proposal.approved, vec![payer.pubkey()]);
+        let sig = approve_proposal(&client, &rpc, &approver_secret[..32], &secret[..32], address, info.transaction_index).await.unwrap();
+        confirmed(&client, &rpc, &sig).await;
+        let sig = execute_vault_transaction(&client, &rpc, &secret[..32], &secret[..32], address, info.transaction_index, 0).await.unwrap();
+        confirmed(&client, &rpc, &sig).await;
+        fetch_multisig(&client, &rpc, address).await.unwrap()
+    };
+
+    // 添加成员需要扩容 Multisig 账户，验证 rent_payer 传递正确
+    let info = run(&[ConfigOp::AddMember { key: newcomer, permissions: 3 }], &newcomer.to_string()).await;
+    assert_eq!(info.members.len(), 3);
+    assert_eq!(info.members.iter().find(|m| m.key == newcomer).unwrap().permissions, 3);
+    assert_eq!(info.threshold, 2);
+
+    let info = run(&[ConfigOp::RemoveMember { key: newcomer }, ConfigOp::ChangeThreshold { threshold: 1 }], "修改阈值: 1").await;
+    assert_eq!(info.members.len(), 2);
+    assert!(info.members.iter().all(|m| m.key != newcomer));
+    assert_eq!(info.threshold, 1);
+    println!("config: add member → remove member + change threshold, verified on chain");
+}

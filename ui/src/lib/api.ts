@@ -54,6 +54,11 @@ export const api = {
 		vsOpIdx: number; vsTarget: string; vsParam: string; vsAmount: string;
 		chainId: string; password: string; feePayerWi: number; feePayerAi: number;
 	}) => invoke<string>('create_proposal', params),
+	createConfigProposal: (params: {
+		walletIndex: number; action: 'add' | 'remove' | 'threshold';
+		member: string | null; permissions: number | null; newThreshold: number | null;
+		password: string; feePayerWi: number; feePayerAi: number;
+	}) => invoke<string>('create_config_proposal', params),
 	getPresetPrograms: (chainId: string) => invoke<PresetProgramDto[]>('get_preset_programs', { chainId }),
 	fetchPresetConfigValues: (chainId: string, programIdx: number) => invoke<Record<string, string>>('fetch_preset_config_values', { chainId, programIdx }),
 	fetchPresetDynamicHints: (chainId: string, programIdx: number, instructionName: string, args: string[]) =>

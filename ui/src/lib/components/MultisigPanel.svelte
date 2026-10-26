@@ -18,13 +18,14 @@
 	let loadingProposals = $state(false);
 
 	// Proposal types
-	type ProposalKind = 'sol-transfer' | 'program-upgrade' | 'program-call' | 'vote-manage' | 'stake-manage';
+	type ProposalKind = 'sol-transfer' | 'program-upgrade' | 'program-call' | 'vote-manage' | 'stake-manage' | 'member-manage';
 	const proposalKinds: { key: ProposalKind; label: string }[] = [
 		{ key: 'sol-transfer', label: '原生币转账' },
 		{ key: 'program-upgrade', label: '升级程序' },
 		{ key: 'vote-manage', label: 'Vote 管理' },
 		{ key: 'stake-manage', label: 'Stake 管理' },
 		{ key: 'program-call', label: '调用程序' },
+		{ key: 'member-manage', label: '成员管理' },
 	];
 	let proposalKind: ProposalKind = $state('sol-transfer');
 
@@ -40,6 +41,50 @@
 	let selectedInstruction = $state(0);
 	let presetArgValues: string[] = $state([]);
 	let configHints: Record<string, string> = $state({});
+
+	// 成员管理（配置变更）
+	type CfgAction = 'add' | 'remove' | 'threshold';
+	const cfgActions: { key: CfgAction; label: string }[] = [
+		{ key: 'add', label: '添加成员' },
+		{ key: 'remove', label: '移除成员' },
+		{ key: 'threshold', label: '修改阈值' },
+	];
+	let cfgAction: CfgAction = $state('add');
+	let cfgAddMember = $state('');
+	let cfgRemoveMember = $state('');
+	let cfgPermInitiate = $state(true);
+	let cfgPermVote = $state(true);
+	let cfgPermExecute = $state(true);
+	let cfgNewThreshold = $state('');
+	let cfgPermissions = $derived((cfgPermInitiate ? 1 : 0) | (cfgPermVote ? 2 : 0) | (cfgPermExecute ? 4 : 0));
+	// 当前有投票权的成员数
+	let voterCount = $derived(msDetail ? msDetail.members.filter(m => (m.permissions & 2) !== 0).length : 0);
+	// 执行后有投票权的成员数（用于提示）
+	let voterCountAfter = $derived.by(() => {
+		if (!msDetail) return 0;
+		if (cfgAction === 'add' && cfgAddMember.trim() && cfgPermVote) return voterCount + 1;
+		if (cfgAction === 'remove' && cfgRemoveMember) {
+			const m = msDetail.members.find(m => m.address === cfgRemoveMember);
+			if (m && (m.permissions & 2) !== 0) return voterCount - 1;
+		}
+		return voterCount;
+	});
+
+	function shortAddr(a: string): string { return a.length > 16 ? `${a.slice(0, 8)}...${a.slice(-6)}` : a; }
+
+	/** 解析阈值输入：空串返回 null，非法返回 undefined */
+	function parseThreshold(v: string): number | null | undefined {
+		const t = String(v ?? '').trim();
+		if (!t) return null;
+		if (!/^\d+$/.test(t)) return undefined;
+		const n = Number(t);
+		return n >= 1 && n <= 65535 ? n : undefined;
+	}
+
+	function resetCfgForm() {
+		cfgAddMember = ''; cfgRemoveMember = ''; cfgNewThreshold = '';
+		cfgPermInitiate = true; cfgPermVote = true; cfgPermExecute = true;
+	}
 
 	// Vote/Stake ops
 	type VsOp = 'vote-auth-voter' | 'vote-auth-withdrawer' | 'vote-withdraw' | 'stake-auth-staker' | 'stake-auth-withdrawer' | 'stake-delegate' | 'stake-deactivate' | 'stake-withdraw';
@@ -206,6 +251,17 @@
 		if (proposalKind === 'program-upgrade' && (!upgradeProgram.trim() || !upgradeBuffer.trim())) { onToast('请填写程序和 Buffer 地址'); return; }
 		if ((proposalKind === 'vote-manage' || proposalKind === 'stake-manage') && !vsManualAddress.trim()) { onToast('请先选择或输入账户地址'); return; }
 		if (proposalKind === 'program-call' && presetPrograms.length === 0) { onToast('没有可用的预制程序'); return; }
+		if (proposalKind === 'member-manage') {
+			if (!msDetail) { onToast('多签详情未加载'); return; }
+			const th = parseThreshold(cfgNewThreshold);
+			if (th === undefined) { onToast('阈值必须是正整数'); return; }
+			if (cfgAction === 'add') {
+				if (!cfgAddMember.trim()) { onToast('请填写成员地址'); return; }
+				if (cfgPermissions === 0) { onToast('请至少选择一项权限'); return; }
+			} else if (cfgAction === 'remove') {
+				if (!cfgRemoveMember) { onToast('请选择要移除的成员'); return; }
+			} else if (th === null) { onToast('请填写新阈值'); return; }
+		}
 		if (feePayers.length === 0) { onToast('没有可用的 Fee Payer'); return; }
 		// Vote/Stake 提交前自动验证权限
 		if (proposalKind === 'vote-manage' || proposalKind === 'stake-manage') {
@@ -224,13 +280,21 @@
 		if (!dialogPassword) { onToast('请输入密码'); return; }
 		submitting = true;
 		const fp = feePayers[selectedFeePayer];
-		const typeMap: Record<ProposalKind, number> = { 'sol-transfer': 0, 'program-upgrade': 2, 'vote-manage': 3, 'stake-manage': 4, 'program-call': 5 };
+		const typeMap: Record<string, number> = { 'sol-transfer': 0, 'program-upgrade': 2, 'vote-manage': 3, 'stake-manage': 4, 'program-call': 5 };
 		const vsOpMap: Record<string, number> = {
 			'vote-auth-voter': 0, 'vote-auth-withdrawer': 1, 'vote-withdraw': 2,
 			'stake-auth-staker': 3, 'stake-auth-withdrawer': 4, 'stake-delegate': 5, 'stake-deactivate': 6, 'stake-withdraw': 7,
 		};
 		try {
-			const sig = await api.createProposal({
+			const sig = proposalKind === 'member-manage'
+				? await api.createConfigProposal({
+					walletIndex, action: cfgAction,
+					member: cfgAction === 'add' ? cfgAddMember.trim() : cfgAction === 'remove' ? cfgRemoveMember : null,
+					permissions: cfgAction === 'add' ? cfgPermissions : null,
+					newThreshold: parseThreshold(cfgNewThreshold) ?? null,
+					password: dialogPassword, feePayerWi: fp.wallet_index, feePayerAi: fp.account_index,
+				})
+				: await api.createProposal({
 				walletIndex, vaultIndex: 0, proposalTypeIdx: typeMap[proposalKind],
 				toAddress: proposalTo, amount: proposalAmount,
 				upgradeProgram, upgradeBuffer,
@@ -242,6 +306,7 @@
 			passwordDialog = null;
 			proposalTo = ''; proposalAmount = ''; upgradeProgram = ''; upgradeBuffer = ''; vsTarget = ''; vsParam = ''; vsAmount = '';
 			vsVerified = false; vsSelectedAccount = -1;
+			resetCfgForm();
 			tab = 'proposals';
 			await loadProposals();
 		} catch (e: any) { onToast(e?.message || '创建失败'); }
@@ -266,10 +331,13 @@
 			let sig: string;
 			if (voteDialog.action === 'approve') sig = await api.approveProposal(walletIndex, p.transaction_index, dialogPassword, fp.wallet_index, fp.account_index);
 			else if (voteDialog.action === 'reject') sig = await api.rejectProposal(walletIndex, p.transaction_index, dialogPassword, fp.wallet_index, fp.account_index);
+			// 配置提案执行时后端会忽略 vaultIndex，传 0 即可
 			else sig = await api.executeProposal(walletIndex, p.transaction_index, 0, dialogPassword, fp.wallet_index, fp.account_index);
 			onToast(`操作成功: ${sig.slice(0, 16)}...`);
 			passwordDialog = null; voteDialog = null;
 			await loadProposals();
+			// 配置提案执行后成员/阈值已变，刷新详情
+			if (p.is_config) loadDetail();
 		} catch (e: any) { onToast(e?.message || '操作失败'); }
 		submitting = false;
 	}
@@ -301,7 +369,7 @@
 				</div>
 				<div class="detail-row">
 					<span class="dim">阈值</span>
-					<span>{msDetail.threshold} / {msDetail.members.length}</span>
+					<span>{msDetail.threshold} / {msDetail.members.length}（有投票权 {voterCount} 人）</span>
 				</div>
 				<div class="detail-row">
 					<span class="dim">成员 ({msDetail.members.length})</span>
@@ -310,6 +378,7 @@
 					<div class="member-row">
 						<span class="member-index">{i + 1}</span>
 						<span class="mono">{member.address}</span>
+						<span class="tag-perm" class:partial={member.permissions !== 7}>{member.permission_label}</span>
 						{#if localAddresses.includes(member.address)}
 							<span class="tag-self">本地</span>
 						{/if}
@@ -328,7 +397,7 @@
 			{#each proposals as proposal}
 				<div class="proposal-card">
 					<div class="proposal-header">
-						<span>TX #{proposal.transaction_index}</span>
+						<span>TX #{proposal.transaction_index}{#if proposal.is_config}<span class="tag-config">配置</span>{/if}</span>
 						<span style="color:{statusColor(proposal.status)}">{proposal.status}</span>
 					</div>
 					{#if proposal.summary}
@@ -337,6 +406,9 @@
 								<div>{line}</div>
 							{/each}
 						</div>
+					{/if}
+					{#if proposal.review_error}
+						<div class="review-error">⚠ {proposal.review_error}</div>
 					{/if}
 					<div class="proposal-votes"><span class="dim">通过: {proposal.approved_count} · 拒绝: {proposal.rejected_count}</span></div>
 					{#if proposal.approved_addresses.length > 0}
@@ -360,11 +432,11 @@
 							{#if hasVoted(proposal)}
 								<span class="dim">已投票</span>
 							{:else}
-								<button class="btn-sm green" onclick={() => startVote('approve', proposal)}>审批</button>
+								<button class="btn-sm green" onclick={() => startVote('approve', proposal)} disabled={!!proposal.review_error}>审批</button>
 								<button class="btn-sm red" onclick={() => startVote('reject', proposal)}>拒绝</button>
 							{/if}
 						{:else if proposal.status === '已通过'}
-							<button class="btn-sm accent" onclick={() => startVote('execute', proposal)}>执行</button>
+							<button class="btn-sm accent" onclick={() => startVote('execute', proposal)} disabled={!!proposal.review_error}>执行</button>
 						{/if}
 					</div>
 				</div>
@@ -382,6 +454,7 @@
 							proposalKind = kind.key;
 							if (kind.key === 'vote-manage') { vsOp = 'vote-auth-voter'; loadVsAccounts('vote'); }
 							if (kind.key === 'stake-manage') { vsOp = 'stake-auth-staker'; loadVsAccounts('stake'); }
+							if (kind.key === 'member-manage') loadDetail();
 						}}>
 						{kind.label}
 					</button>
@@ -452,6 +525,47 @@
 							{/if}
 						</div>
 					{/each}
+				{/if}
+
+			{:else if proposalKind === 'member-manage'}
+				{#if !msDetail}
+					<p class="dim">正在加载多签详情...</p>
+				{:else}
+					<div class="cfg-info">
+						<div>当前阈值 <b>{msDetail.threshold}</b> · 有投票权成员 <b>{voterCount}</b> / {msDetail.members.length}</div>
+						{#if voterCountAfter !== voterCount}
+							<div class="dim">执行后有投票权成员: {voterCountAfter}</div>
+						{/if}
+						<div class="cfg-warn">执行后，此前未执行的提案将失效</div>
+					</div>
+					<p class="dim">操作类型</p>
+					<div class="type-grid">
+						{#each cfgActions as a}
+							<button class="type-btn small" class:active={cfgAction === a.key} onclick={() => cfgAction = a.key}>{a.label}</button>
+						{/each}
+					</div>
+
+					{#if cfgAction === 'add'}
+						<input bind:value={cfgAddMember} placeholder="新成员地址" />
+						<p class="dim">权限</p>
+						<div class="perm-row">
+							<label class="perm-check"><input type="checkbox" bind:checked={cfgPermInitiate} /> <span>发起</span></label>
+							<label class="perm-check"><input type="checkbox" bind:checked={cfgPermVote} /> <span>投票</span></label>
+							<label class="perm-check"><input type="checkbox" bind:checked={cfgPermExecute} /> <span>执行</span></label>
+						</div>
+						<input bind:value={cfgNewThreshold} placeholder="新阈值（可选，留空不修改）" type="text" inputmode="numeric" />
+					{:else if cfgAction === 'remove'}
+						<select bind:value={cfgRemoveMember}>
+							<option value="">-- 选择要移除的成员 ({msDetail.members.length}) --</option>
+							{#each msDetail.members as m}
+								<option value={m.address}>{shortAddr(m.address)} ({m.permission_label}){localAddresses.includes(m.address) ? ' · 本地' : ''}</option>
+							{/each}
+						</select>
+						{#if cfgRemoveMember}<span class="config-hint-line">{cfgRemoveMember}</span>{/if}
+						<input bind:value={cfgNewThreshold} placeholder="新阈值（可选，留空不修改）" type="text" inputmode="numeric" />
+					{:else}
+						<input bind:value={cfgNewThreshold} placeholder="新阈值" type="text" inputmode="numeric" />
+					{/if}
 				{/if}
 
 			{:else if proposalKind === 'vote-manage' || proposalKind === 'stake-manage'}
@@ -528,9 +642,20 @@
 	.detail-row { display: flex; flex-direction: column; margin-bottom: 8px; }
 	.detail-row .dim { font-size: 12px; margin-bottom: 2px; }
 	.detail-row .mono { font-family: monospace; font-size: 12px; word-break: break-all; }
-	.member-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+	.member-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
 	.member-index { color: var(--text-dim); min-width: 20px; }
 	.member-row .mono { font-family: monospace; word-break: break-all; flex: 1; }
+	.tag-perm { color: var(--green); border: 1px solid var(--green); padding: 0 6px; border-radius: 4px; font-size: 10px; white-space: nowrap; }
+	.tag-perm.partial { color: var(--yellow); border-color: var(--yellow); }
+	.tag-config { margin-left: 6px; color: var(--yellow); border: 1px solid var(--yellow); padding: 0 6px; border-radius: 4px; font-size: 11px; }
+	.review-error { font-size: 12px; color: var(--red); margin-bottom: 4px; word-break: break-all; white-space: pre-wrap; }
+	.btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
+	.cfg-info { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+	.cfg-info .dim { font-size: 12px; }
+	.cfg-warn { color: var(--yellow); font-size: 12px; }
+	.perm-row { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+	.perm-check { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 14px; color: var(--text); cursor: pointer; }
+	.perm-check input { width: auto; padding: 0; }
 	.tag-self { background: var(--accent); color: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: 10px; }
 	.proposal-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
 	.proposal-header { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }

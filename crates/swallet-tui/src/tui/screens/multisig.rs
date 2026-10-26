@@ -11,7 +11,7 @@ use ratatui::{
 use swallet_core::multisig::ProposalType;
 use swallet_core::multisig::presets;
 use swallet_core::storage::data::MultisigAccount;
-use crate::tui::state::{MultisigStep, UiState, VoteAction};
+use crate::tui::state::{MsMemberOp, MultisigStep, UiState, VoteAction, MS_MEMBER_PERMISSIONS};
 
 /// address_labels: 地址→备注映射，用于标注自己的地址
 pub fn render(
@@ -65,6 +65,11 @@ pub fn render(
             render_input_vote_stake_field(frame, center, state, label, &val);
         }
         MultisigStep::InputVoteStakeAmount => render_input_vote_stake_field(frame, center, state, "提取数量 (SOL)", &state.ms_vs_amount.clone()),
+        MultisigStep::MemberSelectOp => render_member_select_op(frame, center, state),
+        MultisigStep::MemberInputAddress => render_member_input_address(frame, center, state),
+        MultisigStep::MemberSelectPermissions => render_member_select_permissions(frame, center, state),
+        MultisigStep::MemberSelectRemove => render_member_select_remove(frame, center, state, address_labels),
+        MultisigStep::MemberInputThreshold => render_member_input_threshold(frame, center, state),
         MultisigStep::ConfirmCreate | MultisigStep::ConfirmVote => render_confirm(frame, center, state),
         MultisigStep::Submitting => render_submitting(frame, center, state),
         MultisigStep::Result => render_result(frame, center, state),
@@ -439,8 +444,20 @@ fn render_view_proposals(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                         Style::default().fg(Color::Gray),
                     ),
                 ]);
+                let mut line1 = line1;
+                if p.is_config {
+                    line1.spans.push(Span::styled("  [配置]", Style::default().fg(Color::Magenta)));
+                }
                 let mut lines = vec![line1];
-                if let Some(ref summary) = p.summary {
+                if p.is_config {
+                    // 配置提案：跳过首行 "配置变更"，逐行列出操作
+                    for line in p.summary.as_deref().unwrap_or("").lines().skip(1) {
+                        lines.push(Line::from(Span::styled(
+                            format!("    {line}"),
+                            Style::default().fg(Color::Cyan),
+                        )));
+                    }
+                } else if let Some(ref summary) = p.summary {
                     let headline = summary.lines().find(|l| l.contains("SPL 转账:")).or_else(|| summary.lines().find(|l| l.starts_with("指令 "))).or_else(|| summary.lines().next()).unwrap_or("");
                     let target = summary.lines().find(|l| l.starts_with("收款钱包:") || l.starts_with("目标:")).unwrap_or("");
                     let amount = summary.lines().find(|l| l.starts_with("金额:")).unwrap_or("");
@@ -496,13 +513,17 @@ fn render_view_proposal(
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
-        lines.push(Line::from(vec![
+        let mut status_spans = vec![
             Span::styled(" 状态: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 proposal.status.label(),
                 Style::default().fg(status_color),
             ),
-        ]));
+        ];
+        if proposal.is_config {
+            status_spans.push(Span::styled("  [配置]", Style::default().fg(Color::Magenta)));
+        }
+        lines.push(Line::from(status_spans));
         lines.push(Line::from(""));
 
         lines.push(Line::from(format!(" 链: {}", state.ms_selected_chain_name)));
@@ -1022,12 +1043,26 @@ fn render_confirm(frame: &mut Frame, area: ratatui::layout::Rect, state: &mut Ui
                 Span::styled("   类型: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(ptype_label, Style::default().fg(Color::Cyan)),
             ]));
-            lines.push(Line::from(vec![
-                Span::styled("  Vault: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_vault_label(state), Style::default().fg(Color::Yellow)),
-            ]));
+            if ptype != Some(&ProposalType::MemberManage) {
+                lines.push(Line::from(vec![
+                    Span::styled("  Vault: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(format_vault_label(state), Style::default().fg(Color::Yellow)),
+                ]));
+            }
 
-            if ptype == Some(&ProposalType::TokenTransfer) {
+            if ptype == Some(&ProposalType::MemberManage) {
+                lines.push(Line::from(format!(" 链: {}", state.ms_selected_chain_name)));
+                lines.extend(member_header_lines(state));
+                lines.push(Line::from(Span::styled(" 配置变更:", Style::default().fg(Color::White))));
+                for op in &state.ms_member_ops {
+                    lines.push(Line::from(Span::styled(format!("   {}", op.describe()), Style::default().fg(Color::Cyan))));
+                }
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    " 注意: 执行后，此前未执行的提案将失效（Squads 会把它们标记为过期）",
+                    Style::default().fg(Color::Yellow),
+                )));
+            } else if ptype == Some(&ProposalType::TokenTransfer) {
                 if let Some(description) = state.ms_transfer_description() {
                     lines.extend(description.lines().map(|line| Line::from(line.to_string())));
                 }
@@ -1553,6 +1588,180 @@ fn format_vault_label(state: &UiState) -> String {
     } else {
         format!("#{idx} {addr}")
     }
+}
+
+// ========== 成员管理提案 ==========
+
+/// 成员管理各步骤共用的头部：当前阈值、有投票权的成员数
+fn member_header_lines(state: &UiState) -> Vec<Line<'static>> {
+    let (threshold, total) = state.ms_current_info.as_ref()
+        .map(|i| (i.threshold, i.members.len()))
+        .unwrap_or((0, 0));
+    vec![Line::from(vec![
+        Span::styled(" 当前阈值: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(threshold.to_string(), Style::default().fg(Color::Cyan)),
+        Span::styled("   有投票权成员: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{} / {total}", state.ms_voter_count()), Style::default().fg(Color::Cyan)),
+    ])]
+}
+
+fn member_block(title: &str) -> Block<'_> {
+    Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+}
+
+fn render_member_select_op(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let block = member_block(" 成员管理 - 选择操作 ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [header_area, list_area, footer_area] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Fill(1),
+        Constraint::Length(3),
+    ])
+    .areas(inner);
+    frame.render_widget(Paragraph::new(member_header_lines(state)), header_area);
+
+    let items: Vec<ListItem> = MsMemberOp::all()
+        .iter()
+        .map(|op| ListItem::new(Span::styled(format!("  {}", op.label()), Style::default().fg(Color::White))))
+        .collect();
+    let list = List::new(items).highlight_style(
+        Style::default().bg(Color::Indexed(236)).add_modifier(Modifier::BOLD),
+    );
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.ms_member_op_selected));
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    let mut lines = vec![Line::from(Span::styled(" ↑↓选择  Enter确认  Esc返回", Style::default().fg(Color::DarkGray)))];
+    append_status(&mut lines, state);
+    frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), footer_area);
+}
+
+fn render_member_input_address(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let mut lines = vec![Line::from("")];
+    lines.extend(member_header_lines(state));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(" 请输入新成员地址:", Style::default().fg(Color::White))));
+    lines.push(Line::from(Span::styled(format!(" > {}", state.ms_member_address), Style::default().fg(Color::Yellow))));
+    append_status(&mut lines, state);
+    append_hint(&mut lines, " Enter确认  Esc返回");
+    frame.render_widget(
+        Paragraph::new(lines).block(member_block(" 成员管理 - 添加成员 ")).wrap(ratatui::widgets::Wrap { trim: false }),
+        area,
+    );
+}
+
+fn render_member_select_permissions(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let block = member_block(" 成员管理 - 选择权限 ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [header_area, list_area, footer_area] = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Fill(1),
+        Constraint::Length(3),
+    ])
+    .areas(inner);
+    let mut header = member_header_lines(state);
+    header.push(Line::from(vec![
+        Span::styled(" 新成员: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(state.ms_member_address.clone(), Style::default().fg(Color::Yellow)),
+    ]));
+    frame.render_widget(Paragraph::new(header), header_area);
+
+    let items: Vec<ListItem> = MS_MEMBER_PERMISSIONS
+        .iter()
+        .map(|(bit, label)| {
+            let mark = if state.ms_member_permissions & bit != 0 { "[x]" } else { "[ ]" };
+            ListItem::new(Span::styled(format!("  {mark} {label}"), Style::default().fg(Color::White)))
+        })
+        .collect();
+    let list = List::new(items).highlight_style(
+        Style::default().bg(Color::Indexed(236)).add_modifier(Modifier::BOLD),
+    );
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.ms_member_perm_cursor));
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    let mut lines = vec![Line::from(Span::styled(" ↑↓选择  空格切换  Enter确认  Esc返回", Style::default().fg(Color::DarkGray)))];
+    append_status(&mut lines, state);
+    frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), footer_area);
+}
+
+fn render_member_select_remove(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &UiState,
+    address_labels: &HashMap<String, String>,
+) {
+    let block = member_block(" 成员管理 - 移除成员 ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [header_area, list_area, footer_area] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Fill(1),
+        Constraint::Length(3),
+    ])
+    .areas(inner);
+    frame.render_widget(Paragraph::new(member_header_lines(state)), header_area);
+
+    let members = state.ms_current_info.as_ref().map(|i| i.members.as_slice()).unwrap_or(&[]);
+    let items: Vec<ListItem> = members
+        .iter()
+        .map(|m| {
+            let addr = m.address();
+            let mut spans = vec![
+                Span::styled(format!("  {addr}"), Style::default().fg(Color::Yellow)),
+                Span::styled(format!(" [{}]", m.permission_label()), Style::default().fg(Color::DarkGray)),
+            ];
+            if let Some(label) = address_labels.get(&addr) {
+                spans.push(Span::styled(format!(" ({label})"), Style::default().fg(Color::Green)));
+            }
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+    let list = List::new(items).highlight_style(
+        Style::default().bg(Color::Indexed(236)).add_modifier(Modifier::BOLD),
+    );
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.ms_member_remove_selected));
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    let mut lines = vec![Line::from(Span::styled(" ↑↓选择  Enter确认  Esc返回", Style::default().fg(Color::DarkGray)))];
+    append_status(&mut lines, state);
+    frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), footer_area);
+}
+
+fn render_member_input_threshold(frame: &mut Frame, area: ratatui::layout::Rect, state: &UiState) {
+    let op = state.ms_member_op();
+    let mut lines = vec![Line::from("")];
+    lines.extend(member_header_lines(state));
+    match op {
+        MsMemberOp::AddMember => lines.push(Line::from(format!(" 添加成员: {}", state.ms_member_address))),
+        MsMemberOp::RemoveMember => {
+            if let Some(m) = state.ms_current_info.as_ref().and_then(|i| i.members.get(state.ms_member_remove_selected)) {
+                lines.push(Line::from(format!(" 移除成员: {}", m.address())));
+            }
+        }
+        MsMemberOp::ChangeThreshold => {}
+    }
+    lines.push(Line::from(Span::styled(
+        format!(" 变更后有投票权成员: {}", state.ms_voter_count_after_member_op()),
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+    let prompt = if op == MsMemberOp::ChangeThreshold { " 请输入新阈值:" } else { " 新阈值（留空表示不修改）:" };
+    lines.push(Line::from(Span::styled(prompt, Style::default().fg(Color::White))));
+    lines.push(Line::from(Span::styled(format!(" > {}", state.ms_member_threshold), Style::default().fg(Color::Yellow))));
+    append_status(&mut lines, state);
+    append_hint(&mut lines, " Enter确认  Esc返回");
+    frame.render_widget(
+        Paragraph::new(lines).block(member_block(" 成员管理 - 阈值 ")).wrap(ratatui::widgets::Wrap { trim: false }),
+        area,
+    );
 }
 
 // ========== Vote/Stake 管理提案 ==========

@@ -1000,6 +1000,9 @@ pub async fn execute_create_proposal(
                 &program_bytes, &buffer_bytes, &vault_pda.to_bytes(), &vault_pda.to_bytes(),
             )
         }
+        crate::multisig::ProposalType::MemberManage => {
+            return Err("成员管理提案请使用 squads::create_config_proposal_and_approve".into());
+        }
         crate::multisig::ProposalType::VoteManage | crate::multisig::ProposalType::StakeManage => {
             let op = vs_op.ok_or("未选择操作类型")?;
             let target_bytes: [u8; 32] = crate::multisig::proposals::decode_bs58_pubkey(vs_target)
